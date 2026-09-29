@@ -34,4 +34,8 @@ public final class KeyValueEngine {
 
     public String getNamespace() { return namespace; }
     public int size() { return store.size(); }
+
+    public void putBatch(Map<String, byte[]> batch) {
+        store.putAll(batch);
+    }
 }

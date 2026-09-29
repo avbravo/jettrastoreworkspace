@@ -47,4 +47,8 @@ public final class GeospatialEngine {
 
     public String getLayerName() { return layerName; }
     public int size() { return points.size(); }
+
+    public void insertBatch(Map<String, GeoPoint> batch) {
+        points.putAll(batch);
+    }
 }

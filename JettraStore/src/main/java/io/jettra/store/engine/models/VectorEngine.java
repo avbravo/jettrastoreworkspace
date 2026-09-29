@@ -53,4 +53,8 @@ public final class VectorEngine {
     public String getName() { return name; }
     public int getDimensions() { return dimensions; }
     public int size() { return vectors.size(); }
+
+    public void indexBatch(Map<String, float[]> batch) {
+        vectors.putAll(batch);
+    }
 }

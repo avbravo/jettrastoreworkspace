@@ -37,4 +37,15 @@ public final class GraphEngine {
     public Set<String> getVertices() { return vertices; }
     public String getName() { return name; }
     public int size() { return vertices.size(); }
+
+    public void addEdgesBatch(Map<String, List<Edge>> batch) {
+        for (var entry : batch.entrySet()) {
+            vertices.add(entry.getKey());
+            var list = adjacencyList.computeIfAbsent(entry.getKey(), k -> new CopyOnWriteArrayList<>());
+            list.addAll(entry.getValue());
+            for (Edge e : entry.getValue()) {
+                vertices.add(e.targetVertex());
+            }
+        }
+    }
 }

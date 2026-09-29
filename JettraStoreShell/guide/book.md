@@ -218,8 +218,10 @@ jettra-shell [admin@127.0.0.1:9091/default_db]> show samples
 | sample_ai_graph_db      | INSTALADA (Lista)  | Red de Grafos de Conocimiento, Embeddings   |
 | sample_iot_telemetry_db | INSTALADA (Lista)  | Sensores Temperatura/Vibración, Smart Devs  |
 | sample_financial_db     | INSTALADA (Lista)  | Transacciones de Cuentas, Ledger y Series   |
+| example_factura_db      | INSTALADA (Lista)  | Facturación 3M Objetos (1M Fac, 1M Det, etc)|
 +-------------------------+--------------------+---------------------------------------------+
-Para instalar o re-inicializar todas las muestras completas, ejecute: INSTALL SAMPLES
+Para instalar o re-inicializar las muestras estándar, ejecute: INSTALL SAMPLES
+Para cargar la muestra masiva de 3 millones de objetos con referencias cruzadas, ejecute: LOAD SAMPLE example_factura_db
 ```
 
 ---
@@ -737,7 +739,9 @@ logout
 
 3. BASES DE DATOS Y PERSISTENCIA EN DISCO:
   show databases / show dbs             Lista todas las bases de datos detectadas en disco y memoria.
-  show samples / show sample dbs        Muestra las 5 bases de datos de prueba preconfiguradas.
+  show samples / show sample dbs        Muestra las bases de datos de prueba preconfiguradas (incluyendo 3M).
+  LOAD SAMPLE example_factura_db        Carga la base de datos de facturación con 3,000,000 objetos multimodelo.
+  INSTALL SAMPLES FACTURA               Instala la base masiva example_factura_db con referencias JettraRef.
   create database <nombre>              Crea una nueva base de datos lógica.
   drop database <nombre>                Elimina la base de datos especificada.
   use <nombre>                          Conmuta la base de datos activa.

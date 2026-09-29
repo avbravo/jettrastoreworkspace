@@ -33,4 +33,8 @@ public final class TimeSeriesEngine {
 
     public String getMetricName() { return metricName; }
     public int size() { return series.size(); }
+
+    public void recordBatch(Map<Long, Double> batch) {
+        series.putAll(batch);
+    }
 }

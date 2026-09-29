@@ -49,4 +49,14 @@ public final class ColumnarEngine {
     public String getTableName() { return tableName; }
     public int getRowCount() { return rowCount; }
     public int size() { return rowCount; }
+
+    public synchronized void appendBatch(Map<String, List<Double>> numCols, Map<String, List<String>> txtCols, int count) {
+        for (var entry : numCols.entrySet()) {
+            numericColumns.computeIfAbsent(entry.getKey(), k -> new CopyOnWriteArrayList<>()).addAll(entry.getValue());
+        }
+        for (var entry : txtCols.entrySet()) {
+            textColumns.computeIfAbsent(entry.getKey(), k -> new CopyOnWriteArrayList<>()).addAll(entry.getValue());
+        }
+        this.rowCount += count;
+    }
 }

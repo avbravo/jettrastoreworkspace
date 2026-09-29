@@ -43,4 +43,8 @@ public final class DocumentEngine {
     public String getCollectionName() {
         return collectionName;
     }
+
+    public void insertBatch(Map<String, Map<String, Object>> batch) {
+        documents.putAll(batch);
+    }
 }

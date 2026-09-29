@@ -22,6 +22,13 @@ public class JettraStorePoliceFXTest {
         assertEquals(10.0, mesh.getTranslateX());
         assertEquals(20.0, mesh.getTranslateY());
         assertEquals(30.0, mesh.getTranslateZ());
+
+        // Verificar pensamientos y metas estilo JettraICore
+        mesh.setThought("Vigilando 3M facturas");
+        assertEquals("Vigilando 3M facturas", mesh.getThought());
+
+        mesh.setGoal("Patrulla Raft");
+        assertEquals("Patrulla Raft", mesh.getGoal());
     }
 
     @Test

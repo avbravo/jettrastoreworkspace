@@ -323,4 +323,32 @@ public class JettraStoreShellTest {
             assertTrue(cntGraph.contains("[COUNT] [GRAPH] 'knowledge_network':"));
         }
     }
+
+    
+    @Test
+    @DisplayName("Debe cargar la base de datos example_factura_db con 3 millones de objetos multimodelo y referencias cruzadas")
+    public void testLoadFacturaSampleDatabase3MObjects() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+
+            String samples = shell.executeCommand("SHOW SAMPLES");
+            System.out.println("DEBUG samples: " + samples);
+            assertTrue(samples.contains("example_factura_db"));
+
+            String loadResult = shell.executeCommand("LOAD SAMPLE example_factura_db");
+            System.out.println("DEBUG loadResult: " + loadResult);
+            assertTrue(loadResult.contains("CARGA MASIVA EXITOSA"));
+
+            String buckets = shell.executeCommand("SHOW BUCKETS");
+            System.out.println("DEBUG buckets: " + buckets);
+
+            String countAll = shell.executeCommand("COUNT ALL");
+            System.out.println("DEBUG countAll: " + countAll);
+            assertTrue(countAll.contains("3000000 registro(s) multimodelo"));
+
+            String showRecs = shell.executeCommand("SHOW RECORDS facturas LIMIT 2");
+            System.out.println("DEBUG showRecs: " + showRecs);
+            assertTrue(showRecs.contains("REGISTROS DE DOCUMENT BUCKET 'facturas'"));
+        }
+    }
 }
