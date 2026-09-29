@@ -1,0 +1,119 @@
+package io.jettra.store;
+
+import io.jettra.store.backup.BackupManager;
+import io.jettra.store.cluster.ClusterNode;
+import io.jettra.store.cluster.DynamicRingEngine;
+import io.jettra.store.core.JettraDatabase;
+import io.jettra.store.core.JettraStoreConfig;
+import io.jettra.store.engine.models.JettraRef;
+import io.jettra.store.engine.panama.NativeMemTable;
+import io.jettra.store.security.JettraSecurityManager;
+import io.jettra.test.annotation.DisplayName;
+import io.jettra.test.annotation.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+
+import static io.jettra.test.core.JettraAssert.*;
+
+public class JettraStoreEngineTest {
+
+    @Test
+    @DisplayName("Debe autenticar superusuario por defecto y validar inmutabilidad de roles")
+    public void testSuperuserSecurity() {
+        JettraSecurityManager sec = new JettraSecurityManager();
+        String token = sec.authenticate("admin", "admin-jettra");
+        assertNotNull(token);
+        assertTrue(token.startsWith("JettraJWT."));
+
+        JettraSecurityManager.Claims claims = sec.validateToken(token);
+        assertEquals("admin", claims.username());
+        assertEquals("SUPER_ADMIN", claims.role());
+
+        // Crear usuario secundario
+        sec.createUser(token, "operator", "Pass123", "DB_ADMIN");
+        String operatorToken = sec.authenticate("operator", "Pass123");
+
+        // Intentar alterar el rol de admin desde un usuario secundario debe fallar
+        assertThrows(SecurityException.class, () -> {
+            sec.alterUserRole(operatorToken, "admin", "READ_ONLY");
+        });
+    }
+
+    @Test
+    @DisplayName("Debe gestionar memoria nativa fuera del Heap con Project Panama FFM")
+    public void testPanamaNativeMemTable() throws IOException {
+        try (NativeMemTable mem = new NativeMemTable(1024 * 1024)) { // 1 MB
+            byte[] key = "item_1".getBytes();
+            byte[] payload = "{\"price\": 49.99}".getBytes();
+            boolean appended = mem.append((byte) 1, key, payload);
+            assertTrue(appended);
+            assertTrue(mem.getUsedBytes() > 0);
+
+            Path tempJettra = Files.createTempFile("test_panama", ".jettra");
+            mem.flushToJettraFile(tempJettra);
+            assertTrue(Files.size(tempJettra) > 0);
+            Files.deleteIfExists(tempJettra);
+        }
+    }
+
+    @Test
+    @DisplayName("Debe activar la transición al anillo distribuido al alcanzar el umbral de RAM (85%)")
+    public void testDynamicRingTransition() {
+        DynamicRingEngine ring = new DynamicRingEngine("node-01", 0.85, 0.45);
+        ClusterNode node2 = new ClusterNode("node-02", "127.0.0.1", 9092, ClusterNode.Role.SECONDARY);
+        ring.registerPeer(node2);
+
+        try (NativeMemTable mem = new NativeMemTable(1024 * 1024)) {
+            mem.append((byte) 1, "k1".getBytes(), "v1".getBytes());
+
+            // 70% de RAM -> No activa anillo
+            ring.evaluateMemorySaturation(0.70, mem);
+            assertFalse(ring.isRingActive());
+
+            // 88% de RAM -> Activa anillo y descarga carga a nodo 2
+            ring.evaluateMemorySaturation(0.88, mem);
+            assertTrue(ring.isRingActive());
+            assertTrue(ring.getCurrentMemoryUsage() <= 0.45);
+            assertTrue(node2.getReceivedRingSegments() > 0);
+        }
+    }
+
+    @Test
+    @DisplayName("Debe soportar referencias cruzadas con Lazy Loading")
+    public void testCrossEngineLazyLoading() {
+        JettraRef<String> lazyRef = new JettraRef<>(
+            "vector", 
+            "emb_01", 
+            JettraRef.FetchMode.LAZY, 
+            () -> "[0.15, -0.42, 0.88]"
+        );
+
+        assertFalse(lazyRef.isResolved());
+        assertEquals("vector::emb_01", lazyRef.getDescriptor());
+
+        // Resolución explícita bajo demanda
+        String resolved = lazyRef.resolve();
+        assertEquals("[0.15, -0.42, 0.88]", resolved);
+        assertTrue(lazyRef.isResolved());
+    }
+
+    @Test
+    @DisplayName("Debe ejecutar Hot Backup y Restauración de base de datos .jettra")
+    public void testBackupAndRestore() throws IOException {
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+        JettraDatabase db = new JettraDatabase("test_backup_db", cfg);
+        db.getDocumentEngine("users").insert("u1", Map.of("name", "Alice"));
+
+        Path backupPath = Files.createTempFile("snapshot", ".jettra_bak");
+        var meta = BackupManager.backupDatabase(db, backupPath);
+        assertNotNull(meta);
+        assertEquals("test_backup_db", meta.databaseName());
+
+        boolean restored = BackupManager.restoreDatabase(backupPath, db);
+        assertTrue(restored);
+        Files.deleteIfExists(backupPath);
+    }
+}

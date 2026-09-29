@@ -1,0 +1,89 @@
+package io.jettra.store.core;
+
+import java.io.InputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Properties;
+
+public final class JettraStoreConfig {
+    private final String storagePath;
+    private final int memTableSizeMb;
+    private final int ramGlobalLimitMb;
+    private final boolean offHeapDirect;
+    private final String fileExtension;
+    private final int ringSaturationThresholdPercent;
+    private final int ringReleaseTargetPercent;
+    private final boolean jettraPoliceActive;
+    private final long jettraPoliceIntervalMs;
+    private final boolean jmhMetricsActive;
+    private final String jwtAlgorithm;
+    private final long jwtExpirationSeconds;
+    private final String defaultAdminUsername;
+    private final String defaultAdminPassword;
+    private final int grpcPort;
+    private final int restPort;
+
+    public JettraStoreConfig(Properties props) {
+        String configuredPath = System.getProperty("jettra.storage.path", 
+            props.getProperty("jettra.storage.path", "./data/jettra"));
+        
+        // Verificar si la ruta o su primer ancestro existente es escribible por el usuario actual
+        try {
+            Path path = Path.of(configuredPath);
+            Path test = path;
+            while (test != null && !Files.exists(test)) {
+                test = test.getParent();
+            }
+            if (test == null || !Files.isWritable(test)) {
+                configuredPath = "./data/jettra";
+            }
+        } catch (Exception e) {
+            configuredPath = "./data/jettra";
+        }
+
+        this.storagePath = configuredPath;
+        this.memTableSizeMb = Integer.parseInt(props.getProperty("jettra.storage.memtable.size.mb", "128"));
+        this.ramGlobalLimitMb = Integer.parseInt(props.getProperty("jettra.storage.ram.global.limit.mb", "2048"));
+        this.offHeapDirect = Boolean.parseBoolean(props.getProperty("jettra.storage.offheap.direct", "true"));
+        this.fileExtension = props.getProperty("jettra.storage.file.extension", ".jettra");
+        this.ringSaturationThresholdPercent = Integer.parseInt(props.getProperty("jettra.ring.saturation.threshold.percent", "85"));
+        this.ringReleaseTargetPercent = Integer.parseInt(props.getProperty("jettra.ring.release.target.percent", "45"));
+        this.jettraPoliceActive = Boolean.parseBoolean(props.getProperty("jettrapolice.active", "true"));
+        this.jettraPoliceIntervalMs = Long.parseLong(props.getProperty("jettrapolice.interval.ms", "500"));
+        this.jmhMetricsActive = Boolean.parseBoolean(props.getProperty("jmh.metrics.active", "false"));
+        this.jwtAlgorithm = props.getProperty("jettra.security.jwt.algorithm", "Ed25519");
+        this.jwtExpirationSeconds = Long.parseLong(props.getProperty("jettra.security.jwt.expiration.seconds", "86400"));
+        this.defaultAdminUsername = props.getProperty("jettra.security.default.admin.username", "admin");
+        this.defaultAdminPassword = props.getProperty("jettra.security.default.admin.password", "admin-jettra");
+        this.grpcPort = Integer.parseInt(props.getProperty("jettra.network.grpc.port", "9091"));
+        this.restPort = Integer.parseInt(props.getProperty("jettra.network.rest.port", "8080"));
+    }
+
+    public static JettraStoreConfig load() {
+        Properties props = new Properties();
+        try (InputStream is = JettraStoreConfig.class.getResourceAsStream("/database.properties")) {
+            if (is != null) {
+                props.load(is);
+            }
+        } catch (IOException ignored) {}
+        return new JettraStoreConfig(props);
+    }
+
+    public String getStoragePath() { return storagePath; }
+    public int getMemTableSizeMb() { return memTableSizeMb; }
+    public int getRamGlobalLimitMb() { return ramGlobalLimitMb; }
+    public boolean isOffHeapDirect() { return offHeapDirect; }
+    public String getFileExtension() { return fileExtension; }
+    public int getRingSaturationThresholdPercent() { return ringSaturationThresholdPercent; }
+    public int getRingReleaseTargetPercent() { return ringReleaseTargetPercent; }
+    public boolean isJettraPoliceActive() { return jettraPoliceActive; }
+    public long getJettraPoliceIntervalMs() { return jettraPoliceIntervalMs; }
+    public boolean isJmhMetricsActive() { return jmhMetricsActive; }
+    public String getJwtAlgorithm() { return jwtAlgorithm; }
+    public long getJwtExpirationSeconds() { return jwtExpirationSeconds; }
+    public String getDefaultAdminUsername() { return defaultAdminUsername; }
+    public String getDefaultAdminPassword() { return defaultAdminPassword; }
+    public int getGrpcPort() { return grpcPort; }
+    public int getRestPort() { return restPort; }
+}
