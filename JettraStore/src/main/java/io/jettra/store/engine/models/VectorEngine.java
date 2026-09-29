@@ -49,6 +49,7 @@ public final class VectorEngine {
         return (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
     }
 
+    public Map<String, float[]> getAllVectors() { return Collections.unmodifiableMap(vectors); }
     public String getName() { return name; }
     public int getDimensions() { return dimensions; }
     public int size() { return vectors.size(); }

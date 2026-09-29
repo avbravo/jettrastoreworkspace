@@ -41,6 +41,10 @@ public final class GeospatialEngine {
         return R * c;
     }
 
+    public Map<String, GeoPoint> getAllPoints() {
+        return Collections.unmodifiableMap(points);
+    }
+
     public String getLayerName() { return layerName; }
     public int size() { return points.size(); }
 }

@@ -30,6 +30,11 @@ public final class GraphEngine {
         return adjacencyList.getOrDefault(vertexId, Collections.emptyList());
     }
 
+    public Map<String, List<Edge>> getAllEdges() {
+        return Collections.unmodifiableMap(adjacencyList);
+    }
+
     public Set<String> getVertices() { return vertices; }
     public String getName() { return name; }
+    public int size() { return vertices.size(); }
 }

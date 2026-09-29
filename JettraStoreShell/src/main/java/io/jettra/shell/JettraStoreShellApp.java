@@ -1,67 +1,63 @@
 package io.jettra.shell;
 
 import io.jettra.driver.JettraClient;
+import io.jettra.driver.config.JettraClientConfig;
+import io.jettra.store.backup.BackupManager;
+import io.jettra.store.cluster.ClusterNode;
+import io.jettra.store.cluster.DynamicRingEngine;
 import io.jettra.store.core.JettraDatabase;
-import io.jettra.store.engine.models.DocumentEngine;
-import io.jettra.store.engine.models.VectorEngine;
-import io.jettra.store.engine.models.GraphEngine;
-import io.jettra.store.engine.models.TimeSeriesEngine;
-import io.jettra.store.engine.models.KeyValueEngine;
+import io.jettra.store.core.JettraStoreConfig;
+import io.jettra.store.engine.index.JettraIndexManager;
 import io.jettra.store.engine.query.JettraQLProcessor;
+import io.jettra.store.engine.query.JettraSQLProcessor;
 import io.jettra.store.security.JettraSecurityManager;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.InputStreamReader;
+import java.io.Console;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class JettraStoreShellApp {
-    public record SavedConnection(String name, String host, int port, String username) {}
-
     private JettraClient client;
+    private String currentDatabase = "default_db";
+    private boolean authenticated = false;
+    private String currentUser = "anonymous";
+    private String currentRole = "NONE";
     private String currentHost = "127.0.0.1";
     private int currentPort = 9091;
-    private String currentUser = null;
-    private String currentPassword = null;
-    private boolean authenticated = false;
-    private String currentDatabase = "default_db";
     private boolean lazyLoad = true;
     private boolean showReferences = true;
     private int pageSize = 20;
 
+    // Perfiles de Conexión Guardados
+    public record SavedConnection(String name, String host, int port, String user) {}
     private final Map<String, SavedConnection> savedConnections = new ConcurrentHashMap<>();
 
-    public JettraStoreShellApp() {
-        this(true);
-    }
-
-    public JettraStoreShellApp(boolean autoAuth) {
-        initDefaultSavedConnections();
-        if (autoAuth) {
-            this.currentUser = "admin";
-            this.currentPassword = "admin-jettra";
-            this.client = JettraClient.connect(currentHost, currentPort, currentUser, currentPassword);
-            this.authenticated = true;
-            this.client.getDatabase(currentDatabase);
+    public JettraStoreShellApp(boolean autoConnect) {
+        initDefaultConnections();
+        if (autoConnect) {
+            connectAndLogin("127.0.0.1", 9091, "admin", "admin-jettra");
         }
     }
 
     public JettraStoreShellApp(JettraClient client) {
-        initDefaultSavedConnections();
+        initDefaultConnections();
         this.client = client;
-        if (client != null) {
-            this.authenticated = true;
-            this.currentUser = client.getConfig().getUsername();
-            this.currentPassword = client.getConfig().getPassword();
+        this.authenticated = true;
+        this.currentUser = "admin";
+        this.currentRole = "SUPER_ADMIN";
+        this.currentHost = "127.0.0.1";
+        this.currentPort = 9091;
+        if (this.client != null) {
             this.client.getDatabase(currentDatabase);
         }
     }
 
-    private void initDefaultSavedConnections() {
-        savedConnections.put("local-cluster", new SavedConnection("local-cluster", "127.0.0.1", 9091, "admin"));
+    private void initDefaultConnections() {
+        savedConnections.put("local_master", new SavedConnection("local_master", "127.0.0.1", 9091, "admin"));
         savedConnections.put("node-02-replica", new SavedConnection("node-02-replica", "127.0.0.1", 9092, "admin"));
         savedConnections.put("node-03-replica", new SavedConnection("node-03-replica", "127.0.0.1", 9093, "admin"));
     }
@@ -71,6 +67,9 @@ public final class JettraStoreShellApp {
             return "";
         }
         String trimmed = command.trim();
+        if (trimmed.endsWith(";")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+        }
         String upper = trimmed.toUpperCase();
 
         // 1. Ayuda y Menú
@@ -106,11 +105,19 @@ public final class JettraStoreShellApp {
         // 5. Telemetría de Recursos (status) y Topología (show nodes)
         if (upper.equals("STATUS")) {
             return handleStatus();
-        } else if (upper.equals("SHOW NODES") || upper.equals("NODES")) {
+        } else if (upper.equals("SHOW NODES") || upper.equals("NODES") || upper.equals("LIST NODES")) {
             return handleShowNodes();
+        } else if (upper.startsWith("ADD NODE ")) {
+            return handleAddNode(trimmed);
+        } else if (upper.startsWith("REMOVE NODE ")) {
+            return handleRemoveNode(trimmed);
+        } else if (upper.startsWith("START NODE ")) {
+            return handleStartNode(trimmed);
+        } else if (upper.startsWith("STOP NODE ")) {
+            return handleStopNode(trimmed);
         }
 
-        // 6. Configuración Lazy Reference (lazy reference on / off)
+        // 6. Configuración Lazy Reference (lazy reference on / off (lazy reference on / lazy reference off))
         if (upper.equals("LAZY REFERENCE ON") || upper.equals("SET LAZY_REFERENCE ON") || upper.equals("SET LAZY_REFERENCE = TRUE")) {
             this.lazyLoad = true;
             this.showReferences = true;
@@ -124,8 +131,10 @@ public final class JettraStoreShellApp {
         }
 
         // 7. Control de Bases de Datos
-        if (upper.equals("SHOW DATABASES") || upper.equals("SHOW DBS")) {
+        if (upper.equals("SHOW DATABASES") || upper.equals("SHOW DBS") || upper.equals("LIST DATABASES") || upper.equals("LIST DBS")) {
             return handleShowDatabases();
+        } else if (upper.equals("SHOW SAMPLES") || upper.equals("SHOW SAMPLE DBS") || upper.equals("SHOW SAMPLE DATABASES") || upper.equals("SHOW DBS SAMPLES")) {
+            return handleShowSampleDatabases();
         } else if (upper.startsWith("CREATE DATABASE ")) {
             return handleCreateDatabase(trimmed);
         } else if (upper.startsWith("DROP DATABASE ")) {
@@ -136,21 +145,60 @@ public final class JettraStoreShellApp {
             return handleDbStats();
         }
 
-        // 8. Control de Colecciones / Modelos
-        if (upper.equals("SHOW COLLECTIONS") || upper.equals("SHOW TABLES")) {
+        // 8. Control de Buckets / Units y Colecciones
+        if (upper.equals("SHOW BUCKETS") || upper.equals("SHOW BUCKET") 
+                || upper.equals("SHOW UNIT") || upper.equals("SHOW UNITS") 
+                || upper.startsWith("SHOW BUCKETS ") || upper.startsWith("SHOW BUCKET ")
+                || upper.startsWith("SHOW UNIT ") || upper.startsWith("SHOW UNITS ")) {
+            return handleShowBuckets(trimmed);
+        } else if (upper.equals("SHOW RECORDS") || upper.startsWith("SHOW RECORDS ")) {
+            return handleShowRecords(trimmed);
+        } else if (upper.equals("COUNT") || upper.startsWith("COUNT ") || upper.equals("COUNT *") || upper.equals("COUNT ALL")) {
+            return handleCount(trimmed);
+        } else if (upper.equals("SHOW COLLECTIONS") || upper.equals("SHOW TABLES")) {
             return handleShowCollections();
         } else if (upper.startsWith("CREATE COLLECTION ")) {
             return handleCreateCollection(trimmed);
         } else if (upper.startsWith("DROP COLLECTION ")) {
             return handleDropCollection(trimmed);
-        } else if (upper.startsWith("COUNT ")) {
-            return handleCount(trimmed);
-        } else if (upper.startsWith("TRUNCATE ")) {
-            return handleTruncate(trimmed);
         }
 
-        // 9. Registros y CRUD de Documentos
-        if (upper.startsWith("INSERT INTO ")) {
+        // 9. Administración de Índices
+        if (upper.startsWith("CREATE INDEX ")) {
+            return handleCreateIndex(trimmed);
+        } else if (upper.startsWith("DROP INDEX ")) {
+            return handleDropIndex(trimmed);
+        } else if (upper.startsWith("ALTER INDEX ") && upper.contains("REBUILD") || upper.startsWith("REINDEX ")) {
+            return handleRebuildIndex(trimmed);
+        } else if (upper.equals("SHOW INDEXES") || upper.startsWith("SHOW INDEXES ON ") || upper.equals("LIST INDEXES")) {
+            return handleShowIndexes(trimmed);
+        }
+
+        // 10. Administración de Usuarios y Roles de Base de Datos
+        if (upper.equals("SHOW USERS") || upper.equals("LIST USERS")) {
+            return handleShowUsers();
+        } else if (upper.startsWith("CREATE USER ")) {
+            return handleCreateUser(trimmed);
+        } else if (upper.startsWith("DROP USER ")) {
+            return handleDropUser(trimmed);
+        } else if (upper.startsWith("ALTER USER ")) {
+            return handleAlterUser(trimmed);
+        } else if (upper.startsWith("GRANT ")) {
+            return handleGrantRole(trimmed);
+        } else if (upper.startsWith("REVOKE ")) {
+            return handleRevokeRole(trimmed);
+        } else if (upper.startsWith("SHOW GRANTS FOR ")) {
+            return handleShowGrants(trimmed);
+        }
+
+        // 11. Registros Referenciados y CRUD
+        if (upper.startsWith("INSERT REF ")) {
+            return handleInsertRef(trimmed);
+        } else if (upper.startsWith("RESOLVE REF ")) {
+            return handleResolveRef(trimmed);
+        } else if (upper.startsWith("SHOW REFS ")) {
+            return handleShowRefs(trimmed);
+        } else if (upper.startsWith("INSERT INTO ")) {
             return handleInsert(trimmed);
         } else if (upper.startsWith("GET ") || upper.startsWith("FIND ONE ") || upper.startsWith("FIND BY ID ")) {
             return handleGetRecord(trimmed);
@@ -162,17 +210,16 @@ public final class JettraStoreShellApp {
             return handleDeleteRecord(trimmed);
         }
 
-        // 10. Soporte de Consultas JettraQL y JettraSQL
+        // 12. Soporte Políglota: JettraQL y JettraSQL
         if (upper.startsWith("JQL ") || upper.startsWith("JETTRAQL ") || upper.startsWith("FROM ") 
                 || upper.startsWith("MATCH ") || upper.startsWith("VECTOR SIMILARITY ") 
                 || upper.startsWith("VECTOR MATCH ") || upper.startsWith("FETCH ")) {
             return handleJettraQL(trimmed);
-        } else if (upper.startsWith("SELECT ") || upper.startsWith("INSERT ") || upper.startsWith("UPDATE ") || upper.startsWith("DELETE ")) {
-            var res = client.sql(currentDatabase, trimmed);
-            return String.format("[%s] Filas afectadas / seleccionadas: %d", res.message(), res.affectedRows());
+        } else if (upper.startsWith("SQL ") || upper.startsWith("JETTRASQL ") || upper.startsWith("SELECT ")) {
+            return handleJettraSQL(trimmed);
         }
 
-        // 11. Motores Multimodelo Especializados
+        // 13. Motores Multimodelo Especializados
         if (upper.startsWith("VECTOR INDEX ")) {
             return handleVectorIndex(trimmed);
         } else if (upper.startsWith("VECTOR SEARCH ")) {
@@ -193,16 +240,7 @@ public final class JettraStoreShellApp {
             return handleKvGet(trimmed);
         }
 
-        // 12. Clúster, Seguridad y RAM legacy
-        if (upper.equals("SHOW CLUSTER") || upper.equals("CLUSTER STATUS")) {
-            return handleShowNodes();
-        } else if (upper.equals("SHOW USERS") || upper.equals("SECURITY STATUS")) {
-            return handleSecurityStatus();
-        } else if (upper.equals("SHOW RAM") || upper.equals("SHOW MEMORY") || upper.equals("RAM STATUS")) {
-            return handleRamStatus();
-        }
-
-        // 13. Persistencia y Muestras Completas
+        // 14. Persistencia y Muestras Completas
         if (upper.startsWith("INSTALL SAMPLES") || upper.equals("1")) {
             return installAllSampleDatabases();
         } else if (upper.startsWith("BACKUP DATABASE")) {
@@ -211,218 +249,260 @@ public final class JettraStoreShellApp {
             return handleRestore(trimmed);
         }
 
-        // 14. Opciones de Configuración
-        if (upper.startsWith("SET LAZY_LOAD")) {
-            this.lazyLoad = upper.contains("TRUE") || upper.contains("ON");
-            return "[CONFIG] LAZY_LOAD configurado a: " + this.lazyLoad;
-        } else if (upper.startsWith("SET SHOW_REFERENCES")) {
-            this.showReferences = upper.contains("TRUE") || upper.contains("ON");
-            return "[CONFIG] SHOW_REFERENCES configurado a: " + this.showReferences;
-        } else if (upper.startsWith("SET PAGE_SIZE")) {
-            try {
-                this.pageSize = Integer.parseInt(trimmed.replaceAll("[^0-9]", ""));
-                return "[CONFIG] PAGE_SIZE configurado a: " + this.pageSize;
-            } catch (Exception e) {
-                return "[ERROR] Formato inválido. Uso: SET PAGE_SIZE = <número>";
-            }
-        }
-
-        return "[SHELL] Comando no reconocido: '" + trimmed + "'. Escriba 'help' o '?' para ver la lista de comandos disponibles.";
+        return "[ERROR] Comando desconocido: '" + trimmed + "'. Escriba 'help' o 'menu' para ver los comandos disponibles.";
     }
 
-    // --- Conexión, Autenticación y Cierre de Sesión ---
-    private String handleConnect(String command) {
+    // --- 1. Conexión y Autenticación ---
+    public boolean connectAndLogin(String host, int port, String user, String pass) {
         try {
-            String remainder = command.substring(8).trim();
-            // Puede ser: connect <url> <port> O connect <saved-name>
-            String[] parts = remainder.split("\\s+");
-            if (parts.length == 1) {
-                String profileName = parts[0].trim();
-                SavedConnection saved = savedConnections.get(profileName);
-                if (saved != null) {
-                    this.currentHost = saved.host();
-                    this.currentPort = saved.port();
-                    return String.format("[CONNECTED] Conectado exitosamente al perfil guardado '%s' (%s:%d)", profileName, currentHost, currentPort);
-                } else {
-                    return String.format("[ERROR] Perfil de conexión '%s' no encontrado. Use 'list connections'.", profileName);
-                }
-            } else if (parts.length >= 2) {
-                this.currentHost = parts[0].trim();
-                this.currentPort = Integer.parseInt(parts[1].trim());
-                if (currentUser != null && currentPassword != null) {
-                    this.client = JettraClient.connect(currentHost, currentPort, currentUser, currentPassword);
-                    this.authenticated = true;
-                }
-                return String.format("[CONNECTED] Conectado exitosamente al servidor JettraStore en %s:%d (Cluster Raft 3 Nodos)", currentHost, currentPort);
-            }
-            return "[ERROR] Uso: connect <url> <port> (ejemplo: connect 127.0.0.1 9091) o connect <nombre-perfil>";
+            this.currentHost = host;
+            this.currentPort = port;
+            this.client = JettraClient.connect(host, port, user, pass);
+            this.authenticated = true;
+            this.currentUser = user;
+            var claims = client.getSecurityManager().validateToken(client.getSessionToken());
+            this.currentRole = claims.role();
+            this.client.getDatabase(currentDatabase);
+            return true;
         } catch (Exception e) {
-            return "[ERROR] Error al conectar con servidor JettraStore: " + e.getMessage();
+            this.authenticated = false;
+            this.currentUser = "anonymous";
+            this.currentRole = "NONE";
+            return false;
         }
+    }
+
+    private String handleConnect(String command) {
+        String clean = command.substring(8).trim();
+        if (savedConnections.containsKey(clean)) {
+            SavedConnection sc = savedConnections.get(clean);
+            this.currentHost = sc.host();
+            this.currentPort = sc.port();
+            return String.format("[CONNECTED] Servidor configurado a '%s:%d' desde perfil '%s'. Inicie sesión con: login %s <password>",
+                currentHost, currentPort, sc.name(), sc.user());
+        }
+
+        String[] parts = clean.split("\\s+");
+        if (parts.length >= 2) {
+            this.currentHost = parts[0].trim();
+            try {
+                this.currentPort = Integer.parseInt(parts[1].trim());
+            } catch (Exception e) {
+                return "[ERROR] Puerto numérico inválido: " + parts[1];
+            }
+            return String.format("[CONNECTED] Servidor JettraStore configurado a %s:%d. Proceda con 'login <username> <password>'.", currentHost, currentPort);
+        } else if (parts.length == 1 && !parts[0].isBlank()) {
+            this.currentHost = parts[0].trim();
+            return String.format("[CONNECTED] Host configurado a %s:%d. Proceda con 'login <username> <password>'.", currentHost, currentPort);
+        }
+        return "[ERROR] Uso: connect <host> <puerto> o connect <nombre-conexion>";
     }
 
     private String handleLogin(String command) {
-        try {
-            String[] parts = command.substring(6).trim().split("\\s+");
-            if (parts.length < 2) {
-                return "[ERROR] Uso: login <username> <password>";
-            }
-            String user = parts[0].trim();
-            String pass = parts[1].trim();
+        String[] parts = command.substring(6).trim().split("\\s+");
+        if (parts.length < 2) {
+            return "[ERROR] Uso: login <username> <password>";
+        }
+        String user = parts[0].trim();
+        String pass = parts[1].trim();
 
-            JettraSecurityManager sec = new JettraSecurityManager();
-            String token = sec.authenticate(user, pass);
-
-            if (token != null) {
-                this.currentUser = user;
-                this.currentPassword = pass;
-                this.authenticated = true;
-                this.client = JettraClient.connect(currentHost, currentPort, user, pass);
-                this.client.getDatabase(currentDatabase);
-                return String.format("[AUTH SUCCESS] Autenticado exitosamente como '%s'%s. Token JettraJWT emitido y activo.",
-                        user, "admin".equalsIgnoreCase(user) ? " (SUPER_ADMIN INMUTABLE)" : "");
-            } else {
-                return String.format("[AUTH FAILED] Credenciales inválidas para el usuario '%s'.", user);
-            }
-        } catch (Exception e) {
-            return "[AUTH ERROR] Fallo durante autenticación: " + e.getMessage();
+        boolean ok = connectAndLogin(currentHost, currentPort, user, pass);
+        if (ok) {
+            return String.format("[AUTH SUCCESS] Sesión iniciada como '%s' (Rol Global: %s) en %s:%d.", currentUser, currentRole, currentHost, currentPort);
+        } else {
+            return "[AUTH ERROR] Credenciales inválidas para el usuario: " + user;
         }
     }
 
     private String handleLogout() {
         if (!authenticated) {
-            return "[INFO] No hay ninguna sesión activa actualmente.";
+            return "[INFO] No hay ninguna sesión activa en este momento.";
         }
-        String prevUser = currentUser;
+        String oldUser = currentUser;
         this.authenticated = false;
-        this.currentUser = null;
-        this.currentPassword = null;
+        this.currentUser = "anonymous";
+        this.currentRole = "NONE";
         if (this.client != null) {
-            try { this.client.close(); } catch (Exception ignored) {}
-            this.client = null;
+            this.client.close();
         }
-        return String.format("[LOGOUT] Sesión cerrada para el usuario '%s'. Puede conectarse o autenticarse nuevamente con 'login <username> <password>'.", prevUser);
+        return String.format("[LOGOUT] Sesión del usuario '%s' finalizada exitosamente. Inicie sesión nuevamente con 'login <username> <password>'.", oldUser);
     }
 
-    // --- Gestión de Conexiones Guardadas ---
+    // --- 2. Gestión de Perfiles de Conexión ---
     private String handleSaveConnection(String command) {
-        String name = cleanQuotes(command.substring("SAVE CONNECTION ".length()));
-        if (name.isBlank()) {
-            return "[ERROR] Nombre de conexión requerido. Uso: save connection <nombre-conexion>";
+        String clean = command.substring("SAVE CONNECTION ".length()).trim();
+        String[] parts = clean.split("\\s+");
+        if (parts.length < 1 || parts[0].isBlank()) {
+            return "[ERROR] Uso: save connection <nombre-conexion> [host] [puerto] [user]";
         }
-        String user = (currentUser != null && !currentUser.isBlank()) ? currentUser : "admin";
-        SavedConnection sc = new SavedConnection(name, currentHost, currentPort, user);
-        savedConnections.put(name, sc);
-        return String.format("[SUCCESS] Conexión '%s' guardada exitosamente (%s:%d, usuario: %s).", name, currentHost, currentPort, user);
+        String name = cleanQuotes(parts[0]);
+        String host = parts.length > 1 ? parts[1].trim() : currentHost;
+        int port = parts.length > 2 ? Integer.parseInt(parts[2].trim()) : currentPort;
+        String user = parts.length > 3 ? parts[3].trim() : (authenticated ? currentUser : "admin");
+
+        savedConnections.put(name, new SavedConnection(name, host, port, user));
+        return String.format("[SUCCESS] Conexión '%s' guardada (%s:%d, usuario: %s).", name, host, port, user);
     }
 
     private String handleRemoveConnection(String command) {
-        String name = cleanQuotes(command.substring("REMOVE CONNECTION ".length()));
-        if (name.isBlank()) {
-            return "[ERROR] Nombre de conexión requerido. Uso: remove connection <nombre-conexion>";
-        }
+        String name = cleanQuotes(command.substring("REMOVE CONNECTION ".length()).trim());
+        if (name.isBlank()) return "[ERROR] Uso: remove connection <nombre-conexion>";
         SavedConnection removed = savedConnections.remove(name);
-        return removed != null 
-            ? String.format("[SUCCESS] Conexión guardada '%s' eliminada exitosamente.", name)
-            : String.format("[INFO] No se encontró ninguna conexión guardada con el nombre '%s'.", name);
+        if (removed != null) {
+            return String.format("[SUCCESS] Conexión guardada '%s' eliminada correctamente.", name);
+        } else {
+            return String.format("[WARN] No existe una conexión guardada con el nombre '%s'.", name);
+        }
     }
 
     private String handleListConnections() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("+-----------------------+--------------------+--------+-----------------+\n");
-        sb.append("| Perfil de Conexión    | Host               | Puerto | Usuario         |\n");
-        sb.append("+-----------------------+--------------------+--------+-----------------+\n");
-        for (SavedConnection sc : savedConnections.values()) {
-            sb.append(String.format("| %-21s | %-18s | %-6d | %-15s |\n", sc.name(), sc.host(), sc.port(), sc.username()));
+        if (savedConnections.isEmpty()) {
+            return "[INFO] No hay conexiones guardadas.";
         }
-        sb.append("+-----------------------+--------------------+--------+-----------------+\n");
-        sb.append(String.format("Total: %d conexión(es) guardada(s). Endpoint activo actual: %s:%d\n", savedConnections.size(), currentHost, currentPort));
+        StringBuilder sb = new StringBuilder();
+        sb.append("+----------------------+----------------------+-------+-----------------+----------+\n");
+        sb.append("| Nombre de Perfil     | Host / IP            | Puerto| Usuario         | Activo   |\n");
+        sb.append("+----------------------+----------------------+-------+-----------------+----------+\n");
+        for (SavedConnection sc : savedConnections.values()) {
+            boolean isCur = sc.host().equals(currentHost) && sc.port() == currentPort;
+            sb.append(String.format("| %-20s | %-20s | %-5d | %-15s | %-8s |\n",
+                sc.name(), sc.host(), sc.port(), sc.user(), isCur ? "* SI" : "NO"));
+        }
+        sb.append("+----------------------+----------------------+-------+-----------------+----------+\n");
+        sb.append(String.format("Total: %d perfil(es) de conexión guardado(s).", savedConnections.size()));
         return sb.toString();
     }
 
-    // --- Telemetría de Recursos (status) ---
+    // --- 3. Telemetría de Recursos (STATUS) ---
     private String handleStatus() {
         Runtime rt = Runtime.getRuntime();
-        long totalMemory = rt.totalMemory();
-        long freeMemory = rt.freeMemory();
-        long usedMemory = totalMemory - freeMemory;
-        long maxMemory = rt.maxMemory();
+        long totalRam = rt.totalMemory() / (1024 * 1024);
+        long freeRam = rt.freeMemory() / (1024 * 1024);
+        long usedRam = totalRam - freeRam;
+        long maxRam = rt.maxMemory() / (1024 * 1024);
+        int cpuCores = rt.availableProcessors();
 
-        int availableProcessors = rt.availableProcessors();
-
-        File root = new File(".");
-        long totalSpace = root.getTotalSpace();
-        long freeSpace = root.getFreeSpace();
-        long usedSpace = totalSpace - freeSpace;
-
-        long toMb = 1024L * 1024L;
-        long toGb = 1024L * 1024L * 1024L;
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+        String storagePath = cfg.getStoragePath();
+        String rawConfigured = cfg.getConfiguredStoragePath();
+        long diskBytes = 0;
+        int filesCount = 0;
+        try {
+            Path p = Path.of(storagePath);
+            if (Files.exists(p)) {
+                try (var s = Files.walk(p)) {
+                    for (Path f : (Iterable<Path>) s::iterator) {
+                        if (Files.isRegularFile(f)) {
+                            diskBytes += Files.size(f);
+                            filesCount++;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
 
         return String.format("""
-            ========================= JETTRASTORE CONSUMO DE RECURSOS (STATUS) =========================
-              RAM (MEMORIA):
-                - Panama FFM Off-Heap Asignado:   512 MB (Project Panama MemorySegment nativo)
-                - Panama FFM Off-Heap Utilizado:  217.6 MB (42.5%% saturación - Rango Seguro)
-                - Anillo por Saturación RAM:      UMBRAL 85%% (Estado: LOCAL / Desborde Inactivo)
-                - JVM Heap Utilizado (ZGC):       %d MB de %d MB (Máximo: %d MB)
-                - Pausas de Recolección ZGC:      < 1 ms garantizadas (Zero GC Latency)
-                - Compact Object Headers:         HABILITADO (Ahorro del 22%% en encabezados de memoria)
-
-              PROCESADOR (CPU):
-                - Cores / Hilos Disponibles:      %d Cores lógicos
-                - Uso Estimado de CPU JVM:        8.4%% (Bajo consumo en reposo)
-                - Arquitectura de Concurrencia:   Java 25 Virtual Threads (Loom Worker Pool activo)
-                - Hilos Virtuales en Ejecución:   128 workers procesando transacciones concurrentes
-
-              DISCO (ALMACENAMIENTO):
-                - Motor de Almacenamiento:        LSM SSTables en formato binario nativo '.jettra'
-                - MemTable Flush Strategy:        Direct I/O sincrónico en background
-                - Espacio en Disco Partición:     %d GB Usados / %d GB Libres (Total: %d GB)
-                - Estado de Persistencia:         CONSISTENTE (ACID Wal & Snapshot activos)
-            ============================================================================================
-            """, 
-            usedMemory / toMb, totalMemory / toMb, maxMemory / toMb,
-            availableProcessors,
-            usedSpace / toGb, freeSpace / toGb, totalSpace / toGb);
-    }
-
-    // --- Topología de Nodos (show nodes) ---
-    private String handleShowNodes() {
-        return """
-            ======================= TOPOLOGÍA DEL CLÚSTER JETTRASTORE (SHOW NODES) =======================
-              Nodo       Endpoint Host:Port   Rol Raft       Estado    Latencia   Sincronización   Quórum
-              ---------------------------------------------------------------------------------------
-              node-01    127.0.0.1:9091       LEADER         ONLINE    < 0.2 ms   100%             ACTIVO
-              node-02    127.0.0.1:9092       FOLLOWER       ONLINE      0.8 ms   100%             ACTIVO
-              node-03    127.0.0.1:9093       FOLLOWER       ONLINE      1.1 ms   100%             ACTIVO
-              ---------------------------------------------------------------------------------------
-              Quórum Total: 3 de 3 nodos alcanzado | Algoritmo: Raft Distribuido | Heartbeats: cada 150ms
-              Tolerancia a Fallos: 1 nodo con recuperación automática sin pérdida de datos.
             ==============================================================================================
-            """;
+                                  JETTRASTORE RESOURCE MONITOR & TELEMETRY (JAVA 25+)
+            ==============================================================================================
+            1. RAM (MEMORIA):
+               - Panama FFM Off-Heap Direct: Habilitado (Arena Compartida Cero Copia)
+               - Heap JVM (ZGC Generational): Ocupada %d MB / Total %d MB (Máx JVM: %d MB)
+               - MemTable Tamaño Asignado:   %d MB
+               - Dynamic Ring Saturation:    Umbral 85%% (Descarga automática a nodos secundarios)
+               - Compact Object Headers:     Activo (--XX:+UseCompactObjectHeaders)
+
+            2. PROCESADOR (CPU):
+               - Núcleos Lógicos del Host:   %d Cores
+               - Virtual Threads (Loom):     Activos (I/O Concurrente No Bloqueante en red gRPC/REST)
+               - Hilos de Compaction LSM:    En segundo plano (Prioridad baja)
+
+            3. DISCO (ALMACENAMIENTO):
+               - Ruta Física Configurada:    %s
+               - Directorio Activo de Datos: %s
+               - Tamaño Ocupado por SSTables: %.2f KB (%d bytes)
+               - Archivos de Datos (.jettra): %d archivo(s)
+               - Formato de Almacenamiento:  Estructura LSM (.jettra) con Bloom Filters y Sparse Indexes
+            ==============================================================================================
+            """, usedRam, totalRam, maxRam, cfg.getMemTableSizeMb(), cpuCores, rawConfigured, storagePath, (diskBytes / 1024.0), diskBytes, filesCount);
     }
 
-    // --- Soporte JettraQL ---
-    private String handleJettraQL(String command) {
-        String clean = command;
-        if (clean.toUpperCase().startsWith("JQL ")) clean = clean.substring(4).trim();
-        else if (clean.toUpperCase().startsWith("JETTRAQL ")) clean = clean.substring(9).trim();
-
-        JettraQLProcessor.JQLResult res = client.jql(currentDatabase, clean);
+    // --- 4. Administración de Nodos del Clúster ---
+    private String handleShowNodes() {
+        DynamicRingEngine ring = client.getRingEngine();
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("=== JETTRAQL [%s] ===\n", res.operation()));
-        sb.append("Resumen: ").append(res.summary()).append("\n");
-        if (!res.rows().isEmpty()) {
-            sb.append("Columnas: ").append(res.columns()).append("\n");
-            int idx = 1;
-            for (var row : res.rows()) {
-                sb.append(String.format("  [%02d] %s\n", idx++, row));
-            }
+        sb.append("==============================================================================================\n");
+        sb.append("                          JETTRASTORE RAFT CLUSTER TOPOLOGY                                   \n");
+        sb.append("==============================================================================================\n");
+        sb.append("+----------+----------------------+-------+-----------+------------+----------+--------------+\n");
+        sb.append("| Nodo ID  | Dirección IP         | Puerto| Rol       | Estado Raft| Estado   | Offload Bytes|\n");
+        sb.append("+----------+----------------------+-------+-----------+------------+----------+--------------+\n");
+        sb.append(String.format("| %-8s | %-20s | %-5d | %-9s | %-10s | %-8s | %-12d |\n",
+            ring.getNodeId(), currentHost, currentPort, "PRIMARY", "LEADER", "RUNNING", 0));
+
+        for (ClusterNode peer : ring.getPeers()) {
+            sb.append(String.format("| %-8s | %-20s | %-5d | %-9s | %-10s | %-8s | %-12d |\n",
+                peer.getId(), peer.getIp(), peer.getPort(), peer.getRole(), peer.getRaftState(),
+                peer.getStatus(), peer.getReceivedOffloadedBytes()));
         }
+        sb.append("+----------+----------------------+-------+-----------+------------+----------+--------------+\n");
+        sb.append(String.format("Total: %d nodo(s) registrados en el anillo dinámico. Quórum: Activo.\n", ring.getPeers().size() + 1));
         return sb.toString();
     }
 
-    // --- Control de Bases de Datos ---
+    private String handleAddNode(String command) {
+        String clean = command.substring("ADD NODE ".length()).trim();
+        String[] parts = clean.split("\\s+");
+        if (parts.length < 3) {
+            return "[ERROR] Uso: ADD NODE <nodeId> <host> <port> [PRIMARY|SECONDARY]";
+        }
+        String id = parts[0].trim();
+        String host = parts[1].trim();
+        int port;
+        try {
+            port = Integer.parseInt(parts[2].trim());
+        } catch (Exception e) {
+            return "[ERROR] Puerto inválido: " + parts[2];
+        }
+        ClusterNode.Role role = (parts.length > 3 && "PRIMARY".equalsIgnoreCase(parts[3])) 
+            ? ClusterNode.Role.PRIMARY : ClusterNode.Role.SECONDARY;
+
+        ClusterNode newNode = new ClusterNode(id, host, port, role);
+        client.getRingEngine().registerPeer(newNode);
+        return String.format("[SUCCESS] Nodo '%s' (%s:%d, %s) agregado exitosamente al clúster Raft.", id, host, port, role);
+    }
+
+    private String handleRemoveNode(String command) {
+        String id = cleanQuotes(command.substring("REMOVE NODE ".length()).trim());
+        if (id.isBlank()) return "[ERROR] Uso: REMOVE NODE <nodeId>";
+        if ("node-01".equalsIgnoreCase(id) || client.getRingEngine().getNodeId().equalsIgnoreCase(id)) {
+            return "[ERROR] No se puede remover el nodo primario activo del clúster.";
+        }
+        boolean ok = client.getRingEngine().removePeer(id);
+        return ok ? "[SUCCESS] Nodo '" + id + "' removido del anillo de réplicas."
+                  : "[WARN] El nodo '" + id + "' no existe en el registro del clúster.";
+    }
+
+    private String handleStartNode(String command) {
+        String id = cleanQuotes(command.substring("START NODE ".length()).trim());
+        if (id.isBlank()) return "[ERROR] Uso: START NODE <nodeId>";
+        boolean ok = client.getRingEngine().startPeer(id);
+        return ok ? "[SUCCESS] Nodo '" + id + "' iniciado (RUNNING)."
+                  : "[ERROR] No se pudo iniciar el nodo '" + id + "' (nodo no encontrado).";
+    }
+
+    private String handleStopNode(String command) {
+        String id = cleanQuotes(command.substring("STOP NODE ".length()).trim());
+        if (id.isBlank()) return "[ERROR] Uso: STOP NODE <nodeId>";
+        if ("node-01".equalsIgnoreCase(id) || client.getRingEngine().getNodeId().equalsIgnoreCase(id)) {
+            return "[ERROR] No se puede detener el nodo primario local en ejecución.";
+        }
+        boolean ok = client.getRingEngine().stopPeer(id);
+        return ok ? "[SUCCESS] Nodo '" + id + "' detenido (STOPPED). Tráfico de anillo pausado para este nodo."
+                  : "[ERROR] No se pudo detener el nodo '" + id + "' (nodo no encontrado).";
+    }
+
+    // --- 5. Control de Bases de Datos & Detección en Disco ---
     private String handleShowDatabases() {
         List<String> dbs = client.listDatabases();
         if (!dbs.contains(currentDatabase)) {
@@ -430,18 +510,57 @@ public final class JettraStoreShellApp {
         }
         Collections.sort(dbs);
 
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+
         StringBuilder sb = new StringBuilder();
-        sb.append("+------------------------------------+-------------+----------------+\n");
-        sb.append("| Base de Datos                      | Colecciones | Estado         |\n");
-        sb.append("+------------------------------------+-------------+----------------+\n");
+        sb.append("+------------------------------------+----------+-------------+----------------+\n");
+        sb.append("| Base de Datos                      | Tipo     | Colecciones | Estado         |\n");
+        sb.append("+------------------------------------+----------+-------------+----------------+\n");
         for (String db : dbs) {
             JettraDatabase jettraDb = client.getDatabase(db);
             int colCount = jettraDb.getAllCollectionNames().size();
+            String tipo = db.startsWith("sample_") ? "SAMPLE" : (db.equals("default_db") ? "SYSTEM" : "USER");
             String status = db.equals(currentDatabase) ? "* ACTIVA" : "DISPONIBLE";
-            sb.append(String.format("| %-34s | %-11d | %-14s |\n", db, colCount, status));
+            sb.append(String.format("| %-34s | %-8s | %-11d | %-14s |\n", db, tipo, colCount, status));
         }
-        sb.append("+------------------------------------+-------------+----------------+\n");
-        sb.append(String.format("Total: %d base(s) de datos. Base de datos actual: '%s'", dbs.size(), currentDatabase));
+        sb.append("+------------------------------------+----------+-------------+----------------+\n");
+        sb.append(String.format("Total: %d base(s) de datos detectadas. Base activa: '%s'\n", dbs.size(), currentDatabase));
+        sb.append(String.format("Ruta física en database.properties: '%s' | Directorio de lectura/escritura: '%s'",
+            cfg.getConfiguredStoragePath(), cfg.getStoragePath()));
+        return sb.toString();
+    }
+
+    private String handleShowSampleDatabases() {
+        List<String> allDbs = client.listDatabases();
+        String[] samples = {
+            "sample_enterprise_db",
+            "sample_ecommerce_db",
+            "sample_ai_graph_db",
+            "sample_iot_telemetry_db",
+            "sample_financial_db"
+        };
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("==============================================================================================\n");
+        sb.append("                        BASES DE DATOS DE EJEMPLO (JettraStore Samples)                      \n");
+        sb.append("==============================================================================================\n");
+        sb.append("+-------------------------+--------------------+---------------------------------------------+\n");
+        sb.append("| Base de Datos           | Estado en Disco    | Motores & Propósito                         |\n");
+        sb.append("+-------------------------+--------------------+---------------------------------------------+\n");
+        for (String s : samples) {
+            boolean installed = allDbs.contains(s);
+            String desc = switch (s) {
+                case "sample_enterprise_db"    -> "Documentos, Vectores 3D, Grafos de Catálogo, KV, Series";
+                case "sample_ecommerce_db"     -> "Clientes, Órdenes, Analítica Columnar, Carritos KV";
+                case "sample_ai_graph_db"      -> "Red de Grafos de Conocimiento, Embeddings, Prompts";
+                case "sample_iot_telemetry_db" -> "Sensores Temperatura/Vibración, Smart Devices, Geo";
+                case "sample_financial_db"     -> "Transacciones de Cuentas, Ledger y Cotizaciones";
+                default -> "Muestra Multimodelo";
+            };
+            sb.append(String.format("| %-23s | %-18s | %-43s |\n", s, installed ? "INSTALADA (Lista)" : "NO INSTALADA", desc));
+        }
+        sb.append("+-------------------------+--------------------+---------------------------------------------+\n");
+        sb.append("Para instalar o re-inicializar todas las muestras completas, ejecute: INSTALL SAMPLES\n");
         return sb.toString();
     }
 
@@ -468,154 +587,468 @@ public final class JettraStoreShellApp {
     private String handleUseDatabase(String command) {
         String dbName = cleanQuotes(command.substring(4));
         if (dbName.isBlank()) return "[ERROR] Nombre de base de datos requerido.";
-        this.currentDatabase = dbName;
+
+        // Verificación de RBAC granular para el usuario activo
+        if (!client.getSecurityManager().hasDatabaseAccess(currentUser, dbName, "USE")) {
+            return String.format("[ACCESS DENIED] El usuario '%s' no posee permisos asignados para la base de datos '%s'.", currentUser, dbName);
+        }
+
         this.client.getDatabase(dbName);
-        return "[SUCCESS] Conmutado a la base de datos: '" + currentDatabase + "'";
+        this.currentDatabase = dbName;
+        return "[SUCCESS] Conmutado a base de datos activa: '" + dbName + "'.";
     }
 
     private String handleDbStats() {
         JettraDatabase db = client.getDatabase(currentDatabase);
-        StringBuilder sb = new StringBuilder();
-        sb.append("================ ESTADÍSTICAS DE LA BASE DE DATOS ================\n");
-        sb.append("Nombre:              ").append(db.getDatabaseName()).append("\n");
-        sb.append("Colecciones Docs:    ").append(db.getDocumentEngineNames().size()).append(" (").append(db.getDocumentEngineNames()).append(")\n");
-        sb.append("Motores Vectores:    ").append(db.getVectorEngineNames().size()).append(" (").append(db.getVectorEngineNames()).append(")\n");
-        sb.append("Motores Grafos:      ").append(db.getGraphEngineNames().size()).append(" (").append(db.getGraphEngineNames()).append(")\n");
-        sb.append("Series Temporales:   ").append(db.getTimeSeriesEngineNames().size()).append(" (").append(db.getTimeSeriesEngineNames()).append(")\n");
-        sb.append("Clave-Valor (KV):    ").append(db.getKeyValueEngineNames().size()).append(" (").append(db.getKeyValueEngineNames()).append(")\n");
-        sb.append("MemTable Off-Heap:   ").append(db.getConfig().getMemTableSizeMb()).append(" MB asignados vía Panama FFM\n");
-        sb.append("Directorio Datos:    ").append(db.getConfig().getStoragePath()).append("\n");
-        sb.append("Extensión Archivos:  ").append(db.getConfig().getFileExtension()).append(" (LSM Trees nativos)\n");
-        sb.append("==================================================================");
-        return sb.toString();
+        return String.format("""
+            === ESTADÍSTICAS DE BASE DE DATOS: '%s' ===
+            - Colecciones Totales: %d
+            - Documentos:          %s
+            - Vectores:            %s
+            - Grafos:              %s
+            - Series Temporales:   %s
+            - Índices Secundarios: %d
+            - MemTable Utilizada:  %.2f KB
+            """, currentDatabase, db.getAllCollectionNames().size(),
+            db.getDocumentEngineNames(), db.getVectorEngineNames(),
+            db.getGraphEngineNames(), db.getTimeSeriesEngineNames(),
+            db.getIndexManager().listIndexes(null).size(),
+            (db.getMemTable().getUsedBytes() / 1024.0));
     }
 
-    // --- Control de Colecciones ---
-    private String handleShowCollections() {
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        StringBuilder sb = new StringBuilder();
-        sb.append("+---------------------------+---------------------+---------+\n");
-        sb.append("| Colección                 | Motor Multimodelo   | Registros|\n");
-        sb.append("+---------------------------+---------------------+---------+\n");
-
-        int count = 0;
-        for (String c : db.getDocumentEngineNames()) {
-            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "DOCUMENT", db.getDocumentEngine(c).count()));
-            count++;
-        }
-        for (String c : db.getVectorEngineNames()) {
-            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "VECTOR (Cosine)", db.getVectorEngine(c, 3).size()));
-            count++;
-        }
-        for (String c : db.getGraphEngineNames()) {
-            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "GRAPH (Adjacency)", db.getGraphEngine(c).getVertices().size()));
-            count++;
-        }
-        for (String c : db.getTimeSeriesEngineNames()) {
-            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "TIMESERIES", db.getTimeSeriesEngine(c).size()));
-            count++;
-        }
-        for (String c : db.getKeyValueEngineNames()) {
-            sb.append(String.format("| %-25s | %-19s | %-7s |\n", c, "KEY-VALUE", "ACTIVO"));
-            count++;
-        }
-
-        if (count == 0) {
-            sb.append("| (Sin colecciones activas) | -                   | 0       |\n");
-        }
-        sb.append("+---------------------------+---------------------+---------+\n");
-        sb.append(String.format("Total: %d coleccion(es) en base de datos '%s'", count, currentDatabase));
-        return sb.toString();
-    }
-
-    private String handleCreateCollection(String command) {
-        String[] parts = command.split("\\s+");
-        if (parts.length < 3) return "[ERROR] Uso: CREATE COLLECTION <nombre> [TYPE <tipo>]";
-        String colName = cleanQuotes(parts[2]);
-        String type = "DOCUMENT";
-        for (int i = 3; i < parts.length - 1; i++) {
-            if ("TYPE".equalsIgnoreCase(parts[i])) {
-                type = parts[i + 1].toUpperCase();
-            }
-        }
-
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        switch (type) {
-            case "VECTOR" -> db.getVectorEngine(colName, 3);
-            case "GRAPH" -> db.getGraphEngine(colName);
-            case "TIMESERIES" -> db.getTimeSeriesEngine(colName);
-            case "KEYVALUE", "KV" -> db.getKeyValueEngine(colName);
-            default -> db.getDocumentEngine(colName);
-        }
-        return String.format("[SUCCESS] Colección '%s' creada con motor multimodelo '%s' en base de datos '%s'.", colName, type, currentDatabase);
-    }
-
-    private String handleDropCollection(String command) {
-        String colName = cleanQuotes(command.substring("DROP COLLECTION ".length()));
-        if (colName.isBlank()) return "[ERROR] Nombre de colección requerido.";
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        boolean dropped = db.dropCollection(colName);
-        return dropped ? "[SUCCESS] Colección '" + colName + "' eliminada de '" + currentDatabase + "'."
-                       : "[INFO] La colección '" + colName + "' no existía.";
-    }
-
-    private String handleCount(String command) {
-        String colName = cleanQuotes(command.substring(6));
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        long count = db.getDocumentEngine(colName).count();
-        return String.format("Colección '%s' tiene %d registros.", colName, count);
-    }
-
-    private String handleTruncate(String command) {
-        String colName = cleanQuotes(command.substring(9));
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        DocumentEngine docEngine = db.getDocumentEngine(colName);
-        long total = docEngine.count();
-        for (Map<String, Object> doc : docEngine.findAll()) {
-            Object id = doc.get("_id");
-            if (id != null) docEngine.delete(id.toString());
-        }
-        return String.format("[SUCCESS] Colección '%s' vaciada. Registros eliminados: %d.", colName, total);
-    }
-
-    // --- Control de Registros / Documentos (CRUD) ---
-    private String handleInsert(String command) {
+    // --- 6. Administración de Índices ---
+    private String handleCreateIndex(String command) {
+        // CREATE INDEX <indexName> ON <collection> (<field>) [TYPE <BTREE|HASH|SPARSE>] [UNIQUE]
         try {
-            String afterInsert = command.substring("INSERT INTO ".length()).trim();
-            String[] parts = afterInsert.split("\\s+");
-            String colName = cleanQuotes(parts[0]);
+            String upper = command.toUpperCase();
+            int onIdx = upper.indexOf(" ON ");
+            if (onIdx == -1) return "[ERROR] Sintaxis inválida. Uso: CREATE INDEX <nombre> ON <coleccion> (<campo>) [TYPE BTREE|HASH|SPARSE]";
 
-            String id = UUID.randomUUID().toString().substring(0, 8);
-            String jsonPart = "";
-
-            int idIdx = afterInsert.toUpperCase().indexOf(" ID ");
-            int jsonIdx = afterInsert.toUpperCase().indexOf(" JSON ");
-
-            if (idIdx != -1 && jsonIdx != -1) {
-                id = cleanQuotes(afterInsert.substring(idIdx + 4, jsonIdx).trim());
-                jsonPart = afterInsert.substring(jsonIdx + 6).trim();
-            } else if (jsonIdx != -1) {
-                jsonPart = afterInsert.substring(jsonIdx + 6).trim();
-            } else {
-                int brace = afterInsert.indexOf('{');
-                if (brace != -1) {
-                    jsonPart = afterInsert.substring(brace).trim();
-                }
+            String indexName = cleanQuotes(command.substring(13, onIdx).trim());
+            String rest = command.substring(onIdx + 4).trim();
+            int parenOpen = rest.indexOf('(');
+            int parenClose = rest.indexOf(')');
+            if (parenOpen == -1 || parenClose == -1) {
+                return "[ERROR] Campo de índice debe estar entre paréntesis: (<campo>).";
             }
 
-            Map<String, Object> map = parseJsonOrKeyValues(jsonPart);
-            if (map.containsKey("_id")) {
-                id = map.get("_id").toString();
-            } else {
-                map.put("_id", id);
-            }
+            String col = cleanQuotes(rest.substring(0, parenOpen).trim());
+            String field = cleanQuotes(rest.substring(parenOpen + 1, parenClose).trim());
+            String tail = rest.substring(parenClose + 1).toUpperCase();
+
+            String type = "BTREE";
+            if (tail.contains("HASH")) type = "HASH";
+            else if (tail.contains("SPARSE")) type = "SPARSE";
+
+            boolean unique = tail.contains("UNIQUE");
 
             JettraDatabase db = client.getDatabase(currentDatabase);
-            db.getDocumentEngine(colName).insert(id, map);
-            return String.format("[SUCCESS] Registro insertado en '%s' con _id: '%s'. Total campos: %d", colName, id, map.size());
+            var info = db.getIndexManager().createIndex(col, indexName, field, type, unique, db.getDocumentEngine(col));
+            return String.format("[SUCCESS] Índice '%s' creado sobre '%s'(%s) tipo %s (Entradas indexadas: %d).",
+                info.name(), info.collection(), info.field(), info.type(), info.entriesCount());
         } catch (Exception e) {
-            return "[ERROR] Formato de inserción inválido. Uso: INSERT INTO <col> ID <id> JSON {\"campo\": \"valor\"}";
+            return "[ERROR] Error al crear índice: " + e.getMessage();
         }
+    }
+
+    private String handleDropIndex(String command) {
+        String clean = cleanQuotes(command.substring("DROP INDEX ".length()).trim());
+        String indexName = clean.split("\\s+")[0];
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        boolean ok = db.getIndexManager().dropIndex(indexName);
+        return ok ? "[SUCCESS] Índice '" + indexName + "' eliminado correctamente."
+                  : "[WARN] El índice '" + indexName + "' no existe en la base de datos '" + currentDatabase + "'.";
+    }
+
+    private String handleRebuildIndex(String command) {
+        String clean = cleanQuotes(command.replaceAll("(?i)^(ALTER INDEX|REINDEX)\\s+", "").replaceAll("(?i)REBUILD", "").trim());
+        String indexName = clean.split("\\s+")[0];
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        var info = db.getIndexManager().getIndex(indexName);
+        if (info == null) return "[ERROR] Índice '" + indexName + "' no encontrado.";
+
+        var updated = db.getIndexManager().rebuildIndex(indexName, db.getDocumentEngine(info.collection()));
+        return String.format("[SUCCESS] Índice '%s' reconstruido exitosamente. Total entradas indexadas: %d.",
+            updated.name(), updated.entriesCount());
+    }
+
+    private String handleShowIndexes(String command) {
+        String col = null;
+        if (command.toUpperCase().contains(" ON ")) {
+            col = cleanQuotes(command.substring(command.toUpperCase().indexOf(" ON ") + 4).trim());
+        }
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        List<JettraIndexManager.IndexInfo> list = db.getIndexManager().listIndexes(col);
+
+        if (list.isEmpty()) {
+            return "[INFO] No se encontraron índices en '" + currentDatabase + "'" + (col != null ? " para la colección '" + col + "'." : ".");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== ÍNDICES DE BASE DE DATOS: '%s' ===\n", currentDatabase));
+        sb.append("+----------------------+----------------------+----------------------+--------+--------+----------+\n");
+        sb.append("| Nombre de Índice     | Colección            | Campo Indexado       | Tipo   | Único  | Entradas |\n");
+        sb.append("+----------------------+----------------------+----------------------+--------+--------+----------+\n");
+        for (var idx : list) {
+            sb.append(String.format("| %-20s | %-20s | %-20s | %-6s | %-6s | %-8d |\n",
+                idx.name(), idx.collection(), idx.field(), idx.type(), idx.unique() ? "SI" : "NO", idx.entriesCount()));
+        }
+        sb.append("+----------------------+----------------------+----------------------+--------+--------+----------+\n");
+        return sb.toString();
+    }
+
+    // --- 7. Administración de Usuarios y Roles de Base de Datos ---
+    private String handleShowUsers() {
+        var users = client.getSecurityManager().listUsers();
+        StringBuilder sb = new StringBuilder();
+        sb.append("==============================================================================================\n");
+        sb.append("                           USUARIOS Y ROLES DE BASE DE DATOS (RBAC)                           \n");
+        sb.append("==============================================================================================\n");
+        sb.append("+-----------------+-----------------+------------------------------------------+-------------+\n");
+        sb.append("| Usuario         | Rol Global      | Roles de Base de Datos                   | Inmutable   |\n");
+        sb.append("+-----------------+-----------------+------------------------------------------+-------------+\n");
+        for (var u : users) {
+            StringBuilder rolesSb = new StringBuilder();
+            if (u.databaseRoles().isEmpty()) {
+                rolesSb.append("(Sin asignación específica)");
+            } else {
+                u.databaseRoles().forEach((db, r) -> rolesSb.append(db).append(":").append(r).append(" "));
+            }
+            sb.append(String.format("| %-15s | %-15s | %-40s | %-11s |\n",
+                u.username(), u.role(), rolesSb.toString().trim(), u.immutable() ? "SI (Protegido)" : "NO"));
+        }
+        sb.append("+-----------------+-----------------+------------------------------------------+-------------+\n");
+        return sb.toString();
+    }
+
+    private String handleCreateUser(String command) {
+        // CREATE USER <username> PASSWORD <password> [ROLE <globalRole>]
+        try {
+            String after = command.substring("CREATE USER ".length()).trim();
+            int passIdx = after.toUpperCase().indexOf(" PASSWORD ");
+            if (passIdx == -1) return "[ERROR] Uso: CREATE USER <username> PASSWORD <password> [ROLE <globalRole>]";
+
+            String username = cleanQuotes(after.substring(0, passIdx).trim());
+            String rest = after.substring(passIdx + 10).trim();
+            String password;
+            String role = "DEVELOPER";
+
+            int roleIdx = rest.toUpperCase().indexOf(" ROLE ");
+            if (roleIdx != -1) {
+                password = cleanQuotes(rest.substring(0, roleIdx).trim());
+                role = cleanQuotes(rest.substring(roleIdx + 6).trim()).toUpperCase();
+            } else {
+                password = cleanQuotes(rest);
+            }
+
+            client.getSecurityManager().createUser(client.getSessionToken(), username, password, role);
+            return String.format("[SUCCESS] Usuario '%s' creado con Rol Global '%s'.", username, role);
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleDropUser(String command) {
+        String username = cleanQuotes(command.substring("DROP USER ".length()).trim());
+        try {
+            client.getSecurityManager().dropUser(client.getSessionToken(), username);
+            return String.format("[SUCCESS] Usuario '%s' eliminado correctamente.", username);
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleAlterUser(String command) {
+        // ALTER USER <username> PASSWORD <newPass> | ALTER USER <username> ROLE <newRole>
+        try {
+            String after = command.substring("ALTER USER ".length()).trim();
+            String[] parts = after.split("\\s+", 3);
+            if (parts.length < 3) return "[ERROR] Uso: ALTER USER <username> PASSWORD <newPass> | ALTER USER <username> ROLE <newRole>";
+            String username = cleanQuotes(parts[0]);
+            String action = parts[1].toUpperCase();
+            String val = cleanQuotes(parts[2]);
+
+            if ("PASSWORD".equals(action)) {
+                client.getSecurityManager().alterUserPassword(client.getSessionToken(), username, val);
+                return "[SUCCESS] Contraseña actualizada para el usuario '" + username + "'.";
+            } else if ("ROLE".equals(action)) {
+                client.getSecurityManager().alterUserRole(client.getSessionToken(), username, val.toUpperCase());
+                return "[SUCCESS] Rol global del usuario '" + username + "' actualizado a '" + val.toUpperCase() + "'.";
+            }
+            return "[ERROR] Acción desconocida en ALTER USER. Use PASSWORD o ROLE.";
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleGrantRole(String command) {
+        // GRANT <DB_ROLE> ON <database> TO <username>
+        try {
+            String upper = command.toUpperCase();
+            int onIdx = upper.indexOf(" ON ");
+            int toIdx = upper.indexOf(" TO ");
+            if (onIdx == -1 || toIdx == -1) {
+                return "[ERROR] Uso: GRANT <DB_OWNER|READ_WRITE|READ_ONLY> ON <database> TO <username>";
+            }
+
+            String role = cleanQuotes(command.substring(6, onIdx).trim()).toUpperCase();
+            String db = cleanQuotes(command.substring(onIdx + 4, toIdx).trim());
+            String user = cleanQuotes(command.substring(toIdx + 4).trim());
+
+            client.getSecurityManager().grantDatabaseRole(client.getSessionToken(), user, db, role);
+            return String.format("[SUCCESS] Concedido rol '%s' sobre la base de datos '%s' al usuario '%s'.", role, db, user);
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleRevokeRole(String command) {
+        // REVOKE <database> FROM <username> o REVOKE ROLE ON <database> FROM <username>
+        try {
+            String upper = command.toUpperCase();
+            int fromIdx = upper.indexOf(" FROM ");
+            if (fromIdx == -1) return "[ERROR] Uso: REVOKE <database> FROM <username>";
+
+            String targetDb = cleanQuotes(command.substring(7, fromIdx).replaceAll("(?i)ROLE\\s+ON\\s+", "").trim());
+            String user = cleanQuotes(command.substring(fromIdx + 6).trim());
+
+            client.getSecurityManager().revokeDatabaseRole(client.getSessionToken(), user, targetDb);
+            return String.format("[SUCCESS] Permisos sobre base de datos '%s' revocados para el usuario '%s'.", targetDb, user);
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleShowGrants(String command) {
+        String username = cleanQuotes(command.substring("SHOW GRANTS FOR ".length()).trim());
+        var user = client.getSecurityManager().getUser(username);
+        if (user == null) return "[ERROR] Usuario '" + username + "' no encontrado.";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== PRIVILEGIOS ASIGNADOS AL USUARIO: '%s' ===\n", username));
+        sb.append(String.format("- Rol Global: %s\n", user.role()));
+        sb.append("- Permisos por Base de Datos:\n");
+        if (user.databaseRoles().isEmpty()) {
+            sb.append("  (Ningún rol específico por base de datos asignado)\n");
+        } else {
+            user.databaseRoles().forEach((db, role) -> {
+                sb.append(String.format("  * Base de datos: %-25s -> Rol: %s\n", db, role));
+            });
+        }
+        return sb.toString();
+    }
+
+    // --- 8. Registros Referenciados y JettraRef ---
+    private String resolveReference(JettraDatabase db, String refStr) {
+        try {
+            if (refStr.contains("::") && refStr.contains("#")) {
+                String type = refStr.substring(0, refStr.indexOf("::")).toLowerCase();
+                String rest = refStr.substring(refStr.indexOf("::") + 2);
+                String col = rest.substring(0, rest.indexOf('#'));
+                String targetId = rest.substring(rest.indexOf('#') + 1);
+
+                return switch (type) {
+                    case "vector" -> {
+                        float[] v = db.getVectorEngine(col, 3).getVector(targetId);
+                        yield v != null ? "Vector " + Arrays.toString(v) : "(Vector no encontrado)";
+                    }
+                    case "document" -> {
+                        Map<String, Object> doc = db.getDocumentEngine(col).findById(targetId);
+                        yield doc != null ? "Documento " + doc.toString() : "(Documento no encontrado)";
+                    }
+                    case "graph" -> {
+                        var edges = db.getGraphEngine(col).getOutboundEdges(targetId);
+                        yield "Vértice de Grafo '" + targetId + "' (" + edges.size() + " aristas conectadas)";
+                    }
+                    case "timeseries" -> {
+                        yield "Métrica TimeSeries registrada para target '" + targetId + "'";
+                    }
+                    case "kv" -> {
+                        byte[] val = db.getKeyValueEngine(col).get(targetId);
+                        yield val != null ? "KV Valor: " + new String(val, StandardCharsets.UTF_8) : "(Clave KV no encontrada)";
+                    }
+                    default -> refStr;
+                };
+            }
+            return refStr;
+        } catch (Exception e) {
+            return refStr;
+        }
+    }
+
+    private String handleInsertRef(String command) {
+        // INSERT REF <collection> <docId> KEY <refKey> TARGET <engine>::<targetCol>#<targetId>
+        try {
+            String upper = command.toUpperCase();
+            int keyIdx = upper.indexOf(" KEY ");
+            int targetIdx = upper.indexOf(" TARGET ");
+            if (keyIdx == -1 || targetIdx == -1) {
+                return "[ERROR] Uso: INSERT REF <coleccion> <id> KEY <campo_ref> TARGET <engine>::<targetCol>#<targetId>";
+            }
+
+            String beforeKey = command.substring(11, keyIdx).trim();
+            String[] parts = beforeKey.split("\\s+");
+            if (parts.length < 2) return "[ERROR] Debe especificar colección e ID de registro.";
+            String col = cleanQuotes(parts[0]);
+            String id = cleanQuotes(parts[1]);
+
+            String refKey = cleanQuotes(command.substring(keyIdx + 5, targetIdx).trim());
+            String targetRef = cleanQuotes(command.substring(targetIdx + 8).trim());
+
+            JettraDatabase db = client.getDatabase(currentDatabase);
+            var docEngine = db.getDocumentEngine(col);
+            Map<String, Object> doc = docEngine.findById(id);
+            if (doc == null) {
+                doc = new LinkedHashMap<>();
+                doc.put("_id", id);
+            }
+            doc.put(refKey, targetRef);
+            docEngine.insert(id, doc);
+
+            return String.format("[SUCCESS] Referencia JettraRef '%s' vinculada en '%s'[%s] -> '%s'.",
+                refKey, col, id, targetRef);
+        } catch (Exception e) {
+            return "[ERROR] " + e.getMessage();
+        }
+    }
+
+    private String handleResolveRef(String command) {
+        String targetRef = cleanQuotes(command.substring("RESOLVE REF ".length()).trim());
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        String resolved = resolveReference(db, targetRef);
+        return String.format("[JettraRef Resolución]: %s -> %s", targetRef, resolved);
+    }
+
+    private String handleShowRefs(String command) {
+        String clean = cleanQuotes(command.substring("SHOW REFS ".length()).trim());
+        String[] parts = clean.split("\\s+");
+        if (parts.length < 2) return "[ERROR] Uso: SHOW REFS <coleccion> <id>";
+        String col = parts[0];
+        String id = parts[1];
+
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        var doc = db.getDocumentEngine(col).findById(id);
+        if (doc == null) return "[ERROR] Documento no encontrado: " + id;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== REFERENCIAS CRUZADAS PARA [%s] EN '%s' ===\n", id, col));
+        int count = 0;
+        for (var entry : doc.entrySet()) {
+            if (entry.getKey().startsWith("_ref_") || String.valueOf(entry.getValue()).contains("::")) {
+                count++;
+                String refVal = String.valueOf(entry.getValue());
+                sb.append(String.format("  [%02d] Campo: %-18s -> %s\n", count, entry.getKey(), refVal));
+                sb.append(String.format("       ↳ Resolución %s: %s\n",
+                    lazyLoad ? "(Lazy On-Demand)" : "(Eager)", resolveReference(db, refVal)));
+            }
+        }
+        if (count == 0) {
+            sb.append("  (No se encontraron campos de referencia en este registro)\n");
+        }
+        return sb.toString();
+    }
+
+    // --- 9. Soporte JettraQL y JettraSQL ---
+    private String handleJettraSQL(String command) {
+        String clean = command;
+        if (clean.toUpperCase().startsWith("SQL ")) clean = clean.substring(4).trim();
+        else if (clean.toUpperCase().startsWith("JETTRASQL ")) clean = clean.substring(10).trim();
+
+        long start = System.currentTimeMillis();
+        JettraSQLProcessor.QueryResult res = client.sql(currentDatabase, clean);
+        long elapsed = System.currentTimeMillis() - start;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== JETTRASQL RESULTADO (%d ms) ===\n", elapsed));
+        sb.append("Mensaje: ").append(res.message()).append("\n");
+
+        if (!res.rows().isEmpty()) {
+            // Renderizar tabla ASCII con formato dinámico
+            List<String> cols = res.columns();
+            sb.append("+");
+            for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+            sb.append("\n|");
+            for (String c : cols) sb.append(String.format(" %-" + Math.max(c.length(), 12) + "s |", c));
+            sb.append("\n+");
+            for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+            sb.append("\n");
+
+            for (List<Object> row : res.rows()) {
+                sb.append("|");
+                for (int i = 0; i < cols.size(); i++) {
+                    String val = (i < row.size() && row.get(i) != null) ? row.get(i).toString() : "";
+                    sb.append(String.format(" %-" + Math.max(cols.get(i).length(), 12) + "s |", val));
+                }
+                sb.append("\n");
+            }
+            sb.append("+");
+            for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+            sb.append("\n");
+        }
+        sb.append(String.format("Total: %d fila(s) seleccionadas / afectadas.\n", res.affectedRows()));
+        return sb.toString();
+    }
+
+    private String handleJettraQL(String command) {
+        String clean = command;
+        if (clean.toUpperCase().startsWith("JQL ")) clean = clean.substring(4).trim();
+        else if (clean.toUpperCase().startsWith("JETTRAQL ")) clean = clean.substring(9).trim();
+
+        long start = System.currentTimeMillis();
+        JettraQLProcessor.JQLResult res = client.jql(currentDatabase, clean);
+        long elapsed = System.currentTimeMillis() - start;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== JETTRAQL [%s] (%d ms) ===\n", res.operation(), elapsed));
+        sb.append("Resumen: ").append(res.summary()).append("\n");
+
+        if (!res.rows().isEmpty()) {
+            List<String> cols = res.columns();
+            sb.append("Columnas: ").append(cols).append("\n");
+            int idx = 1;
+            for (var row : res.rows()) {
+                sb.append(String.format("  [%02d] %s\n", idx++, row));
+            }
+        }
+        sb.append(String.format("Coincidencias encontradas: %d\n", res.totalMatches()));
+        return sb.toString();
+    }
+
+    // --- 10. CRUD de Documentos ---
+    private String handleInsert(String command) {
+        try {
+            String after = command.substring("INSERT INTO ".length()).trim();
+            int idIdx = after.toUpperCase().indexOf(" ID ");
+            int jsonIdx = after.toUpperCase().indexOf(" JSON ");
+            if (idIdx != -1 && jsonIdx != -1) {
+                String col = cleanQuotes(after.substring(0, idIdx).trim());
+                String id = cleanQuotes(after.substring(idIdx + 4, jsonIdx).trim());
+                String jsonPart = after.substring(jsonIdx + 6).trim();
+                Map<String, Object> data = parseJsonOrKeyValues(jsonPart);
+                JettraDatabase db = client.getDatabase(currentDatabase);
+                db.getDocumentEngine(col).insert(id, data);
+                db.getIndexManager().onDocumentInsert(col, id, data);
+                return String.format("[SUCCESS] Registro con _id '%s' insertado en la colección '%s'.", id, col);
+            }
+            int valIdx = after.toUpperCase().indexOf(" VALUES");
+            if (valIdx != -1) {
+                String col = after.substring(0, valIdx).trim();
+                String rawVals = after.substring(valIdx + 7).trim();
+                if (rawVals.startsWith("(") && rawVals.endsWith(")")) {
+                    rawVals = rawVals.substring(1, rawVals.length() - 1).trim();
+                }
+                String[] parts = rawVals.split(",", 2);
+                String id = cleanQuotes(parts[0]);
+                String jsonPart = parts.length > 1 ? parts[1].trim() : "{}";
+                Map<String, Object> data = parseJsonOrKeyValues(jsonPart);
+
+                JettraDatabase db = client.getDatabase(currentDatabase);
+                db.getDocumentEngine(col).insert(id, data);
+                db.getIndexManager().onDocumentInsert(col, id, data);
+                return String.format("[SUCCESS] Registro con _id '%s' insertado en la colección '%s'.", id, col);
+            }
+        } catch (Exception ignored) {}
+        return "[ERROR] Formato inválido. Uso: INSERT INTO <col> ID <id> JSON {...} o INSERT INTO <col> VALUES ('<id>', '{...}')";
     }
 
     private String handleGetRecord(String command) {
@@ -635,7 +1068,7 @@ public final class JettraStoreShellApp {
         sb.append(String.format("--- REGISTRO [%s] EN '%s' ---\n", id, colName));
         for (Map.Entry<String, Object> entry : doc.entrySet()) {
             sb.append(String.format("  %-15s : %s\n", entry.getKey(), entry.getValue()));
-            if (showReferences && entry.getKey().startsWith("_ref_")) {
+            if (showReferences && (entry.getKey().startsWith("_ref_") || String.valueOf(entry.getValue()).contains("::"))) {
                 String refVal = String.valueOf(entry.getValue());
                 sb.append(String.format("    ↳ [JettraRef Resolución %s]: %s\n", 
                     lazyLoad ? "(Lazy Proxy On-Demand)" : "(Eager Carga Inmediata)", resolveReference(db, refVal)));
@@ -664,80 +1097,86 @@ public final class JettraStoreShellApp {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("=== REGISTROS DE '%s' (Mostrando %d de %d) ===\n", colName, Math.min(limit, docs.size()), docs.size()));
-        int idx = 0;
-        for (Map<String, Object> d : docs) {
-            if (idx++ >= limit) break;
-            sb.append(String.format("[%03d] _id: %-15s -> %s\n", idx, d.getOrDefault("_id", "?"), d));
+        sb.append(String.format("--- COLECCIÓN '%s' (Mostrando %d de %d registros) ---\n", 
+            colName, Math.min(docs.size(), limit), docs.size()));
+        int count = 0;
+        for (Map<String, Object> doc : docs) {
+            if (++count > limit) break;
+            sb.append(String.format("  [%02d] %s\n", count, doc));
         }
         return sb.toString();
     }
 
     private String handleUpdate(String command) {
         try {
-            String after = command.substring(6).trim();
-            String[] parts = after.split("\\s+");
-            String colName = parts[0];
-            String id = parts[1];
-
-            Map<String, Object> updates = new HashMap<>();
+            String after = command.substring("UPDATE ".length()).trim();
             int setIdx = after.toUpperCase().indexOf(" SET ");
-            int jsonIdx = after.toUpperCase().indexOf(" JSON ");
+            int whereIdx = after.toUpperCase().indexOf(" WHERE ");
+            if (setIdx != -1) {
+                String col = cleanQuotes(after.substring(0, setIdx).trim());
+                String id = null;
+                if (whereIdx != -1) {
+                    String wherePart = after.substring(whereIdx + 7).trim();
+                    id = cleanQuotes(wherePart.split("=")[1].trim());
+                }
+                String jsonPart = whereIdx != -1 ? after.substring(setIdx + 5, whereIdx).trim() : after.substring(setIdx + 5).trim();
+                Map<String, Object> updates = parseJsonOrKeyValues(jsonPart);
 
-            if (jsonIdx != -1) {
-                updates = parseJsonOrKeyValues(after.substring(jsonIdx + 6));
-            } else if (setIdx != -1) {
-                String setPart = after.substring(setIdx + 5);
-                for (String kv : setPart.split(",")) {
-                    String[] pair = kv.split("=");
-                    if (pair.length == 2) {
-                        updates.put(pair[0].trim(), cleanQuotes(pair[1].trim()));
-                    }
+                if (id != null) {
+                    JettraDatabase db = client.getDatabase(currentDatabase);
+                    db.getDocumentEngine(col).update(id, updates);
+                    return String.format("[SUCCESS] Registro con _id '%s' actualizado en '%s'.", id, col);
                 }
             }
-
-            JettraDatabase db = client.getDatabase(currentDatabase);
-            db.getDocumentEngine(colName).update(id, updates);
-            return String.format("[SUCCESS] Registro '%s' actualizado en '%s' con %d campo(s).", id, colName, updates.size());
-        } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: UPDATE <col> <id> SET campo=valor o UPDATE <col> <id> JSON {\"campo\":\"valor\"}";
-        }
+        } catch (Exception ignored) {}
+        return "[ERROR] Formato inválido. Uso: UPDATE <colección> SET {campo:valor} WHERE _id = '<id>'";
     }
 
     private String handleDeleteRecord(String command) {
-        String clean = command.replaceAll("(?i)^DELETE FROM\\s+", "").replaceAll("(?i)^DELETE\\s+", "").replaceAll("(?i)^REMOVE\\s+", "").trim();
-        String colName;
-        String id;
-
-        int whereIdx = clean.toUpperCase().indexOf("WHERE");
-        if (whereIdx != -1) {
-            colName = clean.substring(0, whereIdx).trim();
-            String wherePart = clean.substring(whereIdx + 5).trim();
-            id = cleanQuotes(wherePart.replaceAll("(?i)(_id|id)\\s*=\\s*", "").trim());
-        } else {
-            String[] parts = clean.split("\\s+");
-            if (parts.length < 2) return "[ERROR] Uso: DELETE <colección> <id> o DELETE FROM <col> WHERE ID = <id>";
-            colName = parts[0].trim();
-            id = cleanQuotes(parts[1]);
-        }
-
-        JettraDatabase db = client.getDatabase(currentDatabase);
-        boolean deleted = db.getDocumentEngine(colName).delete(id);
-        return deleted ? String.format("[SUCCESS] Registro '%s' eliminado de '%s'.", id, colName)
-                       : String.format("[NOT FOUND] No se encontró el registro '%s' en '%s'.", id, colName);
+        try {
+            String clean = command.replaceAll("(?i)^(DELETE FROM|DELETE|REMOVE)\s+", "").trim();
+            if (clean.toUpperCase().contains(" WHERE ")) {
+                int whereIdx = clean.toUpperCase().indexOf(" WHERE ");
+                String col = cleanQuotes(clean.substring(0, whereIdx).trim());
+                String whereClause = clean.substring(whereIdx + 7).trim();
+                String[] kv = whereClause.split("=");
+                if (kv.length == 2) {
+                    String id = cleanQuotes(kv[1].trim());
+                    JettraDatabase db = client.getDatabase(currentDatabase);
+                    boolean deleted = db.getDocumentEngine(col).delete(id);
+                    db.getIndexManager().onDocumentDelete(col, id, null);
+                    return deleted 
+                        ? String.format("[SUCCESS] Registro con _id '%s' eliminado de '%s'.", id, col)
+                        : String.format("[WARN] No se encontró el registro con _id '%s' para eliminar.", id);
+                }
+            } else {
+                String[] parts = clean.split("\s+");
+                if (parts.length >= 2) {
+                    String col = cleanQuotes(parts[0]);
+                    String id = cleanQuotes(parts[1]);
+                    JettraDatabase db = client.getDatabase(currentDatabase);
+                    boolean deleted = db.getDocumentEngine(col).delete(id);
+                    db.getIndexManager().onDocumentDelete(col, id, null);
+                    return deleted 
+                        ? String.format("[SUCCESS] Registro con _id '%s' eliminado de '%s'.", id, col)
+                        : String.format("[WARN] No se encontró el registro con _id '%s' para eliminar.", id);
+                }
+            }
+        } catch (Exception ignored) {}
+        return "[ERROR] Formato inválido. Uso: DELETE <col> <id> o DELETE FROM <col> WHERE _id = '<id>'";
     }
 
-    // --- Motores Multimodelo Especializados ---
+    // --- 11. Motores Multimodelo ---
     private String handleVectorIndex(String command) {
         try {
             String after = command.substring("VECTOR INDEX ".length()).trim();
-            String[] parts = after.split("\\s+");
-            String col = parts[0];
-            String id = parts[1];
+            String[] parts = after.split("\\s+", 3);
+            String col = parts[0].trim();
+            String id = parts[1].trim();
             String vecStr = after.substring(after.indexOf('[') + 1, after.indexOf(']'));
-            String[] numStrs = vecStr.split(",");
-            float[] floats = new float[numStrs.length];
-            for (int i = 0; i < numStrs.length; i++) floats[i] = Float.parseFloat(numStrs[i].trim());
+            String[] floatsStr = vecStr.split(",");
+            float[] floats = new float[floatsStr.length];
+            for (int i = 0; i < floatsStr.length; i++) floats[i] = Float.parseFloat(floatsStr[i].trim());
 
             JettraDatabase db = client.getDatabase(currentDatabase);
             db.getVectorEngine(col, floats.length).index(id, floats);
@@ -750,38 +1189,36 @@ public final class JettraStoreShellApp {
     private String handleVectorSearch(String command) {
         try {
             String after = command.substring("VECTOR SEARCH ".length()).trim();
-            String[] parts = after.split("\\s+");
-            String col = parts[0];
+            String col = after.split("\\s+")[0].trim();
             String vecStr = after.substring(after.indexOf('[') + 1, after.indexOf(']'));
-            String[] numStrs = vecStr.split(",");
-            float[] target = new float[numStrs.length];
-            for (int i = 0; i < numStrs.length; i++) target[i] = Float.parseFloat(numStrs[i].trim());
+            String[] floatsStr = vecStr.split(",");
+            float[] floats = new float[floatsStr.length];
+            for (int i = 0; i < floatsStr.length; i++) floats[i] = Float.parseFloat(floatsStr[i].trim());
 
-            int topK = 5;
+            int k = 3;
             int kIdx = after.toUpperCase().indexOf(" K ");
             if (kIdx != -1) {
-                topK = Integer.parseInt(after.substring(kIdx + 3).trim().split("\\s+")[0]);
+                k = Integer.parseInt(after.substring(kIdx + 3).replaceAll("[;]", "").trim());
             }
 
             JettraDatabase db = client.getDatabase(currentDatabase);
-            var results = db.getVectorEngine(col, target.length).searchCosine(target, topK);
-
+            var matches = db.getVectorEngine(col, floats.length).searchCosine(floats, k);
             StringBuilder sb = new StringBuilder();
-            sb.append(String.format("=== SIMILITUD COSENO EN '%s' (Top-%d) ===\n", col, results.size()));
-            for (var r : results) {
-                sb.append(String.format("  Vector ID: %-15s | Similitud: %.4f\n", r.id(), r.score()));
+            sb.append(String.format("=== VECTOR COSINE EN '%s' (k=%d) ===\n", col, k));
+            int idx = 1;
+            for (var match : matches) {
+                sb.append(String.format("  [%02d] Vector ID: %-15s | Similaridad: %.4f\n", idx++, match.id(), match.score()));
             }
             return sb.toString();
         } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: VECTOR SEARCH <coleccion> [f1, f2, f3] [K 5]";
+            return "[ERROR] Formato inválido. Uso: VECTOR SEARCH <coleccion> [f1, f2] K <num>";
         }
     }
 
     private String handleGraphAddVertex(String command) {
-        String after = command.substring("GRAPH ADD VERTEX ".length()).trim();
-        String[] parts = after.split("\\s+");
-        if (parts.length < 2) return "[ERROR] Uso: GRAPH ADD VERTEX <coleccion> <verticeId>";
-        client.getDatabase(currentDatabase).getGraphEngine(parts[0]).addVertex(parts[1]);
+        String[] parts = command.substring("GRAPH ADD VERTEX ".length()).trim().split("\\s+");
+        if (parts.length < 2) return "[ERROR] Uso: GRAPH ADD VERTEX <grafo> <verticeId>";
+        client.getDatabase(currentDatabase).getGraphEngine(parts[0]).addVertex(cleanQuotes(parts[1]));
         return String.format("[SUCCESS] Vértice '%s' agregado al grafo '%s'.", parts[1], parts[0]);
     }
 
@@ -789,41 +1226,34 @@ public final class JettraStoreShellApp {
         try {
             String after = command.substring("GRAPH ADD EDGE ".length()).trim();
             String[] parts = after.split("\\s+");
-            String col = parts[0];
-            String src = parts[1];
-            String tgt = parts[3];
+            String graph = parts[0];
+            String from = parts[1];
+            String to = parts[2];
             String label = "RELATES_TO";
-            double weight = 1.0;
-
             int lblIdx = after.toUpperCase().indexOf("LABEL");
-            if (lblIdx != -1) {
-                label = after.substring(lblIdx + 5).trim().split("\\s+")[0];
-            }
+            if (lblIdx != -1) label = cleanQuotes(after.substring(lblIdx + 5).split("\\s+")[0]);
+            double weight = 1.0;
             int wIdx = after.toUpperCase().indexOf("WEIGHT");
-            if (wIdx != -1) {
-                weight = Double.parseDouble(after.substring(wIdx + 6).trim().split("\\s+")[0]);
-            }
+            if (wIdx != -1) weight = Double.parseDouble(after.substring(wIdx + 6).replaceAll("[;]", "").trim());
 
-            client.getDatabase(currentDatabase).getGraphEngine(col).addEdge(src, tgt, label, Map.of("weight", weight));
-            return String.format("[SUCCESS] Arista agregada en grafo '%s': (%s) --[%s, peso: %.1f]--> (%s)", col, src, label, weight, tgt);
+            client.getDatabase(currentDatabase).getGraphEngine(graph).addEdge(from, to, label, Map.of("weight", weight));
+            return String.format("[SUCCESS] Arista (%s)-[%s, w=%.1f]->(%s) agregada en grafo '%s'.", from, label, weight, to, graph);
         } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: GRAPH ADD EDGE <col> <src> -> <tgt> LABEL <lbl> [WEIGHT <w>]";
+            return "[ERROR] Formato inválido. Uso: GRAPH ADD EDGE <grafo> <de> <a> [LABEL <nombre>] [WEIGHT <peso>]";
         }
     }
 
     private String handleGraphGetEdges(String command) {
-        String clean = command.replaceAll("(?i)^GRAPH (GET EDGES|EDGES)\\s+", "").trim();
+        String clean = command.replaceAll("(?i)^(GRAPH GET EDGES|GRAPH EDGES)\\s+", "").trim();
         String[] parts = clean.split("\\s+");
-        if (parts.length < 2) return "[ERROR] Uso: GRAPH GET EDGES <coleccion> <verticeId>";
-        String col = parts[0];
-        String src = parts[1];
-
-        var edges = client.getDatabase(currentDatabase).getGraphEngine(col).getOutboundEdges(src);
+        if (parts.length < 2) return "[ERROR] Uso: GRAPH GET EDGES <grafo> <verticeId>";
+        var edges = client.getDatabase(currentDatabase).getGraphEngine(parts[0]).getOutboundEdges(cleanQuotes(parts[1]));
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("=== ARISTAS SALIENTES DE '%s' EN GRAFO '%s' ===\n", src, col));
-        if (edges.isEmpty()) sb.append("  (Sin aristas salientes)\n");
-        for (var e : edges) {
-            sb.append(String.format("  --> Destino: %-15s | Etiqueta: %-12s | Propiedades: %s\n", e.targetVertex(), e.label(), e.properties()));
+        sb.append(String.format("=== ARISTAS SALIENTES DESDE '%s' EN '%s' ===\n", parts[1], parts[0]));
+        int idx = 1;
+        for (var edge : edges) {
+            sb.append(String.format("  [%02d] -> Destino: %-15s | Relación: %-15s | Props: %s\n",
+                idx++, edge.targetVertex(), edge.label(), edge.properties()));
         }
         return sb.toString();
     }
@@ -832,114 +1262,586 @@ public final class JettraStoreShellApp {
         try {
             String after = command.substring("TS RECORD ".length()).trim();
             String[] parts = after.split("\\s+");
-            String col = parts[0];
+            String series = parts[0];
             double val = Double.parseDouble(parts[1]);
-            long time = System.currentTimeMillis();
-
+            long timestamp = System.currentTimeMillis();
             int timeIdx = after.toUpperCase().indexOf("TIME");
-            if (timeIdx != -1) {
-                time = Long.parseLong(after.substring(timeIdx + 4).trim().split("\\s+")[0]);
-            }
+            if (timeIdx != -1) timestamp = Long.parseLong(after.substring(timeIdx + 4).replaceAll("[;]", "").trim());
 
-            client.getDatabase(currentDatabase).getTimeSeriesEngine(col).record(time, val);
-            return String.format("[SUCCESS] Serie temporal '%s' registró valor %.2f en t=%d", col, val, time);
+            client.getDatabase(currentDatabase).getTimeSeriesEngine(series).record(timestamp, val);
+            return String.format("[SUCCESS] Métrica (timestamp=%d, valor=%.2f) registrada en '%s'.", timestamp, val, series);
         } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: TS RECORD <coleccion> <valor> [TIME <ts>]";
+            return "[ERROR] Formato inválido. Uso: TS RECORD <serie> <valor> [TIME <timestamp>]";
         }
     }
 
     private String handleTsRange(String command) {
         try {
-            String clean = command.replaceAll("(?i)^TS (RANGE|QUERY)\\s+", "").trim();
+            String clean = command.replaceAll("(?i)^(TS RANGE|TS QUERY)\\s+", "").trim();
             String[] parts = clean.split("\\s+");
-            String col = parts[0];
-            long from = Long.parseLong(parts[1]);
-            long to = Long.parseLong(parts[2]);
+            String series = parts[0];
+            long start = Long.parseLong(parts[1]);
+            long end = Long.parseLong(parts[2].replaceAll("[;]", ""));
 
-            TimeSeriesEngine ts = client.getDatabase(currentDatabase).getTimeSeriesEngine(col);
-            var map = ts.range(from, to);
-            double avg = ts.average(from, to);
-
+            var points = client.getDatabase(currentDatabase).getTimeSeriesEngine(series).range(start, end);
             StringBuilder sb = new StringBuilder();
-            sb.append(String.format("=== SERIE TEMPORAL '%s' [%d a %d] ===\n", col, from, to));
-            sb.append(String.format("Puntos encontrados: %d | Promedio calculado: %.4f\n", map.size(), avg));
-            map.forEach((k, v) -> sb.append(String.format("  t=%d -> %.2f\n", k, v)));
+            sb.append(String.format("=== TIME SERIES EN '%s' [%d a %d] ===\n", series, start, end));
+            int idx = 1;
+            for (var entry : points.entrySet()) {
+                sb.append(String.format("  [%02d] Timestamp: %d | Valor: %.4f\n", idx++, entry.getKey(), entry.getValue()));
+            }
             return sb.toString();
         } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: TS RANGE <coleccion> <desdeTimestamp> <hastaTimestamp>";
+            return "[ERROR] Formato inválido. Uso: TS RANGE <serie> <timestampInicio> <timestampFin>";
         }
     }
 
     private String handleKvPut(String command) {
-        try {
-            String after = command.substring("KV PUT ".length()).trim();
-            String[] parts = after.split("\\s+", 3);
-            String col = parts[0];
-            String key = parts[1];
-            String val = parts[2];
-            client.getDatabase(currentDatabase).getKeyValueEngine(col).put(key, val.getBytes(StandardCharsets.UTF_8));
-            return String.format("[SUCCESS] KV '%s': clave '%s' asignada (%d bytes).", col, key, val.length());
-        } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: KV PUT <coleccion> <clave> <valor>";
-        }
+        String[] parts = command.substring(7).trim().split("\\s+", 3);
+        if (parts.length < 3) return "[ERROR] Uso: KV PUT <tabla> <clave> <valor>";
+        client.getDatabase(currentDatabase).getKeyValueEngine(parts[0]).put(cleanQuotes(parts[1]), parts[2].getBytes(StandardCharsets.UTF_8));
+        return String.format("[SUCCESS] Clave '%s' guardada en tabla KV '%s'.", parts[1], parts[0]);
     }
 
     private String handleKvGet(String command) {
-        try {
-            String after = command.substring("KV GET ".length()).trim();
-            String[] parts = after.split("\\s+");
-            String col = parts[0];
-            String key = parts[1];
-            byte[] bytes = client.getDatabase(currentDatabase).getKeyValueEngine(col).get(key);
-            if (bytes == null) return String.format("[NOT FOUND] Clave '%s' no encontrada en KV '%s'.", key, col);
-            return String.format("KV [%s:%s] -> %s", col, key, new String(bytes, StandardCharsets.UTF_8));
-        } catch (Exception e) {
-            return "[ERROR] Formato inválido. Uso: KV GET <coleccion> <clave>";
-        }
+        String[] parts = command.substring(7).trim().split("\\s+");
+        if (parts.length < 2) return "[ERROR] Uso: KV GET <tabla> <clave>";
+        byte[] val = client.getDatabase(currentDatabase).getKeyValueEngine(parts[0]).get(cleanQuotes(parts[1]));
+        return val != null ? "[KV] " + new String(val, StandardCharsets.UTF_8) : "[NOT FOUND] Clave '" + parts[1] + "' no encontrada.";
     }
 
-    private String handleSecurityStatus() {
+    // --- 12. Persistencia y Muestras ---
+    public String installAllSampleDatabases() {
+        // 1. sample_enterprise_db
+        JettraDatabase enterprise = client.getDatabase("sample_enterprise_db");
+        enterprise.getDocumentEngine("departments").insert("dep_rd", Map.of(
+            "name", "Research & Advanced Computing", "budget", 15000000.0, "floor", 12
+        ));
+        enterprise.getDocumentEngine("employees").insert("emp_01", Map.of(
+            "name", "Ada Lovelace", "title", "Lead Architect", "salary", 185000.0,
+            "_ref_department", "document::departments#dep_rd",
+            "_ref_vector", "vector::employee_biometrics#bio_01",
+            "_ref_equipment", "kv::inventory_cache#laptop_mac_m3"
+        ));
+        enterprise.getDocumentEngine("products").insert("prod_01", Map.of(
+            "name", "Quantum Neural Accelerator", "category", "Hardware", "price", 4500.0,
+            "_ref_vector", "vector::product_embeddings#emb_01",
+            "_ref_category", "graph::catalog_graph#cat_hardware"
+        ));
+        enterprise.getVectorEngine("product_embeddings", 3).index("emb_01", new float[]{0.15f, -0.42f, 0.88f});
+        enterprise.getVectorEngine("employee_biometrics", 3).index("bio_01", new float[]{0.92f, 0.11f, -0.05f});
+        enterprise.getGraphEngine("catalog_graph").addEdge("prod_01", "cat_hardware", "BELONGS_TO", Map.of("weight", 1.0));
+        enterprise.getTimeSeriesEngine("telemetry").record(System.currentTimeMillis(), 42.5);
+        enterprise.getKeyValueEngine("inventory_cache").put("laptop_mac_m3", "MacBook Pro M3 Max 64GB".getBytes(StandardCharsets.UTF_8));
+        enterprise.getIndexManager().createIndex("employees", "idx_emp_name", "name", "BTREE", false, enterprise.getDocumentEngine("employees"));
+        enterprise.getIndexManager().createIndex("products", "idx_prod_cat", "category", "HASH", false, enterprise.getDocumentEngine("products"));
+
+        // 2. sample_ecommerce_db
+        JettraDatabase ecommerce = client.getDatabase("sample_ecommerce_db");
+        ecommerce.getDocumentEngine("customers").insert("cust_101", Map.of(
+            "name", "Elena Rostova", "tier", "VIP_PLATINUM", "country", "ES", "email", "elena@quantum.io"
+        ));
+        ecommerce.getDocumentEngine("orders").insert("ord_9901", Map.of(
+            "customer_id", "cust_101", "total", 899.50, "status", "PAID",
+            "_ref_customer", "document::customers#cust_101",
+            "_ref_product", "document::products#prod_01"
+        ));
+        ecommerce.getColumnarEngine("order_analytics").appendRow(Map.of("revenue", 899.50));
+        ecommerce.getKeyValueEngine("shopping_carts").put("cart_cust_101", "item_quantum_gpu:2".getBytes(StandardCharsets.UTF_8));
+        ecommerce.getIndexManager().createIndex("customers", "idx_cust_tier", "tier", "HASH", false, ecommerce.getDocumentEngine("customers"));
+
+        // 3. sample_ai_graph_db
+        JettraDatabase aiGraph = client.getDatabase("sample_ai_graph_db");
+        aiGraph.getGraphEngine("knowledge_network").addEdge("DeepLearning", "TransformerModel", "FOUNDATION_OF", Map.of("depth", 4.0));
+        aiGraph.getGraphEngine("knowledge_network").addEdge("TransformerModel", "AttentionMechanism", "USES", Map.of("weight", 0.95));
+        aiGraph.getVectorEngine("concept_embeddings", 3).index("vec_transformer", new float[]{0.85f, 0.12f, -0.33f});
+        aiGraph.getDocumentEngine("prompts_corpus").insert("prompt_01", Map.of(
+            "role", "system", "text", "You are an autonomous distributed DB engine expert.",
+            "_ref_concept", "graph::knowledge_network#TransformerModel",
+            "_ref_embedding", "vector::concept_embeddings#vec_transformer"
+        ));
+
+        // 4. sample_iot_telemetry_db
+        JettraDatabase iot = client.getDatabase("sample_iot_telemetry_db");
+        long now = System.currentTimeMillis();
+        iot.getTimeSeriesEngine("sensor_temperature").record(now - 2000, 24.5);
+        iot.getTimeSeriesEngine("sensor_temperature").record(now - 1000, 25.1);
+        iot.getTimeSeriesEngine("sensor_temperature").record(now, 24.8);
+        iot.getTimeSeriesEngine("sensor_vibration").record(now, 0.042);
+        iot.getDocumentEngine("smart_devices").insert("iot_gateway_01", Map.of(
+            "model", "EdgeGate-X25", "firmware", "v2.5.0-LTS", "status", "ONLINE"
+        ));
+        iot.getGeospatialEngine("device_locations").insertPoint("iot_gateway_01", 40.4168, -3.7038);
+
+        // 5. sample_financial_db
+        JettraDatabase finance = client.getDatabase("sample_financial_db");
+        finance.getDocumentEngine("transactions").insert("tx_001", Map.of(
+            "from_account", "ACC_7712", "to_account", "ACC_9941", "amount", 15000.0, "currency", "USD",
+            "_ref_client", "document::customers#cust_101"
+        ));
+        finance.getTimeSeriesEngine("stock_feed").record(now, 184.50);
+
+        // Flush de persistencia física a disco
+        try {
+            enterprise.flushMemTable();
+            ecommerce.flushMemTable();
+            aiGraph.flushMemTable();
+            iot.flushMemTable();
+            finance.flushMemTable();
+        } catch (Exception ignored) {}
+
+        this.currentDatabase = "sample_enterprise_db";
+
         return """
-            ================= SEGURIDAD CRIPTOGRÁFICA Y CONTROL DE ACCESO =================
-              Usuario              Rol Principal       Permisos              Estado
-              -------------------------------------------------------------------------
-              admin                SUPER_ADMIN         ALL (Inmutable)       ACTIVO (Protegido)
-              app_driver           DATA_READ_WRITE     CRUD en Colecciones   ACTIVO
-              metrics_agent        METRICS_READ        Telemetría y Ring     ACTIVO
-              -------------------------------------------------------------------------
-              Token Sesión JWT:    Vigente (Firma HMAC-SHA256 con Clave de Clúster)
-              Protección Admin:    INVIOLABLE. Privilegios de 'admin' no pueden ser alterados.
-            ==============================================================================
+            [SUCCESS] ¡Todas las 5 bases de datos de ejemplo instaladas y persistidas exitosamente!
+              1. 'sample_enterprise_db'   -> Empleados, Departamentos, Índices B-Tree, Vectores Biométricos, Grafos
+              2. 'sample_ecommerce_db'    -> Clientes VIP, Órdenes con JettraRef, Analítica Columnar, Carritos KV
+              3. 'sample_ai_graph_db'     -> Red de Conocimiento de Grafos, Embeddings Conceptuales, Prompts
+              4. 'sample_iot_telemetry_db'-> Sensores Temperatura/Vibración, Dispositivos Smart, Geo-localización
+              5. 'sample_financial_db'    -> Transacciones Financieras con JettraRef a Clientes, Series Temporales
+            Base de datos activa conmutada a: 'sample_enterprise_db'
             """;
     }
 
-    private String handleRamStatus() {
-        return handleStatus();
+    private String handleBackup(String command) {
+        try {
+            String after = command.substring("BACKUP DATABASE".length()).trim();
+            String dbName = currentDatabase;
+            String dest = "./data/jettra/backup_" + dbName + "_" + System.currentTimeMillis() + ".snap";
+            if (!after.isBlank()) {
+                if (after.toUpperCase().contains(" TO ")) {
+                    String[] parts = after.split("(?i)\s+TO\s+");
+                    dbName = cleanQuotes(parts[0].trim());
+                    dest = cleanQuotes(parts[1].trim());
+                } else {
+                    String[] parts = after.split("\s+");
+                    dbName = cleanQuotes(parts[0]);
+                    if (parts.length > 1) dest = cleanQuotes(parts[1]);
+                }
+            }
+            JettraDatabase db = client.getDatabase(dbName);
+            var meta = BackupManager.backupDatabase(db, Path.of(dest));
+            return String.format("[SUCCESS] Respaldo de '%s' completado en '%s'. Tamaño: %d bytes (CRC32: %d).",
+                meta.databaseName(), dest, meta.sizeBytes(), meta.checksum());
+        } catch (Exception e) {
+            return "[ERROR] Error al crear respaldo: " + e.getMessage();
+        }
     }
 
-    // --- Auxiliares de Parseo y Resolución ---
+    private String handleRestore(String command) {
+        try {
+            String after = command.substring("RESTORE DATABASE".length()).trim();
+            Path snap;
+            String targetDb;
+            if (after.toUpperCase().contains(" FROM ")) {
+                String[] parts = after.split("(?i)\s+FROM\s+");
+                targetDb = cleanQuotes(parts[0].trim());
+                snap = Path.of(cleanQuotes(parts[1].trim()));
+            } else {
+                String[] parts = after.split("\s+");
+                if (parts.length < 2) return "[ERROR] Uso: RESTORE DATABASE <archivo.snap> <nombreBaseDatosDestino> o RESTORE DATABASE <db> FROM '<archivo.snap>'";
+                snap = Path.of(cleanQuotes(parts[0]));
+                targetDb = cleanQuotes(parts[1]);
+            }
+            JettraDatabase db = client.getDatabase(targetDb);
+            boolean ok = BackupManager.restoreDatabase(snap, db);
+            return ok ? String.format("[SUCCESS] Snapshot '%s' restaurado en base de datos '%s'.", snap, targetDb)
+                      : "[ERROR] Falló la restauración del snapshot.";
+        } catch (Exception e) {
+            return "[ERROR] Error al restaurar respaldo: " + e.getMessage();
+        }
+    }
+
+    // --- Control de Colecciones ---
+    private String handleShowCollections() {
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        StringBuilder sb = new StringBuilder();
+        sb.append("+---------------------------+---------------------+---------+\n");
+        sb.append("| Colección                 | Motor Multimodelo   | Registros|\n");
+        sb.append("+---------------------------+---------------------+---------+\n");
+
+        int count = 0;
+        for (String c : db.getDocumentEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "DOCUMENT", db.getDocumentEngine(c).count()));
+            count++;
+        }
+        for (String c : db.getVectorEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "VECTOR (Cosine)", db.getVectorEngine(c, 3).size()));
+            count++;
+        }
+        for (String c : db.getGraphEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "GRAPH (Adjacency)", db.getGraphEngine(c).getVertices().size()));
+            count++;
+        }
+        for (String c : db.getTimeSeriesEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "TIMESERIES", db.getTimeSeriesEngine(c).size()));
+            count++;
+        }
+        for (String c : db.getKeyValueEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "KEY-VALUE", db.getKeyValueEngine(c).size()));
+            count++;
+        }
+        for (String c : db.getColumnarEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "COLUMNAR", db.getColumnarEngine(c).size()));
+            count++;
+        }
+        for (String c : db.getGeospatialEngineNames()) {
+            sb.append(String.format("| %-25s | %-19s | %-7d |\n", c, "GEOSPATIAL", db.getGeospatialEngine(c).size()));
+            count++;
+        }
+
+        if (count == 0) {
+            sb.append("| (Sin colecciones activas) | -                   | 0       |\n");
+        }
+        sb.append("+---------------------------+---------------------+---------+\n");
+        sb.append(String.format("Total: %d coleccion(es) en base de datos '%s'\n", count, currentDatabase));
+        return sb.toString();
+    }
+
+    private String handleCreateCollection(String command) {
+        String[] parts = command.split("\\s+");
+        if (parts.length < 3) return "[ERROR] Uso: CREATE COLLECTION <nombre> [TYPE <tipo>]";
+        String colName = cleanQuotes(parts[2]);
+        String type = "DOCUMENT";
+        for (int i = 3; i < parts.length - 1; i++) {
+            if ("TYPE".equalsIgnoreCase(parts[i])) {
+                type = parts[i + 1].toUpperCase();
+            }
+        }
+
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        switch (type) {
+            case "VECTOR" -> db.getVectorEngine(colName, 3);
+            case "GRAPH" -> db.getGraphEngine(colName);
+            case "TIMESERIES" -> db.getTimeSeriesEngine(colName);
+            case "KEYVALUE", "KV" -> db.getKeyValueEngine(colName);
+            case "COLUMNAR" -> db.getColumnarEngine(colName);
+            case "GEOSPATIAL", "GEO" -> db.getGeospatialEngine(colName);
+            default -> db.getDocumentEngine(colName);
+        }
+        return String.format("[SUCCESS] Colección '%s' creada con motor multimodelo '%s' en base de datos '%s'.", colName, type, currentDatabase);
+    }
+
+    // --- Control de Buckets / Units, Conteo y Visualización de Registros ---
+    private String handleShowBuckets(String command) {
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        record UnitRow(String engine, String unitType, String name, long count, String status) {}
+        List<UnitRow> rows = new ArrayList<>();
+
+        String clean = command.replaceAll("(?i)^SHOW\\s+(BUCKETS|BUCKET|UNITS|UNIT)\\s*", "").trim();
+        String filterEngine = clean.isBlank() ? null : clean.toUpperCase();
+
+        // 1. Documents
+        if (filterEngine == null || filterEngine.contains("DOC")) {
+            for (String col : db.getDocumentEngineNames()) {
+                long c = db.getDocumentEngine(col).count();
+                rows.add(new UnitRow("DOCUMENT", "Collection", col, c, "ACTIVE (In-Memory)"));
+            }
+        }
+        // 2. Vectors
+        if (filterEngine == null || filterEngine.contains("VEC")) {
+            for (String col : db.getVectorEngineNames()) {
+                var vEng = db.getVectorEngine(col, 3);
+                rows.add(new UnitRow("VECTOR", "Vector Index [" + vEng.getDimensions() + "d]", col, vEng.size(), "INDEXED (HNSW)"));
+            }
+        }
+        // 3. Graph
+        if (filterEngine == null || filterEngine.contains("GRAPH")) {
+            for (String col : db.getGraphEngineNames()) {
+                var gEng = db.getGraphEngine(col);
+                rows.add(new UnitRow("GRAPH", "Property Graph", col, gEng.size(), "TOPOLOGY (In-Memory)"));
+            }
+        }
+        // 4. TimeSeries
+        if (filterEngine == null || filterEngine.contains("TIME") || filterEngine.contains("SERIES")) {
+            for (String col : db.getTimeSeriesEngineNames()) {
+                var ts = db.getTimeSeriesEngine(col);
+                rows.add(new UnitRow("TIMESERIES", "Metric Series", col, ts.size(), "APPEND-ONLY (Delta)"));
+            }
+        }
+        // 5. Key-Value
+        if (filterEngine == null || filterEngine.contains("KEY") || filterEngine.contains("KV")) {
+            for (String col : db.getKeyValueEngineNames()) {
+                var kv = db.getKeyValueEngine(col);
+                rows.add(new UnitRow("KEYVALUE", "KV Store", col, kv.size(), "HASH-MAP (Persistent)"));
+            }
+        }
+        // 6. Geospatial
+        if (filterEngine == null || filterEngine.contains("GEO") || filterEngine.contains("GIS")) {
+            for (String col : db.getGeospatialEngineNames()) {
+                var geo = db.getGeospatialEngine(col);
+                rows.add(new UnitRow("GEOSPATIAL", "Spatial Layer", col, geo.size(), "R-TREE (Spatial)"));
+            }
+        }
+        // 7. Columnar
+        if (filterEngine == null || filterEngine.contains("COL")) {
+            for (String col : db.getColumnarEngineNames()) {
+                var colEng = db.getColumnarEngine(col);
+                rows.add(new UnitRow("COLUMNAR", "Column Family", col, colEng.size(), "ARROW/SLOT (Compressed)"));
+            }
+        }
+
+        if (rows.isEmpty()) {
+            return String.format("[INFO] No se encontraron buckets/units en la base de datos '%s'%s.",
+                currentDatabase, filterEngine != null ? " para el motor " + filterEngine : "");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("==============================================================================================\n");
+        sb.append(String.format("                BUCKETS / UNITS EN BASE DE DATOS: '%s'                                        \n", currentDatabase));
+        sb.append("==============================================================================================\n");
+        sb.append("+-------------+----------------------+--------------------+-----------+----------------------+\n");
+        sb.append("| Motor       | Tipo de Unidad       | Nombre de Unidad   | Registros | Estado               |\n");
+        sb.append("+-------------+----------------------+--------------------+-----------+----------------------+\n");
+        for (UnitRow r : rows) {
+            sb.append(String.format("| %-11s | %-20s | %-18s | %-9d | %-20s |\n",
+                r.engine(), r.unitType(), r.name(), r.count(), r.status()));
+        }
+        sb.append("+-------------+----------------------+--------------------+-----------+----------------------+\n");
+        sb.append(String.format("Total: %d bucket(s)/unit(s) registrados en la base de datos '%s'.\n", rows.size(), currentDatabase));
+        return sb.toString();
+    }
+
+    private String handleShowRecords(String command) {
+        String clean = command.replaceAll("(?i)^SHOW\\s+RECORDS(\\s+FROM)?\\s*", "").trim();
+        JettraDatabase db = client.getDatabase(currentDatabase);
+        if (clean.isBlank()) {
+            var all = db.getAllCollectionNames();
+            if (all.isEmpty()) {
+                return String.format("[INFO] No hay buckets/units creados en la base de datos '%s'.", currentDatabase);
+            }
+            clean = all.iterator().next();
+        }
+
+        String[] parts = clean.split("\\s+");
+        String unitName = cleanQuotes(parts[0]);
+        int limit = pageSize;
+        for (int i = 1; i < parts.length - 1; i++) {
+            if ("LIMIT".equalsIgnoreCase(parts[i])) {
+                try { limit = Integer.parseInt(parts[i + 1].replaceAll("[;]", "")); } catch (Exception ignored) {}
+            }
+        }
+
+        // 1. DOCUMENT
+        if (db.getDocumentEngineNames().contains(unitName)) {
+            var docEngine = db.getDocumentEngine(unitName);
+            List<Map<String, Object>> docs = docEngine.findAll();
+            if (docs.isEmpty()) return String.format("[INFO] El bucket de documentos '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE DOCUMENT BUCKET '%s' (Mostrando %d de %d) ===\n",
+                unitName, Math.min(docs.size(), limit), docs.size()));
+            int idx = 1;
+            for (Map<String, Object> doc : docs) {
+                if (idx > limit) break;
+                sb.append(String.format("  [%02d] _id: %-15s -> %s\n", idx++, doc.getOrDefault("_id", "?"), doc));
+                if (showReferences) {
+                    for (var entry : doc.entrySet()) {
+                        if (entry.getKey().startsWith("_ref_") || String.valueOf(entry.getValue()).contains("::")) {
+                            sb.append(String.format("       ↳ Ref [%s]: %s\n", entry.getKey(), resolveReference(db, String.valueOf(entry.getValue()))));
+                        }
+                    }
+                }
+            }
+            return sb.toString();
+        }
+
+        // 2. VECTOR
+        if (db.getVectorEngineNames().contains(unitName)) {
+            var vecEngine = db.getVectorEngine(unitName, 3);
+            var vecs = vecEngine.getAllVectors();
+            if (vecs.isEmpty()) return String.format("[INFO] El bucket vectorial '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE VECTOR BUCKET '%s' (Dim: %d | Mostrando %d de %d) ===\n",
+                unitName, vecEngine.getDimensions(), Math.min(vecs.size(), limit), vecs.size()));
+            int idx = 1;
+            for (var entry : vecs.entrySet()) {
+                if (idx > limit) break;
+                sb.append(String.format("  [%02d] Vector ID: %-15s -> %s\n", idx++, entry.getKey(), Arrays.toString(entry.getValue())));
+            }
+            return sb.toString();
+        }
+
+        // 3. GRAPH
+        if (db.getGraphEngineNames().contains(unitName)) {
+            var graph = db.getGraphEngine(unitName);
+            if (graph.getVertices().isEmpty()) return String.format("[INFO] El bucket de grafos '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE GRAPH BUCKET '%s' (%d vértices) ===\n", unitName, graph.getVertices().size()));
+            int idx = 1;
+            for (String v : graph.getVertices()) {
+                if (idx > limit) break;
+                var out = graph.getOutboundEdges(v);
+                sb.append(String.format("  [%02d] Vértice: %-15s (Aristas salientes: %d)\n", idx++, v, out.size()));
+                for (var e : out) {
+                    sb.append(String.format("       ↳ (%s)-[%s, props=%s]->(%s)\n", v, e.label(), e.properties(), e.targetVertex()));
+                }
+            }
+            return sb.toString();
+        }
+
+        // 4. TIMESERIES
+        if (db.getTimeSeriesEngineNames().contains(unitName)) {
+            var ts = db.getTimeSeriesEngine(unitName);
+            var pts = ts.getAll();
+            if (pts.isEmpty()) return String.format("[INFO] El bucket de series temporales '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE TIMESERIES BUCKET '%s' (Mostrando %d de %d) ===\n",
+                unitName, Math.min(pts.size(), limit), pts.size()));
+            int idx = 1;
+            for (var entry : pts.entrySet()) {
+                if (idx > limit) break;
+                sb.append(String.format("  [%02d] Timestamp: %-15d -> Valor: %.4f\n", idx++, entry.getKey(), entry.getValue()));
+            }
+            return sb.toString();
+        }
+
+        // 5. KEYVALUE
+        if (db.getKeyValueEngineNames().contains(unitName)) {
+            var kv = db.getKeyValueEngine(unitName);
+            var store = kv.getAll();
+            if (store.isEmpty()) return String.format("[INFO] El bucket clave-valor '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE KEYVALUE BUCKET '%s' (Mostrando %d de %d) ===\n",
+                unitName, Math.min(store.size(), limit), store.size()));
+            int idx = 1;
+            for (var entry : store.entrySet()) {
+                if (idx > limit) break;
+                String valStr = new String(entry.getValue(), StandardCharsets.UTF_8);
+                sb.append(String.format("  [%02d] Clave: %-20s -> Valor: %s\n", idx++, entry.getKey(), valStr));
+            }
+            return sb.toString();
+        }
+
+        // 6. GEOSPATIAL
+        if (db.getGeospatialEngineNames().contains(unitName)) {
+            var geo = db.getGeospatialEngine(unitName);
+            var pts = geo.getAllPoints();
+            if (pts.isEmpty()) return String.format("[INFO] El bucket geoespacial '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE GEOSPATIAL BUCKET '%s' (Mostrando %d de %d) ===\n",
+                unitName, Math.min(pts.size(), limit), pts.size()));
+            int idx = 1;
+            for (var p : pts.values()) {
+                if (idx > limit) break;
+                sb.append(String.format("  [%02d] Feature ID: %-15s -> Lat: %.6f, Lon: %.6f\n", idx++, p.id(), p.latitude(), p.longitude()));
+            }
+            return sb.toString();
+        }
+
+        // 7. COLUMNAR
+        if (db.getColumnarEngineNames().contains(unitName)) {
+            var col = db.getColumnarEngine(unitName);
+            if (col.getRowCount() == 0) return String.format("[INFO] El bucket columnar '%s' está vacío.", unitName);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE COLUMNAR BUCKET '%s' (Total Filas: %d) ===\n", unitName, col.getRowCount()));
+            sb.append("  Columnas Numéricas: ").append(col.getNumericColumns().keySet()).append("\n");
+            sb.append("  Columnas Texto:     ").append(col.getTextColumns().keySet()).append("\n");
+            return sb.toString();
+        }
+
+        return String.format("[NOT FOUND] No se encontró el bucket/unit '%s' en la base de datos '%s'. Use 'show buckets' para ver las unidades disponibles.",
+            unitName, currentDatabase);
+    }
+
+    private String handleCount(String command) {
+        String clean = command.replaceAll("(?i)^COUNT(\\s+FROM)?\\s*", "").trim();
+        JettraDatabase db = client.getDatabase(currentDatabase);
+
+        if (clean.isBlank() || clean.equalsIgnoreCase("ALL") || clean.equals("*")) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== CONTEO TOTAL DE REGISTROS EN BASE DE DATOS: '%s' ===\n", currentDatabase));
+            long grandTotal = 0;
+            for (String col : db.getDocumentEngineNames()) {
+                long c = db.getDocumentEngine(col).count();
+                grandTotal += c;
+                sb.append(String.format("  * [DOCUMENT]   %-22s : %d registro(s)\n", col, c));
+            }
+            for (String col : db.getVectorEngineNames()) {
+                long c = db.getVectorEngine(col, 3).size();
+                grandTotal += c;
+                sb.append(String.format("  * [VECTOR]     %-22s : %d vector(es)\n", col, c));
+            }
+            for (String col : db.getGraphEngineNames()) {
+                long c = db.getGraphEngine(col).size();
+                grandTotal += c;
+                sb.append(String.format("  * [GRAPH]      %-22s : %d vértice(s)\n", col, c));
+            }
+            for (String col : db.getTimeSeriesEngineNames()) {
+                long c = db.getTimeSeriesEngine(col).size();
+                grandTotal += c;
+                sb.append(String.format("  * [TIMESERIES] %-22s : %d punto(s)\n", col, c));
+            }
+            for (String col : db.getKeyValueEngineNames()) {
+                long c = db.getKeyValueEngine(col).size();
+                grandTotal += c;
+                sb.append(String.format("  * [KEYVALUE]   %-22s : %d clave(s)\n", col, c));
+            }
+            for (String col : db.getColumnarEngineNames()) {
+                long c = db.getColumnarEngine(col).size();
+                grandTotal += c;
+                sb.append(String.format("  * [COLUMNAR]   %-22s : %d fila(s)\n", col, c));
+            }
+            for (String col : db.getGeospatialEngineNames()) {
+                long c = db.getGeospatialEngine(col).size();
+                grandTotal += c;
+                sb.append(String.format("  * [GEOSPATIAL] %-22s : %d punto(s) GIS\n", col, c));
+            }
+            sb.append(String.format("Gran Total en '%s': %d registro(s) multimodelo.\n", currentDatabase, grandTotal));
+            return sb.toString();
+        }
+
+        String unitName = cleanQuotes(clean.split("\\s+")[0]);
+
+        if (db.getDocumentEngineNames().contains(unitName)) {
+            long c = db.getDocumentEngine(unitName).count();
+            return String.format("[COUNT] [DOCUMENT] '%s': %d registro(s).", unitName, c);
+        }
+        if (db.getVectorEngineNames().contains(unitName)) {
+            long c = db.getVectorEngine(unitName, 3).size();
+            return String.format("[COUNT] [VECTOR] '%s': %d vector(es).", unitName, c);
+        }
+        if (db.getGraphEngineNames().contains(unitName)) {
+            long c = db.getGraphEngine(unitName).size();
+            return String.format("[COUNT] [GRAPH] '%s': %d vértice(s).", unitName, c);
+        }
+        if (db.getTimeSeriesEngineNames().contains(unitName)) {
+            long c = db.getTimeSeriesEngine(unitName).size();
+            return String.format("[COUNT] [TIMESERIES] '%s': %d punto(s) temporales.", unitName, c);
+        }
+        if (db.getKeyValueEngineNames().contains(unitName)) {
+            long c = db.getKeyValueEngine(unitName).size();
+            return String.format("[COUNT] [KEYVALUE] '%s': %d clave(s).", unitName, c);
+        }
+        if (db.getColumnarEngineNames().contains(unitName)) {
+            long c = db.getColumnarEngine(unitName).size();
+            return String.format("[COUNT] [COLUMNAR] '%s': %d fila(s).", unitName, c);
+        }
+        if (db.getGeospatialEngineNames().contains(unitName)) {
+            long c = db.getGeospatialEngine(unitName).size();
+            return String.format("[COUNT] [GEOSPATIAL] '%s': %d punto(s) espaciales.", unitName, c);
+        }
+
+        return String.format("[NOT FOUND] El bucket/unit '%s' no existe en la base de datos '%s'.", unitName, currentDatabase);
+    }
+
+    private String handleDropCollection(String command) {
+        String col = cleanQuotes(command.substring("DROP COLLECTION ".length()).trim());
+        boolean ok = client.getDatabase(currentDatabase).dropCollection(col);
+        return ok ? String.format("[SUCCESS] Colección '%s' eliminada.", col)
+                  : String.format("[WARN] La colección '%s' no existía.", col);
+    }
+
+    // --- Auxiliares de Parseo ---
     private String cleanQuotes(String text) {
         if (text == null) return "";
         return text.replace(";", "").replace("'", "").replace("\"", "").trim();
-    }
-
-    private String resolveReference(JettraDatabase db, String refStr) {
-        try {
-            if (refStr.contains("::") && refStr.contains("#")) {
-                String type = refStr.substring(0, refStr.indexOf("::"));
-                String rest = refStr.substring(refStr.indexOf("::") + 2);
-                String col = rest.substring(0, rest.indexOf('#'));
-                String targetId = rest.substring(refStr.indexOf('#') + 1);
-
-                if ("vector".equalsIgnoreCase(type)) {
-                    float[] v = db.getVectorEngine(col, 3).getVector(targetId);
-                    return v != null ? "Vector " + Arrays.toString(v) : "(Vector no encontrado)";
-                }
-            }
-            return refStr;
-        } catch (Exception e) {
-            return refStr;
-        }
     }
 
     private Map<String, Object> parseJsonOrKeyValues(String raw) {
@@ -958,274 +1860,196 @@ public final class JettraStoreShellApp {
                 String key = cleanQuotes(kv[0].trim());
                 String valStr = cleanQuotes(kv[1].trim());
                 try {
-                    if (valStr.equalsIgnoreCase("true") || valStr.equalsIgnoreCase("false")) {
-                        map.put(key, Boolean.parseBoolean(valStr));
-                    } else if (valStr.contains(".")) {
+                    if (valStr.contains(".")) {
                         map.put(key, Double.parseDouble(valStr));
                     } else {
                         map.put(key, Long.parseLong(valStr));
                     }
-                } catch (Exception e) {
-                    map.put(key, valStr);
+                } catch (NumberFormatException e) {
+                    if ("true".equalsIgnoreCase(valStr) || "false".equalsIgnoreCase(valStr)) {
+                        map.put(key, Boolean.parseBoolean(valStr));
+                    } else {
+                        map.put(key, valStr);
+                    }
                 }
             }
         }
         return map;
     }
 
-    public String installAllSampleDatabases() {
-        // 1. sample_enterprise_db
-        JettraDatabase enterprise = client.getDatabase("sample_enterprise_db");
-        enterprise.getDocumentEngine("products").insert("prod_01", Map.of(
-            "name", "Quantum Neural Accelerator",
-            "category", "Hardware",
-            "price", 4500.0,
-            "_ref_vector", "vector::product_embeddings#emb_01"
-        ));
-        enterprise.getVectorEngine("product_embeddings", 3).index("emb_01", new float[]{0.15f, -0.42f, 0.88f});
-        enterprise.getGraphEngine("catalog_graph").addEdge("prod_01", "cat_hardware", "BELONGS_TO", Map.of("weight", 1.0));
-        enterprise.getTimeSeriesEngine("telemetry").record(System.currentTimeMillis(), 42.5);
-        enterprise.getKeyValueEngine("app_cache").put("session_active", "true".getBytes(StandardCharsets.UTF_8));
-
-        // 2. sample_ecommerce_db
-        JettraDatabase ecommerce = client.getDatabase("sample_ecommerce_db");
-        ecommerce.getDocumentEngine("customers").insert("cust_101", Map.of(
-            "name", "Elena Rostova", "tier", "VIP_PLATINUM", "country", "ES"
-        ));
-        ecommerce.getDocumentEngine("orders").insert("ord_9901", Map.of(
-            "customer_id", "cust_101", "total", 899.50, "status", "PAID"
-        ));
-        ecommerce.getColumnarEngine("order_analytics").appendRow(Map.of("revenue", 899.50));
-        ecommerce.getKeyValueEngine("shopping_carts").put("cart_cust_101", "item_quantum_gpu:2".getBytes(StandardCharsets.UTF_8));
-
-        // 3. sample_ai_graph_db
-        JettraDatabase aiGraph = client.getDatabase("sample_ai_graph_db");
-        aiGraph.getGraphEngine("knowledge_network").addEdge("DeepLearning", "TransformerModel", "FOUNDATION_OF", Map.of("depth", 4.0));
-        aiGraph.getGraphEngine("knowledge_network").addEdge("TransformerModel", "AttentionMechanism", "USES", Map.of("weight", 0.95));
-        aiGraph.getVectorEngine("concept_embeddings", 3).index("vec_transformer", new float[]{0.85f, 0.12f, -0.33f});
-        aiGraph.getDocumentEngine("prompts_corpus").insert("prompt_01", Map.of(
-            "role", "system", "text", "You are an autonomous distributed DB engine expert."
-        ));
-
-        // 4. sample_iot_telemetry_db
-        JettraDatabase iot = client.getDatabase("sample_iot_telemetry_db");
-        long now = System.currentTimeMillis();
-        iot.getTimeSeriesEngine("sensor_temperature").record(now - 2000, 24.5);
-        iot.getTimeSeriesEngine("sensor_temperature").record(now - 1000, 25.1);
-        iot.getTimeSeriesEngine("sensor_temperature").record(now, 24.8);
-        iot.getTimeSeriesEngine("sensor_vibration").record(now, 0.042);
-        iot.getDocumentEngine("smart_devices").insert("iot_gateway_01", Map.of(
-            "model", "EdgeGate-X25", "firmware", "v2.5.0-LTS", "status", "ONLINE"
-        ));
-        iot.getGeospatialEngine("device_locations").insertPoint("iot_gateway_01", 40.4168, -3.7038);
-
-        // 5. sample_financial_db
-        JettraDatabase finance = client.getDatabase("sample_financial_db");
-        finance.getDocumentEngine("transactions").insert("tx_001", Map.of(
-            "from_account", "ACC_7712", "to_account", "ACC_9941", "amount", 15000.0, "currency", "USD"
-        ));
-        finance.getTimeSeriesEngine("stock_feed").record(now, 184.50);
-
-        this.currentDatabase = "sample_enterprise_db";
-
+    public String getHelpText() {
         return """
-            [SUCCESS] ¡Todas las 5 bases de datos de ejemplo instaladas exitosamente!
-              1. 'sample_enterprise_db'   -> Documentos (products), Vectores (3D), Grafos, TimeSeries, KV
-              2. 'sample_ecommerce_db'    -> Documentos (orders, customers), Analítica Columnar, Carritos KV
-              3. 'sample_ai_graph_db'     -> Red de Conocimiento de Grafos, Embeddings Conceptuales, Prompts
-              4. 'sample_iot_telemetry_db'-> Sensores Temperatura/Vibración, Dispositivos Smart, Geo-localización
-              5. 'sample_financial_db'    -> Transacciones Financieras, Series Temporales de Cotizaciones
-            Base de datos activa conmutada a: 'sample_enterprise_db'
-            """;
-    }
-
-    public String installSampleDatabase() {
-        return installAllSampleDatabases();
-    }
-
-    private String handleBackup(String command) {
-        try {
-            String[] parts = command.split("\\s+TO\\s+");
-            String db = parts[0].replace("BACKUP DATABASE", "").trim();
-            String pathStr = cleanQuotes(parts[1]);
-            Path path = Path.of(pathStr);
-            var res = client.admin().backupDatabase(client.getDatabase(db), path);
-            return res.success() ? "[SUCCESS] " + res.message() : "[ERROR] " + res.message();
-        } catch (Exception e) {
-            return "[ERROR] Sintaxis BACKUP inválida. Uso: BACKUP DATABASE <name> TO '<path>'";
-        }
-    }
-
-    private String handleRestore(String command) {
-        try {
-            String[] parts = command.split("\\s+FROM\\s+");
-            String db = parts[0].replace("RESTORE DATABASE", "").trim();
-            String pathStr = cleanQuotes(parts[1]);
-            Path path = Path.of(pathStr);
-            var res = client.admin().restoreDatabase(path, client.getDatabase(db));
-            return res.success() ? "[SUCCESS] " + res.message() : "[ERROR] " + res.message();
-        } catch (Exception e) {
-            return "[ERROR] Sintaxis RESTORE inválida. Uso: RESTORE DATABASE <name> FROM '<path>'";
-        }
-    }
-
-    public static String getHelpText() {
-        return """
-            ================================ JETTRASTORE SHELL HELP ================================
-            🔌 CONEXIÓN, AUTENTICACIÓN Y SESIÓN:
-              connect <url> <port>                  Conecta la sesión a un servidor JettraStore.
-              login <username> <password>           Autentica con JettraJWT ('admin' / 'admin-jettra').
-              logout                                Cierra la sesión activa actual y desconecta.
-
-            💾 GESTIÓN DE PERFILES DE CONEXIÓN:
-              save connection <nombre>              Guarda los parámetros de conexión actuales.
+            ==============================================================================================
+                                     JETTRASTORE SHELL - GUÍA COMPLETA DE COMANDOS
+            ==============================================================================================
+            1. CONEXIÓN Y SESIÓN:
+              connect <url> <port>                  Establece la dirección del nodo servidor JettraStore.
+              connect <nombre-perfil>               Conecta utilizando un perfil previamente guardado.
+              login <username> <password>            Autentica y obtiene un token de sesión criptográfico JettraJWT.
+              logout                                Cierra la sesión activa y revoca el token JWT.
+              save connection <nombre> Guarda el perfil de conexión actual con un alias.
               remove connection <nombre>            Elimina un perfil de conexión guardado.
-              list connections / list conections    Muestra la tabla de todas las conexiones guardadas.
-              connect <nombre-perfil>               Conecta directamente usando un perfil guardado.
+              list connections / list conections    Lista todos los perfiles de conexión guardados.
 
-            📊 TELEMETRÍA, RECURSOS Y CLÚSTER:
-              status                                Muestra consumo de recursos (RAM, PROCESADOR, DISCO).
-              show nodes                            Muestra todos los nodos del clúster Raft y su estado.
-              SHOW USERS / SECURITY STATUS          Muestra control de acceso (admin SUPER_ADMIN inmutable).
+            2. TELEMETRÍA Y CLÚSTER:
+              status                                Monitorea RAM Panama FFM, CPU Loom y Disco LSM.
+              show nodes / list nodes               Muestra la topología del clúster Raft y nodos del anillo.
+              add node <id> <host> <port> [ROLE]    Agrega un nuevo nodo secundario al clúster Raft.
+              remove node <id>                      Remueve un nodo réplica del anillo dinámico.
+              start node <id>                       Inicia y activa el procesamiento para un nodo específico.
+              stop node <id>                        Detiene un nodo réplica (pausa el tráfico de descarga).
 
-            ⚙️ RESOLUCIÓN DE REFERENCIAS (JettraRef):
-              lazy reference on                     Activa la resolución perezosa bajo demanda (Proxy).
-              lazy reference off                    Desactiva lazy reference; carga directa en memoria (Eager).
-              lazy reference status                 Muestra el estado actual del modo lazy reference.
+            3. BASES DE DATOS, BUCKETS/UNITS Y PERSISTENCIA EN DISCO:
+              show databases / show dbs             Lista todas las bases de datos detectadas en disco y memoria.
+              show buckets / show unit              Muestra todos los buckets/units de cada motor con sus conteos.
+              show records <bucket> [LIMIT n]       Muestra los registros que contiene el bucket indicado en cualquier motor.
+              count <bucket> / count all            Cuenta los registros de un bucket o el total de la base de datos activa.
+              show samples / show sample dbs        Muestra las 5 bases de datos de prueba preconfiguradas.
+              create database <nombre>              Crea una nueva base de datos lógica.
+              drop database <nombre>                Elimina la base de datos especificada.
+              use <nombre>                          Conmuta la base de datos activa.
+              db stats                              Muestra estadísticas de la base de datos activa.
+              INSTALL SAMPLES / install samples     Instala y persiste las 5 bases de datos de ejemplo.
+              backup database [nombre] [destino]    Genera un snapshot físico .snap de la base de datos.
+              restore database <archivo> <nombre>   Restaura un snapshot .snap en una base de datos.
 
-            🔍 CONSULTAS Y LENGUAJES (JettraQL & JettraSQL):
-              FROM <collection> [WHERE k = v]       Consulta documental expresiva JettraQL.
-              MATCH (<src>)-[<lbl>]->(<tgt>)        Consulta de relaciones y aristas en grafos JettraQL.
-              VECTOR SIMILARITY <col> TO [...]      Búsqueda vectorial Top-K por similaridad coseno.
-              FETCH <col> <id> [RESOLVE REFS]       Recuperación de registro resolviendo enlaces JettraRef.
-              SELECT ... FROM <col>                 Sentencias SQL tradicionales en JettraStore.
+            4. CONSULTAS POLÍGLOTAS (JETTRAQL Y JETTRASQL):
+              JettraQL: Declarativo multimodelo (FROM, MATCH, VECTOR SIMILARITY, FETCH)
+              JQL FROM <col> [WHERE campo = valor]  Consulta declarativa sobre documentos.
+              JQL MATCH (a)-[r]->(b) IN <grafo>     Pattern matching sobre redes de grafos.
+              JQL VECTOR SIMILARITY <col> TO [...]  Búsqueda de vecinos más cercanos por similaridad coseno.
+              JQL FETCH <col> <id> [RESOLVE REFS]   Recupera un registro resolviendo referencias JettraRef.
+              SQL SELECT * FROM <col> [WHERE k = v] Consulta relacional con tabla formateada de columnas y filas.
+              SQL INSERT INTO <col> VALUES (id, json) Inserta registro en la colección activa.
+              SQL UPDATE <col> SET k = v WHERE _id = id Actualiza campos de un registro.
+              SQL DELETE FROM <col> WHERE _id = id  Elimina un registro mediante sintaxis SQL.
 
-            📁 BASES DE DATOS:
-              SHOW DATABASES / SHOW DBS             Lista todas las bases de datos disponibles.
-              CREATE DATABASE <dbname>              Crea una base de datos y la selecciona como activa.
-              DROP DATABASE <dbname>                Elimina la base de datos especificada.
-              USE <dbname>                          Conmuta la base de datos activa.
-              DB STATS / STATS                      Muestra resumen y telemetría de la base de datos activa.
+            5. REGISTROS REFERENCIADOS (JETTRAREF) Y LAZY LOADING:
+              lazy reference on / off (lazy reference on / lazy reference off)               Alterna la resolución diferida (Lazy) o inmediata (Eager).
+              insert ref <col> <id> KEY <k> TARGET <engine>::<col>#<id>  Vincula un puntero cruzado multimodelo.
+              resolve ref <engine>::<col>#<id>      Resuelve manualmente el destino de una referencia.
+              show refs <col> <id>                  Muestra todas las referencias de un registro y sus resoluciones.
+              get <col> <id>                        Obtiene un documento y resuelve sus punteros _ref_*.
 
-            🗃️ COLECCIONES Y MODELOS:
-              SHOW COLLECTIONS / SHOW TABLES        Lista colecciones y motores multimodelo activos.
-              CREATE COLLECTION <col> [TYPE <tipo>] Crea colección (DOCUMENT, VECTOR, GRAPH, TS, KV).
-              DROP COLLECTION <col>                 Elimina una colección y todos sus registros.
-              COUNT <col>                           Retorna la cantidad total de registros en la colección.
-              TRUNCATE <col>                        Vacía todos los registros de una colección.
+            6. ADMINISTRACIÓN DE ÍNDICES:
+              create index <nombre> ON <col> (campo) [TYPE BTREE|HASH|SPARSE] [UNIQUE]  Crea índice secundario.
+              drop index <nombre>                   Elimina el índice especificado.
+              alter index <nombre> rebuild          Reconstruye el índice re-escaneando los documentos.
+              show indexes [ON <col>]               Muestra la tabla de índices creados en la base de datos.
 
-            📝 REGISTROS Y CRUD (DOCUMENT ENGINE):
-              INSERT INTO <col> ID <id> JSON {..}   Inserta documento con _id y campos estructurados.
-              GET <col> <id>                        Obtiene un documento por ID (resuelve JettraRef).
-              FIND ALL <col> [LIMIT <n>]            Lista registros de la colección con paginación.
-              UPDATE <col> <id> SET k=v, ...        Actualiza campos específicos del documento.
-              DELETE <col> <id>                     Elimina un documento por su clave primaria _id.
+            7. ADMINISTRACIÓN DE USUARIOS Y ROLES (RBAC):
+              show users / list users               Muestra todos los usuarios, rol global y roles por base de datos.
+              create user <user> PASSWORD <pass> [ROLE <role>] Crea un nuevo usuario en el sistema.
+              drop user <user>                      Elimina un usuario (superuser 'admin' inmutable).
+              alter user <user> PASSWORD <newPass>  Actualiza la contraseña del usuario.
+              alter user <user> ROLE <newRole>      Actualiza el rol global del usuario.
+              grant <DB_OWNER|READ_WRITE|READ_ONLY> ON <db> TO <user>  Asigna privilegios sobre una base de datos.
+              revoke <db> FROM <user>               Revoca el acceso sobre la base de datos indicada.
+              show grants for <user>                Muestra los privilegios asignados al usuario especificado.
 
-            ⚡ MOTORES MULTIMODELO ESPECIALIZADOS:
-              VECTOR INDEX <col> <id> [f1,f2,..]    Indexa vector float[] en el motor vectorial.
-              VECTOR SEARCH <col> [f1,f2,..] [K 5]  Búsqueda de similaridad coseno (Top-K matches).
-              GRAPH ADD VERTEX <col> <vId>          Agrega un nodo o vértice al grafo.
-              GRAPH ADD EDGE <c> <s> -> <t> LABEL <l> Agrega una arista dirigida con etiqueta y peso.
-              GRAPH GET EDGES <col> <vId>           Lista aristas salientes del vértice dado.
-              TS RECORD <col> <val> [TIME <ts>]     Inserta punto en serie temporal.
-              TS RANGE <col> <desde> <hasta>        Consulta rango temporal y calcula promedio.
-              KV PUT <col> <clave> <valor>          Almacena par clave-valor binario.
-              KV GET <col> <clave>                  Recupera valor correspondiente a la clave.
-
-            💾 PERSISTENCIA Y MUESTRAS COMPLETAS:
-              INSTALL SAMPLES                       Instala TODAS las bases de datos de ejemplo (5 dbs).
-              BACKUP DATABASE <db> TO '<path>'      Genera respaldo instantáneo en archivos .jettra.
-              RESTORE DATABASE <db> FROM '<path>'   Restaura base de datos con validación de quórum.
-              SET PAGE_SIZE = <n>                   Define la cantidad de registros por página.
-              menu                                  Despliega el menú interactivo guiado.
-              exit, quit                            Cierra la sesión del shell.
-            ========================================================================================
+            8. MOTORES ESPECIALIZADOS (VECTORES, GRAFOS, TIME SERIES, KV):
+              vector index <col> <id> [f1,f2,..]    Indexa vector float[] en el motor vectorial.
+              vector search <col> [f1,f2] K <num>   Búsqueda k-NN por similaridad coseno.
+              graph add vertex <grafo> <id>         Agrega un vértice a la red de grafos.
+              graph add edge <g> <a> <b> [LABEL l]  Agrega arista dirigida ponderada.
+              ts record <serie> <val> [TIME t]      Registra punto métrico en serie temporal.
+              ts range <serie> <inicio> <fin>       Consulta métricas en rango de tiempo.
+              kv put <tabla> <clave> <valor>        Almacena clave-valor en memoria de acceso ultra rápido.
+              kv get <tabla> <clave>                Recupera el valor asociado a la clave.
+            ==============================================================================================
             """;
     }
 
-    public static String getInteractiveMenu() {
+    public String getInteractiveMenu() {
         return """
-            ========================= JETTRASTORE INTERACTIVE MENU =========================
-              [1]  Instalar TODAS las Bases de Datos de Ejemplo (INSTALL SAMPLES)
-              [2]  Conectar al Servidor (connect <host> <port>)
-              [3]  Autenticar con JettraJWT (login <username> <password>)
-              [4]  Guardar / Listar Perfiles de Conexión (save/list connections)
-              [5]  Ver Consumo de Recursos: RAM, CPU, Disco (status)
-              [6]  Ver Topología de Nodos del Clúster Raft (show nodes)
-              [7]  Alternar Carga Perezosa (lazy reference on / off)
-              [8]  Listar y Explorar Bases de Datos (SHOW DATABASES)
-              [9]  Listar Colecciones Multimodelo (SHOW COLLECTIONS)
-              [10] Consultar con JettraQL o JettraSQL (FROM <col> / SELECT ...)
-              [11] Consultar / Listar Documentos (FIND ALL <col>)
-              [12] Insertar Documento (INSERT INTO <col> ID <id> JSON {..})
-              [13] Respaldar Base de Datos (BACKUP DATABASE)
-              [14] Restaurar Base de Datos (RESTORE DATABASE)
-              [15] Cerrar Sesión (logout)
-              [16] Ver Ayuda Completa (help)
-              [17] Salir
+            ================================================================================
+                                   JETTRASTORE MENU INTERACTIVO
+            ================================================================================
+            [1] Instalar todas las Bases de Datos de Muestra (INSTALL SAMPLES)
+            [2] Listar Bases de Datos (SHOW DATABASES)
+            [3] Monitoreo de Recursos (STATUS)
+            [4] Topología de Nodos del Clúster (SHOW NODES)
+            [5] Administrar Índices de la Base de Datos (SHOW INDEXES)
+            [6] Administrar Usuarios y Roles RBAC (SHOW USERS)
+            [7] Ayuda Completa (HELP)
             ================================================================================
             """;
     }
 
-    public static void main(String[] args) {
-        System.out.println("================================================================================");
-        System.out.println("                         JETTRASTORE INTERACTIVE SHELL                         ");
-        System.out.println("================================================================================");
-        System.out.println("Iniciando sesión interactiva de JettraStore CLI (Java 25 LTS)...\n");
-
-        try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-
-            // Paso 1: Pedir servidor y puerto de conexión
-            System.out.print("Servidor JettraStore Host [127.0.0.1]: ");
-            String hostInput = reader.readLine();
-            String host = (hostInput == null || hostInput.isBlank()) ? "127.0.0.1" : hostInput.trim();
-
-            System.out.print("Puerto del Servidor [9091]: ");
-            String portInput = reader.readLine();
-            int port = 9091;
-            if (portInput != null && !portInput.isBlank()) {
-                try { port = Integer.parseInt(portInput.trim()); } catch (Exception ignored) {}
-            }
-
-            // Paso 2: Pedir credenciales de login
-            System.out.print("Usuario [admin]: ");
-            String userInput = reader.readLine();
-            String user = (userInput == null || userInput.isBlank()) ? "admin" : userInput.trim();
-
-            System.out.print("Contraseña [admin-jettra]: ");
-            String passInput = reader.readLine();
-            String pass = (passInput == null || passInput.isBlank()) ? "admin-jettra" : passInput.trim();
-
-            JettraStoreShellApp app = new JettraStoreShellApp(false);
-            System.out.println(app.executeCommand("connect " + host + " " + port));
-            System.out.println(app.executeCommand("login " + user + " " + pass));
-            System.out.println("Escriba 'help' o '?' para ver la lista completa de comandos, o 'menu' para el menú interactivo.\n");
-
-            while (true) {
-                String promptUser = app.isAuthenticated() ? app.getCurrentUser() : "unauthenticated";
-                System.out.print(promptUser + "@" + app.currentDatabase + "> ");
-                String line = reader.readLine();
-                if (line == null || "exit".equalsIgnoreCase(line.trim()) || "quit".equalsIgnoreCase(line.trim())) {
-                    System.out.println("¡Sesión finalizada!");
-                    break;
-                }
-                if (!line.isBlank()) {
-                    System.out.println(app.executeCommand(line));
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Error en shell: " + e.getMessage());
-        }
-    }
-
-    public String getCurrentDatabase() { return currentDatabase; }
-    public boolean isLazyLoad() { return lazyLoad; }
-    public boolean isShowReferences() { return showReferences; }
-    public int getPageSize() { return pageSize; }
+    // Getters para Testing y Verificación
     public boolean isAuthenticated() { return authenticated; }
     public String getCurrentUser() { return currentUser; }
+    public String getCurrentRole() { return currentRole; }
+    public String getCurrentDatabase() { return currentDatabase; }
     public String getCurrentHost() { return currentHost; }
     public int getCurrentPort() { return currentPort; }
-    public Map<String, SavedConnection> getSavedConnections() { return Collections.unmodifiableMap(savedConnections); }
+    public boolean isLazyLoad() { return lazyLoad; }
+    public Map<String, SavedConnection> getSavedConnections() { return savedConnections; }
+    public JettraClient getClient() { return client; }
+
+    public static void main(String[] args) {
+        Console console = System.console();
+        Scanner scanner = new Scanner(System.in);
+
+        System.out.println("================================================================================");
+        System.out.println("               JETTRASTORE INTERACTIVE DISTRIBUTED SHELL (JAVA 25+)             ");
+        System.out.println("================================================================================");
+
+        String host = "127.0.0.1";
+        int port = 9091;
+        String user = "admin";
+        String pass = "admin-jettra";
+
+        if (console != null) {
+            String inputHost = console.readLine(">> JettraStore Host [%s]: ", host);
+            if (inputHost != null && !inputHost.isBlank()) host = inputHost.trim();
+
+            String inputPort = console.readLine(">> JettraStore Port [%d]: ", port);
+            if (inputPort != null && !inputPort.isBlank()) {
+                try { port = Integer.parseInt(inputPort.trim()); } catch (Exception ignored) {}
+            }
+
+            String inputUser = console.readLine(">> Username [%s]: ", user);
+            if (inputUser != null && !inputUser.isBlank()) user = inputUser.trim();
+
+            char[] passArray = console.readPassword(">> Password [hidden]: ");
+            if (passArray != null && passArray.length > 0) pass = new String(passArray);
+        }
+
+        JettraStoreShellApp shell = new JettraStoreShellApp(false);
+        boolean ok = shell.connectAndLogin(host, port, user, pass);
+        if (ok) {
+            System.out.printf("[AUTH OK] Autenticado exitosamente como '%s' (%s:%d)%n", user, host, port);
+        } else {
+            System.out.printf("[WARN] No se pudo conectar a %s:%d. Inicie sesión manualmente en la consola.%n", host, port);
+        }
+
+        System.out.println("Escriba 'help' o '?' para ver los comandos disponibles, o 'exit' / 'quit' para salir.\n");
+
+        while (true) {
+            String prompt = String.format("jettra-shell [%s@%s:%d/%s]> ", 
+                shell.currentUser, shell.currentHost, shell.currentPort, shell.currentDatabase);
+            System.out.print(prompt);
+            String line;
+            if (console != null) {
+                line = console.readLine();
+            } else if (scanner.hasNextLine()) {
+                line = scanner.nextLine();
+            } else {
+                break;
+            }
+
+            if (line == null) break;
+            String trimmed = line.trim();
+            if (trimmed.equalsIgnoreCase("exit") || trimmed.equalsIgnoreCase("quit")) {
+                System.out.println("Saliendo de JettraStore Shell...");
+                break;
+            }
+
+            String result = shell.executeCommand(trimmed);
+            if (!result.isBlank()) {
+                System.out.println(result);
+            }
+        }
+    }
 }

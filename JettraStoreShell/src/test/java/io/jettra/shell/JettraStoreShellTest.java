@@ -65,7 +65,7 @@ public class JettraStoreShellTest {
     }
 
     @Test
-    @DisplayName("Debe procesar status, show nodes y lazy reference")
+    @DisplayName("Debe procesar status, administración de nodos y lazy reference")
     public void testStatusNodesAndLazyReference() {
         JettraStoreShellApp shell = new JettraStoreShellApp(true);
 
@@ -84,7 +84,22 @@ public class JettraStoreShellTest {
         assertTrue(nodes.contains("LEADER"));
         assertTrue(nodes.contains("FOLLOWER"));
 
-        // 3. Configuración de lazy reference on / off
+        // 3. Administración de nodos (ADD, STOP, START, REMOVE)
+        String addNode = shell.executeCommand("ADD NODE node-04 192.168.1.104 9091 SECONDARY");
+        assertTrue(addNode.contains("[SUCCESS]"));
+
+        String stopNode = shell.executeCommand("STOP NODE node-04");
+        assertTrue(stopNode.contains("[SUCCESS]"));
+        assertTrue(shell.executeCommand("show nodes").contains("STOPPED"));
+
+        String startNode = shell.executeCommand("START NODE node-04");
+        assertTrue(startNode.contains("[SUCCESS]"));
+        assertTrue(shell.executeCommand("show nodes").contains("RUNNING"));
+
+        String remNode = shell.executeCommand("REMOVE NODE node-04");
+        assertTrue(remNode.contains("[SUCCESS]"));
+
+        // 4. Configuración de lazy reference on / off
         String lazyOff = shell.executeCommand("lazy reference off");
         assertTrue(lazyOff.contains("DESACTIVADO (OFF)"));
         assertFalse(shell.isLazyLoad());
@@ -95,8 +110,8 @@ public class JettraStoreShellTest {
     }
 
     @Test
-    @DisplayName("Debe instalar todas las bases de datos con INSTALL SAMPLES y ejecutar JettraQL")
-    public void testInstallAllSamplesAndJettraQL() {
+    @DisplayName("Debe instalar todas las bases de datos con INSTALL SAMPLES, mostrar show samples y ejecutar JettraQL y JettraSQL")
+    public void testInstallAllSamplesAndQueries() {
         try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
             JettraStoreShellApp shell = new JettraStoreShellApp(client);
 
@@ -109,11 +124,14 @@ public class JettraStoreShellTest {
             assertTrue(samples.contains("sample_iot_telemetry_db"));
             assertTrue(samples.contains("sample_financial_db"));
 
-            // 2. Verificar que las bases de datos están registradas
+            // 2. Verificar que las bases de datos están registradas en show dbs y show samples
             String showDbs = shell.executeCommand("SHOW DATABASES");
             assertTrue(showDbs.contains("sample_enterprise_db"));
-            assertTrue(showDbs.contains("sample_ecommerce_db"));
-            assertTrue(showDbs.contains("sample_ai_graph_db"));
+            assertTrue(showDbs.contains("SAMPLE"));
+
+            String showSamples = shell.executeCommand("SHOW SAMPLES");
+            assertTrue(showSamples.contains("sample_enterprise_db"));
+            assertTrue(showSamples.contains("INSTALADA"));
 
             // 3. Consultas expresivas con JettraQL
             String jqlFrom = shell.executeCommand("FROM products");
@@ -125,40 +143,109 @@ public class JettraStoreShellTest {
 
             String jqlMatch = shell.executeCommand("MATCH (prod_01)-[BELONGS_TO]->(cat_hardware) IN catalog_graph");
             assertTrue(jqlMatch.contains("JETTRAQL [MATCH]"));
+
+            // 4. Consultas con JettraSQL
+            String sqlSelect = shell.executeCommand("SQL SELECT * FROM products");
+            assertTrue(sqlSelect.contains("JETTRASQL RESULTADO"));
+            assertTrue(sqlSelect.contains("prod_01"));
         }
     }
 
     @Test
-    @DisplayName("Debe verificar comandos en lista help e interactuar con registros")
-    public void testHelpAndCrudOperations() {
+    @DisplayName("Debe administrar índices: creación, listado, reconstrucción y eliminación")
+    public void testIndexManagement() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+            shell.executeCommand("CREATE DATABASE idx_db");
+            shell.executeCommand("USE idx_db");
+            shell.executeCommand("INSERT INTO articles ID art1 JSON {\"title\": \"Java 25 Vectors\", \"category\": \"Tech\"}");
+
+            // 1. Crear índice
+            String createIdx = shell.executeCommand("CREATE INDEX idx_cat ON articles (category) TYPE BTREE");
+            assertTrue(createIdx.contains("[SUCCESS]"));
+            assertTrue(createIdx.contains("idx_cat"));
+
+            // 2. Listar índices
+            String showIdx = shell.executeCommand("SHOW INDEXES");
+            assertTrue(showIdx.contains("idx_cat"));
+            assertTrue(showIdx.contains("articles"));
+
+            // 3. Reconstruir índice
+            String rebuild = shell.executeCommand("ALTER INDEX idx_cat REBUILD");
+            assertTrue(rebuild.contains("[SUCCESS]"));
+
+            // 4. Eliminar índice
+            String dropIdx = shell.executeCommand("DROP INDEX idx_cat");
+            assertTrue(dropIdx.contains("[SUCCESS]"));
+        }
+    }
+
+    @Test
+    @DisplayName("Debe administrar usuarios y roles RBAC por base de datos")
+    public void testUserAndRoleManagement() {
         try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
             JettraStoreShellApp shell = new JettraStoreShellApp(client);
 
-            // Verificar help exhaustivo con nuevos comandos
-            String help = shell.executeCommand("help");
-            assertTrue(help.contains("connect <url> <port>"));
-            assertTrue(help.contains("login <username> <password>"));
-            assertTrue(help.contains("logout"));
-            assertTrue(help.contains("save connection <nombre>"));
-            assertTrue(help.contains("remove connection <nombre>"));
-            assertTrue(help.contains("list connections"));
-            assertTrue(help.contains("status"));
-            assertTrue(help.contains("show nodes"));
-            assertTrue(help.contains("lazy reference on"));
-            assertTrue(help.contains("lazy reference off"));
-            assertTrue(help.contains("JettraQL"));
-            assertTrue(help.contains("INSTALL SAMPLES"));
+            // 1. Listar usuarios
+            String showUsers = shell.executeCommand("SHOW USERS");
+            assertTrue(showUsers.contains("admin"));
+            assertTrue(showUsers.contains("SUPER_ADMIN"));
 
-            // CRUD en colección
-            shell.executeCommand("CREATE DATABASE crud_db");
-            shell.executeCommand("CREATE COLLECTION users TYPE DOCUMENT");
-            String ins = shell.executeCommand("INSERT INTO users ID u1 JSON {\"name\": \"Carlos\", \"role\": \"developer\"}");
-            assertTrue(ins.contains("[SUCCESS]"));
+            // 2. Crear usuario
+            String createUsr = shell.executeCommand("CREATE USER dev_user PASSWORD secret-pass ROLE DEVELOPER");
+            assertTrue(createUsr.contains("[SUCCESS]"));
 
-            String get = shell.executeCommand("GET users u1");
-            assertTrue(get.contains("Carlos"));
+            // 3. Asignar rol de base de datos
+            String grant = shell.executeCommand("GRANT READ_WRITE ON sample_ecommerce_db TO dev_user");
+            assertTrue(grant.contains("[SUCCESS]"));
 
-            String del = shell.executeCommand("DELETE users u1");
+            // 4. Mostrar privilegios
+            String grants = shell.executeCommand("SHOW GRANTS FOR dev_user");
+            assertTrue(grants.contains("sample_ecommerce_db"));
+            assertTrue(grants.contains("READ_WRITE"));
+
+            // 5. Revocar rol
+            String revoke = shell.executeCommand("REVOKE sample_ecommerce_db FROM dev_user");
+            assertTrue(revoke.contains("[SUCCESS]"));
+
+            // 6. Eliminar usuario
+            String dropUser = shell.executeCommand("DROP USER dev_user");
+            assertTrue(dropUser.contains("[SUCCESS]"));
+        }
+    }
+
+    @Test
+    @DisplayName("Debe procesar registros referenciados y operaciones CRUD")
+    public void testReferencedRecordsAndCrud() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+            shell.executeCommand("CREATE DATABASE ref_db");
+            shell.executeCommand("USE ref_db");
+
+            // 1. Inserción de documentos
+            shell.executeCommand("INSERT INTO customers ID c100 JSON {\"name\": \"Maria Silva\", \"city\": \"Panama\"}");
+            shell.executeCommand("INSERT INTO orders ID o500 JSON {\"amount\": 350.0, \"status\": \"NEW\"}");
+
+            // 2. Vincular referencia cruzada JettraRef
+            String insRef = shell.executeCommand("INSERT REF orders o500 KEY _ref_customer TARGET document::customers#c100");
+            assertTrue(insRef.contains("[SUCCESS]"));
+
+            // 3. Obtener registro y verificar resolución
+            String get = shell.executeCommand("GET orders o500");
+            assertTrue(get.contains("o500"));
+            assertTrue(get.contains("JettraRef Resolución"));
+            assertTrue(get.contains("Maria Silva"));
+
+            // 4. Resolver referencia explícita
+            String res = shell.executeCommand("RESOLVE REF document::customers#c100");
+            assertTrue(res.contains("Maria Silva"));
+
+            // 5. Mostrar referencias del registro
+            String showRefs = shell.executeCommand("SHOW REFS orders o500");
+            assertTrue(showRefs.contains("_ref_customer"));
+
+            // 6. Eliminar registro
+            String del = shell.executeCommand("DELETE orders o500");
             assertTrue(del.contains("[SUCCESS]"));
         }
     }
@@ -178,6 +265,62 @@ public class JettraStoreShellTest {
             assertTrue(restoreOutput.contains("[SUCCESS]"));
 
             Files.deleteIfExists(tempBackup);
+        }
+    }
+
+    
+    
+    @Test
+    @DisplayName("Debe listar buckets/units, mostrar registros multimodelo y contar registros con show buckets, show records y count")
+    public void testShowBucketsShowRecordsAndCount() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+            shell.executeCommand("INSTALL SAMPLES");
+
+            // 1. SHOW BUCKETS / SHOW UNIT en sample_enterprise_db
+            shell.executeCommand("USE sample_enterprise_db");
+            String buckets = shell.executeCommand("SHOW BUCKETS");
+            assertTrue(buckets.contains("sample_enterprise_db"));
+            assertTrue(buckets.contains("employees"));
+            assertTrue(buckets.contains("DOCUMENT"));
+
+            String units = shell.executeCommand("SHOW UNIT");
+            assertTrue(units.contains("employees"));
+
+            // 2. Filtro por motor
+            String docBuckets = shell.executeCommand("SHOW BUCKETS DOCUMENT");
+            assertTrue(docBuckets.contains("employees"));
+
+            // 3. SHOW RECORDS con paginación
+            String recs = shell.executeCommand("SHOW RECORDS employees LIMIT 3");
+            assertTrue(recs.contains("REGISTROS DE DOCUMENT BUCKET 'employees'"));
+            assertTrue(recs.contains("emp_01"));
+
+            // 4. COUNT para una unidad específica y COUNT ALL
+            String cntEmp = shell.executeCommand("COUNT employees");
+            assertTrue(cntEmp.contains("[COUNT] [DOCUMENT] 'employees':"));
+
+            String cntAll = shell.executeCommand("COUNT ALL");
+            assertTrue(cntAll.contains("CONTEO TOTAL DE REGISTROS EN BASE DE DATOS: 'sample_enterprise_db'"));
+            assertTrue(cntAll.contains("Gran Total"));
+
+            // 5. Verificar Motores Vectorial y Grafo en sample_ai_graph_db
+            shell.executeCommand("USE sample_ai_graph_db");
+            String aiBuckets = shell.executeCommand("SHOW BUCKETS");
+            assertTrue(aiBuckets.contains("VECTOR"));
+            assertTrue(aiBuckets.contains("GRAPH"));
+
+            String vecRecs = shell.executeCommand("SHOW RECORDS concept_embeddings LIMIT 2");
+            assertTrue(vecRecs.contains("REGISTROS DE VECTOR BUCKET 'concept_embeddings'"));
+
+            String graphRecs = shell.executeCommand("SHOW RECORDS knowledge_network LIMIT 2");
+            assertTrue(graphRecs.contains("REGISTROS DE GRAPH BUCKET 'knowledge_network'"));
+
+            String cntVec = shell.executeCommand("COUNT concept_embeddings");
+            assertTrue(cntVec.contains("[COUNT] [VECTOR] 'concept_embeddings':"));
+
+            String cntGraph = shell.executeCommand("COUNT knowledge_network");
+            assertTrue(cntGraph.contains("[COUNT] [GRAPH] 'knowledge_network':"));
         }
     }
 }

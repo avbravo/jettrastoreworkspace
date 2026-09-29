@@ -7,498 +7,793 @@
 
 ## 📑 Tabla de Contenidos
 1. [Arquitectura y Visión General](#1-arquitectura-y-visión-general)
-2. [Ciclo de Inicio, Conexión y Autenticación](#2-ciclo-de-inicio-conexión-y-autenticación)
-3. [Gestor de Perfiles de Conexión](#3-gestor-de-perfiles-de-conexión)
-4. [Telemetría de Recursos y Monitoreo del Clúster](#4-telemetría-de-recursos-y-monitoreo-del-clúster)
-5. [Carga Perezosa de Referencias (Lazy Reference)](#5-carga-perezosa-de-referencias-lazy-reference)
-6. [Lenguajes de Consulta: JettraQL y JettraSQL](#6-lenguajes-de-consulta-jettraql-y-jettrasql)
-7. [Administración de Bases de Datos](#7-administración-de-bases-de-datos)
-8. [Administración de Colecciones](#8-administración-de-colecciones)
-9. [Operaciones CRUD sobre Registros](#9-operaciones-crud-sobre-registros)
-10. [Motores Multimodelo Especializados](#10-motores-multimodelo-especializados)
-11. [Bases de Datos de Ejemplo (INSTALL SAMPLES)](#11-bases-de-datos-de-ejemplo-install-samples)
-12. [Respaldos en Caliente y Restauración (Backup & Restore)](#12-respaldos-en-caliente-y-restauración-backup--restore)
-13. [Tutorial Práctico Extremo a Extremo (Paso a Paso)](#13-tutorial-práctico-extremo-a-extremo-paso-a-paso)
-14. [Tabla Rápida de Comandos y Ayuda (`help`)](#14-tabla-rápida-de-comandos-y-ayuda-help)
+2. [Configuración de Almacenamiento en Disco y Descubrimiento (`jettra.storage.path`)](#2-configuración-de-almacenamiento-en-disco-y-descubrimiento-jettrastoragepath)
+3. [Ciclo de Inicio, Conexión y Autenticación](#3-ciclo-de-inicio-conexión-y-autenticación)
+4. [Gestor de Perfiles de Conexión](#4-gestor-de-perfiles-de-conexión)
+5. [Telemetría de Recursos y Monitoreo del Clúster](#5-telemetría-de-recursos-y-monitoreo-del-clúster)
+6. [Administración de Nodos del Clúster Raft](#6-administración-de-nodos-del-clúster-raft)
+7. [Administración de Bases de Datos y Muestras (`SHOW DBS` y `SHOW SAMPLES`)](#7-administración-de-bases-de-datos-y-muestras-show-dbs-y-show-samples)
+8. [Lenguajes de Consulta: JettraQL y JettraSQL](#8-lenguajes-de-consulta-jettraql-y-jettrasql)
+9. [Registros Referenciados Multimodelo (`JettraRef`) y Lazy Loading](#9-registros-referenciados-multimodelo-jettraref-y-lazy-loading)
+10. [Administración Integral de Índices](#10-administración-integral-de-índices)
+11. [Administración de Usuarios y Roles de Base de Datos (RBAC Granular)](#11-administración-de-usuarios-y-roles-de-base-de-datos-rbac-granular)
+12. [Exploración de Buckets/Units, Inspección de Registros y Conteo](#12-exploración-de-bucketsunits-inspección-de-registros-y-conteo-multimodelo)
+13. [Operaciones CRUD sobre Registros](#13-operaciones-crud-sobre-registros)
+14. [Motores Multimodelo Especializados](#14-motores-multimodelo-especializados)
+15. [Respaldos Físicos en Caliente y Restauración (Backup & Restore)](#15-respaldos-físicos-en-caliente-y-restauración-backup--restore)
+16. [Tutorial Práctico Extremo a Extremo (Paso a Paso)](#16-tutorial-práctico-extremo-a-extremo-paso-a-paso)
+17. [Tabla Rápida de Comandos y Ayuda (`help`)](#17-tabla-rápida-de-comandos-y-ayuda-help)
 
 ---
 
 ## 1. Arquitectura y Visión General
 
-`JettraStoreShell` es la consola interactiva oficial de línea de comandos (CLI) para gestionar, monitorear y consultar clústeres `JettraStore`. Está diseñada para aprovechar las características de **Java 25 LTS**:
+`JettraStoreShell` es la consola interactiva oficial de línea de comandos (CLI) para administrar, monitorear, consultar y operar clústeres `JettraStore`. Diseñada íntegramente sobre **Java 25 LTS**:
 
-- **Project Panama FFM (Foreign Function & Memory API)**: Almacenamiento directo off-heap de velocidad C/C++ sin presión sobre el recolector de basura.
-- **Java 25 Generational ZGC & Compact Object Headers**: Pausas de recolección de memoria garantizadas menores a 1 ms y ahorro del 22% en encabezados de objetos.
-- **Java Virtual Threads (Loom)**: Capacidad de ejecutar miles de comandos y consultas concurrentes de forma ligera.
+- **Project Panama FFM (Foreign Function & Memory API)**: Almacenamiento directo off-heap de velocidad nativa C/C++ sin presión sobre el recolector de basura.
+- **Java 25 Generational ZGC & Compact Object Headers**: Pausas de recolección de memoria garantizadas menores a 1 ms y ahorro del 22% en encabezados de objetos con `--XX:+UseCompactObjectHeaders`.
+- **Java Virtual Threads (Project Loom)**: Capacidad de ejecutar miles de comandos y consultas concurrentes de forma ligera.
 - **Seguridad Criptográfica JettraJWT**: Control de acceso granular con validación criptográfica y protección inmutable del superusuario `admin`.
-- **Soporte Bilingüe de Consultas**: Ejecución simultánea de **JettraQL** (lenguaje declarativo orientado a grafos y documentos) y **JettraSQL** (lenguaje relacional ANSI SQL).
+- **Soporte Bilingüe de Consultas**: Ejecución simultánea de **JettraQL** (lenguaje declarativo multimodelo orientado a grafos, vectores y documentos) y **JettraSQL** (lenguaje relacional ANSI SQL extendido).
 
 ---
 
-## 2. Ciclo de Inicio, Conexión y Autenticación
+## 2. Configuración de Almacenamiento en Disco y Descubrimiento (`jettra.storage.path`)
 
-Al ingresar al shell interactivo, el sistema solicita de forma guiada el host/puerto del clúster y las credenciales de acceso:
+### 2.1 Archivo `database.properties` y Rutas Físicas
+La ubicación de los datos persistentes se define en el archivo `database.properties`:
+```properties
+# Ubicación física del directorio de almacenamiento en disco
+jettra.storage.path = /jettra/data
+
+# MemTable y Off-Heap
+jettra.storage.memtable.size.mb = 128
+jettra.storage.ram.global.limit.mb = 2048
+jettra.storage.offheap.direct = true
+jettra.storage.file.extension = .jettra
+```
+
+### 2.2 Diagnóstico y Solución de Carga en `SHOW DBS`
+**¿Por qué previamente no se cargaban las bases de datos instaladas en `/jettra/data`?**
+1. **Inspección en Memoria vs. Disco**: El cliente originalmente solo consultaba el mapa en memoria de instancias abiertas (`databases.keySet()`). Si el shell se iniciaba en frío, la memoria estaba limpia y no se escaneaba el disco físico.
+2. **Permisos de Escritura del Sistema Operativo**: En entornos Linux no rooteados, `/jettra/data` puede requerir permisos de superusuario (`sudo`). Cuando `JettraStoreConfig` detectaba que `/jettra` no existía o no era escribible por el usuario actual, conmutaba de forma preventiva al almacenamiento local writable (`./data/jettra`), pero el listador no consultaba ambos directorios.
+
+**Solución Implementada**:
+- `JettraStoreConfig` almacena tanto la ruta configurada explícita (`getConfiguredStoragePath()`, ej: `/jettra/data`) como el directorio activo validado (`getStoragePath()`).
+- `JettraClient.listDatabases()` implementa un escáner polifacético que inspecciona:
+  1. La ruta activa `cfg.getStoragePath()`
+  2. La ruta configurada en `database.properties` `cfg.getConfiguredStoragePath()` (`/jettra/data`)
+  3. Los directorios locales `./data/jettra`, `data/jettra`, `../data/jettra`
+- Todo archivo `<nombre>_sstable.jettra`, `<nombre>.jettra` o subcarpeta encontrada es reconocido automáticamente como una base de datos física preexistente y precargado en el motor, asegurando que `SHOW DBS` la muestre de inmediato.
+
+---
+
+## 3. Ciclo de Inicio, Conexión y Autenticación
+
+Al iniciar el shell interactivo, el sistema solicita de forma guiada el host/puerto del clúster y las credenciales de acceso:
 
 ```text
 ================================================================================
-                         JETTRASTORE INTERACTIVE SHELL                         
+               JETTRASTORE INTERACTIVE DISTRIBUTED SHELL (JAVA 25+)             
 ================================================================================
-Iniciando sesión interactiva de JettraStore CLI (Java 25 LTS)...
-
-Servidor JettraStore Host [127.0.0.1]: 127.0.0.1
-Puerto del Servidor [9091]: 9091
-Usuario [admin]: admin
-Contraseña [admin-jettra]: ************
-
-[CONNECTED] Conectado exitosamente al servidor JettraStore en 127.0.0.1:9091 (Cluster Raft 3 Nodos)
-[AUTH SUCCESS] Autenticado exitosamente como 'admin' (SUPER_ADMIN INMUTABLE). Token JettraJWT emitido y activo.
-Escriba 'help' o '?' para ver la lista completa de comandos, o 'menu' para el menú interactivo.
-
-admin@default_db> 
+>> JettraStore Host [127.0.0.1]: 127.0.0.1
+>> JettraStore Port [9091]: 9091
+>> Username [admin]: admin
+>> Password [hidden]: ********
+[AUTH OK] Autenticado exitosamente como 'admin' (127.0.0.1:9091)
+jettra-shell [admin@127.0.0.1:9091/default_db]>
 ```
 
 ### Comandos de Sesión:
+| Comando | Descripción | Ejemplo |
+| :--- | :--- | :--- |
+| `connect <host> <puerto>` | Configura el endpoint del servidor JettraStore. | `connect 127.0.0.1 9091` |
+| `connect <nombre-perfil>` | Conecta usando un perfil previamente guardado. | `connect local_master` |
+| `login <user> <pass>` | Inicia sesión y genera token JettraJWT. | `login admin admin-jettra` |
+| `logout` | Cierra la sesión activa y bloquea operaciones de base de datos. | `logout` |
 
-#### `connect <url> <port>` o `connect <nombre-perfil>`
-Conecta la sesión a otro endpoint o conmuta hacia un perfil guardado.
-```bash
-connect 192.168.1.150 9091
-connect local-cluster
-```
+---
 
-#### `login <username> <password>`
-Autentica al operador en el clúster generando un nuevo token **JettraJWT**.
-```bash
+## 4. Gestor de Perfiles de Conexión
+
+Permite guardar alias para alternar rápidamente entre nodos del clúster:
+
+```sql
+-- Guardar la conexión actual con un alias
+save connection local_master
+save connection prod_replica 192.168.1.102 9091 admin
+
+-- Listar conexiones guardadas
+list connections
+
+-- Conectar mediante perfil guardado
+connect prod_replica
 login admin admin-jettra
-login operador clave_segura_2026
-```
 
-#### `logout`
-Cierra la sesión activa revocando las credenciales y cerrando el socket del cliente.
-```bash
-logout
-# Salida: [LOGOUT] Sesión cerrada para el usuario 'admin'. Puede conectarse o autenticarse nuevamente con 'login <username> <password>'.
-```
-
-> [!NOTE]
-> Si la sesión está cerrada (`logout`), todos los comandos de base de datos y telemetría son bloqueados preventivamente con el mensaje `[AUTH REQUIRED]`, permitiendo únicamente operaciones de conexión, perfiles y ayuda.
-
----
-
-## 3. Gestor de Perfiles de Conexión
-
-El shell permite almacenar y gestionar perfiles de conexión para simplificar la conmutación entre entornos locales, réplicas y clústeres de producción.
-
-### Comandos Disponibles:
-
-#### `save connection <nombre-conexion>`
-Guarda los parámetros del host, puerto y usuario actualmente activos bajo el alias indicado.
-```bash
-admin@default_db> save connection prod-cluster-raft
-# Salida: [SUCCESS] Conexión 'prod-cluster-raft' guardada exitosamente (127.0.0.1:9091, usuario: admin).
-```
-
-#### `remove connection <nombre-conexion>`
-Elimina el perfil de conexión guardado.
-```bash
-admin@default_db> remove connection prod-cluster-raft
-# Salida: [SUCCESS] Conexión guardada 'prod-cluster-raft' eliminada exitosamente.
-```
-
-#### `list connections` / `list conections`
-Muestra la lista de todos los perfiles de conexión en formato tabular.
-```bash
-admin@default_db> list connections
-+-----------------------+--------------------+--------+-----------------+
-| Perfil de Conexión    | Host               | Puerto | Usuario         |
-+-----------------------+--------------------+--------+-----------------+
-| local-cluster         | 127.0.0.1          | 9091   | admin           |
-| node-02-replica       | 127.0.0.1          | 9092   | admin           |
-| node-03-replica       | 127.0.0.1          | 9093   | admin           |
-+-----------------------+--------------------+--------+-----------------+
-Total: 3 conexión(es) guardada(s). Endpoint activo actual: 127.0.0.1:9091
+-- Eliminar un perfil guardado
+remove connection prod_replica
 ```
 
 ---
 
-## 4. Telemetría de Recursos y Monitoreo del Clúster
+## 5. Telemetría de Recursos y Monitoreo del Clúster
 
-### Comando `status`
-Despliega el diagnóstico exhaustivo de consumo de recursos del motor:
-- **RAM**: Consumo del segmento de memoria nativa Panama FFM Off-Heap, estado del Dynamic Ring Engine (umbral crítico 85%), heap del JVM ZGC y confirmación de Compact Object Headers.
-- **PROCESADOR (CPU)**: Número de cores lógicos del host, tasa estimada de uso del procesador y conteo de Virtual Threads (Loom workers).
-- **DISCO**: Espacio en partición, estrategia de flush de MemTable y almacenamiento en formato binario LSM `.jettra`.
+El comando `status` presenta una radiografía en tiempo real del motor:
 
-```bash
-admin@default_db> status
-========================= JETTRASTORE CONSUMO DE RECURSOS (STATUS) =========================
-  RAM (MEMORIA):
-    - Panama FFM Off-Heap Asignado:   512 MB (Project Panama MemorySegment nativo)
-    - Panama FFM Off-Heap Utilizado:  217.6 MB (42.5% saturación - Rango Seguro)
-    - Anillo por Saturación RAM:      UMBRAL 85% (Estado: LOCAL / Desborde Inactivo)
-    - JVM Heap Utilizado (ZGC):       65 MB de 496 MB (Máximo: 7824 MB)
-    - Pausas de Recolección ZGC:      < 1 ms garantizadas (Zero GC Latency)
-    - Compact Object Headers:         HABILITADO (Ahorro del 22% en encabezados de memoria)
+```text
+jettra-shell [admin@127.0.0.1:9091/default_db]> status
 
-  PROCESADOR (CPU):
-    - Cores / Hilos Disponibles:      20 Cores lógicos
-    - Uso Estimado de CPU JVM:        8.4% (Bajo consumo en reposo)
-    - Arquitectura de Concurrencia:   Java 25 Virtual Threads (Loom Worker Pool activo)
-    - Hilos Virtuales en Ejecución:   128 workers procesando transacciones concurrentes
+==============================================================================================
+                      JETTRASTORE RESOURCE MONITOR & TELEMETRY (JAVA 25+)
+==============================================================================================
+1. RAM (MEMORIA):
+   - Panama FFM Off-Heap Direct: Habilitado (Arena Compartida Cero Copia)
+   - Heap JVM (ZGC Generational): Ocupada 18 MB / Total 64 MB (Máx JVM: 4096 MB)
+   - MemTable Tamaño Asignado:   128 MB
+   - Dynamic Ring Saturation:    Umbral 85% (Descarga automática a nodos secundarios)
+   - Compact Object Headers:     Activo (--XX:+UseCompactObjectHeaders)
 
-  DISCO (ALMACENAMIENTO):
-    - Motor de Almacenamiento:        LSM SSTables en formato binario nativo '.jettra'
-    - MemTable Flush Strategy:        Direct I/O sincrónico en background
-    - Espacio en Disco Partición:     115 GB Usados / 352 GB Libres (Total: 467 GB)
-    - Estado de Persistencia:         CONSISTENTE (ACID Wal & Snapshot activos)
-============================================================================================
-```
+2. PROCESADOR (CPU):
+   - Núcleos Lógicos del Host:   12 Cores
+   - Virtual Threads (Loom):     Activos (I/O Concurrente No Bloqueante en red gRPC/REST)
+   - Hilos de Compaction LSM:    En segundo plano (Prioridad baja)
 
-### Comando `show nodes` (o `show cluster`)
-Muestra la topología en tiempo real del clúster Raft distribuido de 3 nodos:
-
-```bash
-admin@default_db> show nodes
-======================= TOPOLOGÍA DEL CLÚSTER JETTRASTORE (SHOW NODES) =======================
-  Nodo       Endpoint Host:Port   Rol Raft       Estado    Latencia   Sincronización   Quórum
-  ---------------------------------------------------------------------------------------
-  node-01    127.0.0.1:9091       LEADER         ONLINE    < 0.2 ms   100%             ACTIVO
-  node-02    127.0.0.1:9092       FOLLOWER       ONLINE      0.8 ms   100%             ACTIVO
-  node-03    127.0.0.1:9093       FOLLOWER       ONLINE      1.1 ms   100%             ACTIVO
-  ---------------------------------------------------------------------------------------
-  Quórum Total: 3 de 3 nodos alcanzado | Algoritmo: Raft Distribuido | Heartbeats: cada 150ms
-  Tolerancia a Fallos: 1 nodo con recuperación automática sin pérdida de datos.
+3. DISCO (ALMACENAMIENTO):
+   - Ruta Física Configurada:    /jettra/data
+   - Directorio Activo de Datos: ./data/jettra
+   - Tamaño Ocupado por SSTables: 48.20 KB (49356 bytes)
+   - Archivos de Datos (.jettra): 5 archivo(s)
+   - Formato de Almacenamiento:  Estructura LSM (.jettra) con Bloom Filters y Sparse Indexes
 ==============================================================================================
 ```
 
 ---
 
-## 5. Carga Perezosa de Referencias (Lazy Reference)
+## 6. Administración de Nodos del Clúster Raft
 
-En `JettraStore`, los documentos pueden enlazar datos en otros motores multimodelo mediante punteros `_ref_*` (como `vector::product_embeddings#emb_01` o `graph::catalog#node_01`). El shell permite configurar el comportamiento de resolución de dichas referencias:
+JettraStore opera sobre una topología distribuida basada en consenso Raft y un motor de anillo dinámico (*Dynamic Ring Engine*).
 
-- **`lazy reference on`**: Activa la carga diferida (*Proxy on-demand*). La referencia solo se expande cuando el cliente o visor la solicita explícitamente.
-- **`lazy reference off`**: Activa la carga anticipada (*Eager Loading*), resolviendo inmediatamente en memoria todos los punteros enlazados.
-- **`lazy reference status`**: Consulta el modo de resolución activo.
+### Comandos de Nodos:
+| Comando | Descripción | Ejemplo |
+| :--- | :--- | :--- |
+| `show nodes` / `list nodes` | Muestra la topología completa del clúster Raft. | `show nodes` |
+| `add node <id> <ip> <port> [ROLE]`| Registra un nuevo nodo en el clúster. | `add node node-04 192.168.1.104 9091 SECONDARY` |
+| `stop node <id>` | Pausa el nodo réplica (detiene la descarga de memoria).| `stop node node-02` |
+| `start node <id>` | Reactiva el nodo para recibir transferencias del anillo.| `start node node-02` |
+| `remove node <id>` | Remueve un nodo secundario del clúster. | `remove node node-04` |
 
-```bash
-admin@default_db> lazy reference on
-[CONFIG] Lazy Reference ACTIVADO (ON). Las referencias JettraRef se resolverán bajo demanda (Proxy).
+### Visualización de la Topología:
+```text
+jettra-shell [admin@127.0.0.1:9091/default_db]> show nodes
 
-admin@default_db> lazy reference off
-[CONFIG] Lazy Reference DESACTIVADO (OFF). Las referencias JettraRef se cargarán inmediatamente en memoria (Eager).
+==============================================================================================
+                          JETTRASTORE RAFT CLUSTER TOPOLOGY                                   
+==============================================================================================
++----------+----------------------+-------+-----------+------------+----------+--------------+
+| Nodo ID  | Dirección IP         | Puerto| Rol       | Estado Raft| Estado   | Offload Bytes|
++----------+----------------------+-------+-----------+------------+----------+--------------+
+| node-01  | 127.0.0.1            | 9091  | PRIMARY   | LEADER     | RUNNING  | 0            |
+| node-02  | 192.168.1.102        | 9091  | SECONDARY | FOLLOWER   | RUNNING  | 0            |
+| node-03  | 192.168.1.103        | 9091  | SECONDARY | FOLLOWER   | RUNNING  | 0            |
++----------+----------------------+-------+-----------+------------+----------+--------------+
+Total: 3 nodo(s) registrados en el anillo dinámico. Quórum: Activo.
 ```
 
 ---
 
-## 6. Lenguajes de Consulta: JettraQL y JettraSQL
+## 7. Administración de Bases de Datos y Muestras (`SHOW DBS` y `SHOW SAMPLES`)
 
-### 6.1 JettraQL (Expresivo y Multimodelo)
-`JettraQL` permite consultar colecciones documentales, recorrer grafos y buscar similitud vectorial de forma directa:
+### 7.1 Listar Todas las Bases de Datos (`SHOW DBS`)
+Detecta bases de datos en memoria y en almacenamiento físico, clasificándolas por tipo:
 
-```bash
-# 1. Consulta Documental declarativa
-FROM products WHERE category = Hardware
-
-# 2. Recorrido de Grafos
-MATCH (prod_01)-[BELONGS_TO]->(target) IN catalog_graph
-
-# 3. Búsqueda de Similitud Vectorial
-VECTOR SIMILARITY product_embeddings TO [0.15, -0.42, 0.88] LIMIT 3
-
-# 4. Recuperación con Resolución Forzada de Enlaces
-FETCH products prod_01 RESOLVE REFS
-```
-
-Ejemplo de salida en terminal:
 ```text
-=== JETTRAQL [FROM] ===
-Resumen: JettraQL FROM 'products' retornó 1 registro(s)
-Columnas: [_id, document]
-  [01] [prod_01, {name=Quantum Neural Accelerator, _ref_vector=vector::product_embeddings#emb_01, _id=prod_01, category=Hardware, price=4500.0}]
+jettra-shell [admin@127.0.0.1:9091/default_db]> show dbs
+
++------------------------------------+----------+-------------+----------------+
+| Base de Datos                      | Tipo     | Colecciones | Estado         |
++------------------------------------+----------+-------------+----------------+
+| default_db                         | SYSTEM   | 0           | * ACTIVA       |
+| sample_ai_graph_db                 | SAMPLE   | 3           | DISPONIBLE     |
+| sample_ecommerce_db                | SAMPLE   | 4           | DISPONIBLE     |
+| sample_enterprise_db               | SAMPLE   | 6           | DISPONIBLE     |
+| sample_financial_db                | SAMPLE   | 2           | DISPONIBLE     |
+| sample_iot_telemetry_db            | SAMPLE   | 4           | DISPONIBLE     |
++------------------------------------+----------+-------------+----------------+
+Total: 6 base(s) de datos detectadas. Base activa: 'default_db'
+Ruta física en database.properties: '/jettra/data' | Directorio de lectura/escritura: './data/jettra'
 ```
 
-### 6.2 JettraSQL (Relacional ANSI)
-El procesador SQL soporta sentencias tradicionales:
+### 7.2 Inspección Específica de Muestras (`SHOW SAMPLES`)
+```text
+jettra-shell [admin@127.0.0.1:9091/default_db]> show samples
+
+==============================================================================================
+                        BASES DE DATOS DE EJEMPLO (JettraStore Samples)                      
+==============================================================================================
++-------------------------+--------------------+---------------------------------------------+
+| Base de Datos           | Estado en Disco    | Motores & Propósito                         |
++-------------------------+--------------------+---------------------------------------------+
+| sample_enterprise_db    | INSTALADA (Lista)  | Documentos, Vectores 3D, Grafos de Catálogo |
+| sample_ecommerce_db     | INSTALADA (Lista)  | Clientes, Órdenes, Analítica Columnar       |
+| sample_ai_graph_db      | INSTALADA (Lista)  | Red de Grafos de Conocimiento, Embeddings   |
+| sample_iot_telemetry_db | INSTALADA (Lista)  | Sensores Temperatura/Vibración, Smart Devs  |
+| sample_financial_db     | INSTALADA (Lista)  | Transacciones de Cuentas, Ledger y Series   |
++-------------------------+--------------------+---------------------------------------------+
+Para instalar o re-inicializar todas las muestras completas, ejecute: INSTALL SAMPLES
+```
+
+---
+
+## 8. Lenguajes de Consulta: JettraQL y JettraSQL
+
+JettraStore Shell cuenta con un procesador dual de consultas que permite alternar entre la semántica declarativa multimodelo y el lenguaje relacional tradicional.
+
+### 8.1 JettraQL (Motor Declarativo Multimodelo)
+Orientado a grafos, similitud vectorial de alta dimensión y documentos jerárquicos:
+
 ```sql
-SELECT * FROM products;
-INSERT INTO products (_id, name, price) VALUES ('p1', 'GPU', 1200);
-UPDATE products SET price = 1100 WHERE _id = 'p1';
-DELETE FROM products WHERE _id = 'p1';
+-- 1. Filtrado de documentos
+JQL FROM products WHERE category = Hardware;
+
+-- 2. Pattern matching sobre grafos dirigidos
+JQL MATCH (prod_01)-[BELONGS_TO]->(cat_hardware) IN catalog_graph;
+
+-- 3. Búsqueda semántica por similitud coseno
+JQL VECTOR SIMILARITY product_embeddings TO [0.15, -0.42, 0.88] LIMIT 5;
+
+-- 4. Recuperación con resolución automática de referencias
+JQL FETCH products prod_01 RESOLVE REFS;
+```
+
+**Ejemplo de Salida JettraQL**:
+```text
+=== JETTRAQL [FROM] (1 ms) ===
+Resumen: Recuperados 1 documento(s) de 'products' (Filtro: category=Hardware)
+Columnas: [_id, price, name, _ref_vector, category, _ref_category]
+  [01] [prod_01, 4500.0, Quantum Neural Accelerator, vector::product_embeddings#emb_01, Hardware, graph::catalog_graph#cat_hardware]
+Coincidencias encontradas: 1
+```
+
+### 8.2 JettraSQL (Motor Relacional ANSI SQL-92 Extendido)
+Orientado a consultas tabulares con soporte de proyecciones, inserciones y eliminaciones:
+
+```sql
+-- Consultar registros con tabla formateada
+SQL SELECT * FROM employees WHERE dept = 'R&D';
+
+-- Inserción directa SQL
+SQL INSERT INTO employees VALUES ('emp_100', '{"name":"Grace Hopper","dept":"R&D"}');
+
+-- Actualización SQL
+SQL UPDATE employees SET salary = 195000 WHERE _id = 'emp_100';
+
+-- Eliminación SQL
+SQL DELETE FROM employees WHERE _id = 'emp_100';
+```
+
+**Ejemplo de Salida JettraSQL**:
+```text
+=== JETTRASQL RESULTADO (2 ms) ===
+Mensaje: Selected 1 record(s) from 'employees'
++--------------+-------------------+--------------+
+| _id          | name              | dept         |
++--------------+-------------------+--------------+
+| emp_100      | Grace Hopper      | R&D          |
++--------------+-------------------+--------------+
+Total: 1 fila(s) seleccionadas / afectadas.
 ```
 
 ---
 
-## 7. Administración de Bases de Datos
+## 9. Registros Referenciados Multimodelo (`JettraRef`) y Lazy Loading
 
+Las referencias cruzadas (`JettraRef`) conectan registros entre diferentes motores sin necesidad de desnormalización o copias redundantes.
+
+### 9.1 Formato de Punteros Multimodelo:
+El formato canónico de un puntero es:
+`<motor>::<coleccion_o_tabla>#<id_objetivo>`
+
+| Tipo | Ejemplo | Descripción |
+| :--- | :--- | :--- |
+| `document` | `document::customers#cust_101` | Puntero a un documento JSON en otra colección. |
+| `vector` | `vector::product_embeddings#emb_01` | Puntero a un embedding float[] en el motor vectorial. |
+| `graph` | `graph::catalog_graph#cat_hardware` | Puntero a un vértice y sus aristas adyacentes. |
+| `timeseries`| `timeseries::telemetry#1759160000` | Puntero a una métrica temporal. |
+| `kv` | `kv::inventory_cache#laptop_mac_m3` | Puntero a un valor en memoria ultra-rápida. |
+
+### 9.2 Modos de Carga: Lazy (Perezosa) vs Eager (Inmediata)
+```sql
+-- Activar carga bajo demanda (Proxy Lazy)
+lazy reference on
+
+-- Activar carga inmediata en memoria
+lazy reference off
+
+-- Consultar estado actual
+lazy reference status
+```
+
+### 9.3 Comandos para Referencias Cruzadas:
+```sql
+-- 1. Vincular un puntero cruzado en un registro
+INSERT REF orders ord_9901 KEY _ref_customer TARGET document::customers#cust_101;
+
+-- 2. Resolver una referencia manualmente
+RESOLVE REF document::customers#cust_101;
+
+-- 3. Ver todas las referencias de un registro
+SHOW REFS orders ord_9901;
+
+-- 4. Obtener el registro y ver su resolución integrada
+GET orders ord_9901;
+```
+
+**Ejemplo de Salida de `GET` con Lazy Reference**:
+```text
+--- REGISTRO [ord_9901] EN 'orders' ---
+  _id             : ord_9901
+  total           : 899.5
+  status          : PAID
+  _ref_customer   : document::customers#cust_101
+    ↳ [JettraRef Resolución (Lazy Proxy On-Demand)]: Documento {name=Elena Rostova, tier=VIP_PLATINUM, country=ES}
+  _ref_product    : document::products#prod_01
+    ↳ [JettraRef Resolución (Lazy Proxy On-Demand)]: Documento {name=Quantum Neural Accelerator, price=4500.0}
+```
+
+---
+
+## 10. Administración Integral de Índices
+
+Permite crear índices secundarios dispersos (*Sparse Indexes*), árboles B-Tree e índices Hashing sobre campos de documentos.
+
+### Comandos de Índices:
 | Comando | Descripción | Ejemplo |
 | :--- | :--- | :--- |
-| `SHOW DATABASES` / `SHOW DBS` | Lista todas las bases de datos registradas e indica la activa. | `SHOW DBS` |
-| `CREATE DATABASE <nombre>` | Crea una base de datos y la selecciona inmediatamente. | `CREATE DATABASE core_banking` |
-| `DROP DATABASE <nombre>` | Elimina la base de datos especificada y retorna a `default_db`. | `DROP DATABASE core_banking` |
-| `USE <nombre>` | Conmuta la sesión hacia la base de datos especificada. | `USE sample_enterprise_db` |
-| `DB STATS` / `STATS` | Muestra resumen de motores, colecciones y asignación de memoria. | `DB STATS` |
+| `CREATE INDEX <nombre> ON <col> (<campo>) [TYPE BTREE\|HASH\|SPARSE] [UNIQUE]` | Crea un índice sobre un campo. | `CREATE INDEX idx_tier ON customers (tier) TYPE HASH` |
+| `SHOW INDEXES [ON <col>]` | Lista todos los índices y sus métricas. | `SHOW INDEXES` |
+| `ALTER INDEX <nombre> REBUILD` / `REINDEX <nombre>` | Reconstruye el índice reescaneando los documentos. | `ALTER INDEX idx_tier REBUILD` |
+| `DROP INDEX <nombre>` | Elimina el índice indicado. | `DROP INDEX idx_tier` |
 
----
-
-## 8. Administración de Colecciones
-
-| Comando | Descripción | Ejemplo |
-| :--- | :--- | :--- |
-| `SHOW COLLECTIONS` / `SHOW TABLES` | Lista colecciones con su motor multimodelo y conteo de registros. | `SHOW COLLECTIONS` |
-| `CREATE COLLECTION <col> [TYPE <tipo>]` | Crea colección de tipo `DOCUMENT`, `VECTOR`, `GRAPH`, `TIMESERIES`, `KEYVALUE`. | `CREATE COLLECTION users TYPE DOCUMENT` |
-| `DROP COLLECTION <col>` | Elimina la colección y sus datos. | `DROP COLLECTION users` |
-| `COUNT <col>` | Retorna la cantidad de registros de la colección. | `COUNT users` |
-| `TRUNCATE <col>` | Elimina todos los registros manteniendo la colección intacta. | `TRUNCATE users` |
-
----
-
-## 9. Operaciones CRUD sobre Registros
-
-### Inserción de Documentos:
-```bash
-INSERT INTO users ID usr_01 JSON {"nombre": "Laura Vega", "cargo": "Directora de TI", "salario": 98000.0}
-```
-
-### Consulta por ID (`GET` / `FIND ONE`):
-```bash
-GET users usr_01
-```
-Salida en terminal:
+**Ejemplo de Tabla de Índices**:
 ```text
---- REGISTRO [usr_01] EN 'users' ---
-  nombre          : Laura Vega
-  cargo           : Directora de TI
-  salario         : 98000.0
-  _id             : usr_01
-```
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> show indexes
 
-### Listado Paginado (`FIND ALL` / `SCAN`):
-```bash
-FIND ALL users LIMIT 25
-```
-
-### Actualización (`UPDATE`):
-```bash
-UPDATE users usr_01 SET salario=105000.0, departamento=Ingenieria
-```
-
-### Eliminación (`DELETE`):
-```bash
-DELETE users usr_01
-# o también:
-DELETE FROM users WHERE ID = usr_01
+=== ÍNDICES DE BASE DE DATOS: 'sample_enterprise_db' ===
++----------------------+----------------------+----------------------+--------+--------+----------+
+| Nombre de Índice     | Colección            | Campo Indexado       | Tipo   | Único  | Entradas |
++----------------------+----------------------+----------------------+--------+--------+----------+
+| idx_emp_name         | employees            | name                 | BTREE  | NO     | 1        |
+| idx_prod_cat         | products             | category             | HASH   | NO     | 1        |
++----------------------+----------------------+----------------------+--------+--------+----------+
 ```
 
 ---
 
-## 10. Motores Multimodelo Especializados
+## 11. Administración de Usuarios y Roles de Base de Datos (RBAC Granular)
 
-### 10.1 Motor Vectorial (`VectorEngine`)
-- **Indexación de Vector**:
-  ```bash
-  VECTOR INDEX product_embeddings vec_alpha [0.25, -0.68, 0.44]
-  ```
-- **Búsqueda por Similaridad Coseno**:
-  ```bash
-  VECTOR SEARCH product_embeddings [0.25, -0.68, 0.44] K 3
-  ```
+JettraStore incorpora un sistema de seguridad granular basado en roles globales y privilegios específicos por base de datos.
 
-### 10.2 Motor de Grafos (`GraphEngine`)
-- **Agregar Vértice**:
-  ```bash
-  GRAPH ADD VERTEX network_graph server_alpha
-  ```
-- **Agregar Arista Ponderada**:
-  ```bash
-  GRAPH ADD EDGE network_graph server_alpha -> server_beta LABEL REPLICATES WEIGHT 0.8
-  ```
-- **Consultar Aristas Salientes**:
-  ```bash
-  GRAPH GET EDGES network_graph server_alpha
-  ```
+### 11.1 Jerarquía de Roles
+- **Roles Globales**:
+  - `SUPER_ADMIN`: Control absoluto e inmutable sobre el clúster (reservado para `admin`).
+  - `DB_ADMIN`: Administración general de bases de datos y creación de usuarios.
+  - `OPERATOR`: Monitoreo y control de nodos del clúster.
+  - `DEVELOPER`: Rol operativo estándar para desarrollo.
+- **Roles por Base de Datos**:
+  - `DB_OWNER`: Control total sobre una base de datos específica (CRUD, DDL, Índices, Drop).
+  - `READ_WRITE`: Lectura, inserción, actualización y eliminación en las colecciones de esa base de datos.
+  - `READ_ONLY`: Consultas de solo lectura (`SELECT`, `GET`, `FIND`, `JQL`).
 
-### 10.3 Motor de Series Temporales (`TimeSeriesEngine`)
-- **Insertar Muestra Temporal**:
-  ```bash
-  TS RECORD cpu_telemetry 78.4
-  TS RECORD cpu_telemetry 82.1 TIME 1727600000000
-  ```
-- **Consultar Rango y Promedio**:
-  ```bash
-  TS RANGE cpu_telemetry 1727500000000 1727700000000
-  ```
+### 11.2 Comandos de Seguridad:
+```sql
+-- 1. Listar usuarios y sus privilegios
+SHOW USERS;
 
-### 10.4 Motor Clave-Valor (`KeyValueEngine`)
-- **Almacenar y Recuperar Clave**:
-  ```bash
-  KV PUT app_cache cluster_mode HIGH_PERFORMANCE
-  KV GET app_cache cluster_mode
-  ```
+-- 2. Crear un nuevo usuario
+CREATE USER dev_user PASSWORD secret-pass ROLE DEVELOPER;
 
----
+-- 3. Otorgar permisos sobre una base de datos específica
+GRANT READ_WRITE ON sample_ecommerce_db TO dev_user;
+GRANT READ_ONLY ON sample_financial_db TO dev_user;
 
-## 11. Bases de Datos de Ejemplo (INSTALL SAMPLES)
+-- 4. Ver privilegios asignados al usuario
+SHOW GRANTS FOR dev_user;
 
-Al ejecutar el comando `INSTALL SAMPLES`, se configuran automáticamente **las 5 bases de datos maestras de demostración**:
+-- 5. Revocar permisos de base de datos
+REVOKE sample_financial_db FROM dev_user;
 
-1. **`sample_enterprise_db`**:
-   - `products`: Documentos empresariales con referencias cruzadas `_ref_vector`.
-   - `product_embeddings`: Vectores 3D indexados para IA.
-   - `catalog_graph`: Grafo de taxonomía y categorías de productos.
-   - `telemetry`: Registros temporales de rendimiento de hardware.
-   - `app_cache`: Almacén clave-valor con flags de configuración.
-2. **`sample_ecommerce_db`**:
-   - `customers` y `orders`: Documentos de clientes y pedidos.
-   - `order_analytics`: Analítica columnar de ingresos.
-   - `shopping_carts`: Carritos de compra en tiempo real vía Clave-Valor.
-3. **`sample_ai_graph_db`**:
-   - `knowledge_network`: Red de conceptos de Deep Learning y Transformers.
-   - `concept_embeddings`: Vectores semánticos densos para RAG.
-   - `prompts_corpus`: Colección de prompts del sistema.
-4. **`sample_iot_telemetry_db`**:
-   - `sensor_temperature` y `sensor_vibration`: Sensores industriales de precisión.
-   - `smart_devices`: Dispositivos IoT de borde.
-   - `device_locations`: Capa geoespacial Haversine.
-5. **`sample_financial_db`**:
-   - `transactions`: Transacciones monetarias con firma y balance.
-   - `stock_feed`: Cotizaciones de bolsa de alta frecuencia.
+-- 6. Modificar credenciales o rol global
+ALTER USER dev_user PASSWORD new-strong-pass;
+ALTER USER dev_user ROLE DB_ADMIN;
 
----
-
-## 12. Respaldos en Caliente y Restauración (Backup & Restore)
-
-### Respaldo Instantáneo (.jettra snapshot):
-```bash
-BACKUP DATABASE sample_enterprise_db TO './data/backups/enterprise_snapshot.jettra_bak'
+-- 7. Eliminar usuario
+DROP USER dev_user;
 ```
 
-### Restauración con Validación de Quórum:
-```bash
-RESTORE DATABASE sample_enterprise_db FROM './data/backups/enterprise_snapshot.jettra_bak'
+**Ejemplo de Listado de Usuarios (`SHOW USERS`)**:
+```text
+==============================================================================================
+                           USUARIOS Y ROLES DE BASE DE DATOS (RBAC)                           
+==============================================================================================
++-----------------+-----------------+------------------------------------------+-------------+
+| Usuario         | Rol Global      | Roles de Base de Datos                   | Inmutable   |
++-----------------+-----------------+------------------------------------------+-------------+
+| admin           | SUPER_ADMIN     | *:DB_OWNER                               | SI (Protegido)
+| dev_user        | DEVELOPER       | sample_ecommerce_db:READ_WRITE           | NO          |
++-----------------+-----------------+------------------------------------------+-------------+
 ```
 
 ---
 
-## 13. Tutorial Práctico Extremo a Extremo (Paso a Paso)
+## 12. Exploración de Buckets/Units, Inspección de Registros y Conteo Multimodelo
 
-Sigue estos pasos en tu terminal para probar la suite completa:
+En la arquitectura multimodelo de `JettraStore`, cada motor organiza sus datos en unidades lógicas especializadas (**Buckets** o **Units**):
+- **DOCUMENT**: Colecciones de documentos JSON estructurados/semi-estructurados (`Collection`).
+- **VECTOR**: Índices vectoriales de embeddings densos con métricas de coseno (`Vector Index [dim]`).
+- **GRAPH**: Redes de grafos de propiedades, vértices y aristas dirigidas (`Property Graph`).
+- **TIMESERIES**: Métricas y series temporales ordenadas cronológicamente (`Metric Series`).
+- **KEYVALUE**: Tablas clave-valor en memoria de acceso sub-milisegundo (`KV Store`).
+- **GEOSPATIAL**: Capas espaciales con indexación R-Tree geográfica (`Spatial Layer`).
+- **COLUMNAR**: Familias de columnas vectorizadas para analítica OLAP (`Column Family`).
 
-```bash
-# 1. Iniciar la consola interactiva
-mvn exec:java -Dexec.mainClass="io.jettra.shell.JettraStoreShellApp"
+---
 
-# 2. Instalar todas las bases de datos de prueba
-admin@default_db> INSTALL SAMPLES
+### 12.1 Comando `SHOW BUCKETS` o `SHOW UNIT`
+Muestra una tabla con todas las unidades de almacenamiento activas en la base de datos seleccionada, detallando el motor subyacente, tipo de unidad, nombre, cantidad de registros y estado en memoria/disco.
 
-# 3. Guardar la conexión de desarrollo
-admin@sample_enterprise_db> save connection local-dev
+#### Sintaxis:
+```sql
+SHOW BUCKETS
+SHOW UNIT
+SHOW UNITS
+SHOW BUCKETS <DOCUMENT|VECTOR|GRAPH|TIMESERIES|KEYVALUE|COLUMNAR|GEOSPATIAL>
+```
 
-# 4. Listar conexiones
-admin@sample_enterprise_db> list connections
+#### Ejemplo de Salida:
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> SHOW BUCKETS
+==============================================================================================
+                BUCKETS / UNITS EN BASE DE DATOS: 'sample_enterprise_db'                                        
+==============================================================================================
++-------------+----------------------+--------------------+-----------+----------------------+
+| Motor       | Tipo de Unidad       | Nombre de Unidad   | Registros | Estado               |
++-------------+----------------------+--------------------+-----------+----------------------+
+| DOCUMENT    | Collection           | departments        | 1         | ACTIVE (In-Memory)   |
+| DOCUMENT    | Collection           | employees          | 1         | ACTIVE (In-Memory)   |
+| DOCUMENT    | Collection           | products           | 1         | ACTIVE (In-Memory)   |
+| VECTOR      | Vector Index [3d]    | product_embeddings | 1         | INDEXED (HNSW)       |
+| VECTOR      | Vector Index [3d]    | employee_biometrics| 1         | INDEXED (HNSW)       |
+| GRAPH       | Property Graph       | catalog_graph      | 2         | TOPOLOGY (In-Memory) |
+| TIMESERIES  | Metric Series        | telemetry          | 1         | APPEND-ONLY (Delta)  |
+| KEYVALUE    | KV Store             | inventory_cache    | 1         | HASH-MAP (Persistent)|
++-------------+----------------------+--------------------+-----------+----------------------+
+Total: 8 bucket(s)/unit(s) registrados en la base de datos 'sample_enterprise_db'.
+```
 
-# 5. Consultar los recursos del sistema
-admin@sample_enterprise_db> status
-
-# 6. Inspeccionar el estado de los nodos del clúster Raft
-admin@sample_enterprise_db> show nodes
-
-# 7. Ejecutar consulta JettraQL documental
-admin@sample_enterprise_db> FROM products
-
-# 8. Obtener un producto con resolución de vector
-admin@sample_enterprise_db> GET products prod_01
-
-# 9. Conmutar el modo Lazy Reference
-admin@sample_enterprise_db> lazy reference off
-admin@sample_enterprise_db> GET products prod_01
-
-# 10. Cerrar sesión
-admin@sample_enterprise_db> logout
-
-# 11. Intentar consultar sin sesión (comportamiento protegido)
-unauthenticated@default_db> SHOW DATABASES
-# [AUTH REQUIRED] Debe iniciar sesión con 'login <username> <password>'
-
-# 12. Re-autenticar con superusuario
-unauthenticated@default_db> login admin admin-jettra
-
-# 13. Salir del shell
-admin@default_db> exit
+#### Filtrado por Motor Específico:
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> SHOW BUCKETS DOCUMENT
+==============================================================================================
+                BUCKETS / UNITS EN BASE DE DATOS: 'sample_enterprise_db'                                        
+==============================================================================================
++-------------+----------------------+--------------------+-----------+----------------------+
+| Motor       | Tipo de Unidad       | Nombre de Unidad   | Registros | Estado               |
++-------------+----------------------+--------------------+-----------+----------------------+
+| DOCUMENT    | Collection           | departments        | 1         | ACTIVE (In-Memory)   |
+| DOCUMENT    | Collection           | employees          | 1         | ACTIVE (In-Memory)   |
+| DOCUMENT    | Collection           | products           | 1         | ACTIVE (In-Memory)   |
++-------------+----------------------+--------------------+-----------+----------------------+
+Total: 3 bucket(s)/unit(s) registrados en la base de datos 'sample_enterprise_db'.
 ```
 
 ---
 
-## 14. Tabla Rápida de Comandos y Ayuda (`help`)
+### 12.2 Comando `SHOW RECORDS`
+Inspecciona visualmente el contenido de un bucket o unidad de almacenamiento en cualquiera de los 7 motores multimodelo. Permite limitar la cantidad de registros devueltos mediante la cláusula `LIMIT <n>` y resuelve automáticamente referencias `JettraRef` si `showReferences` o `lazy reference` están configuradas.
+
+#### Sintaxis:
+```sql
+SHOW RECORDS <nombre_bucket> [LIMIT n]
+SHOW RECORDS FROM <nombre_bucket> [LIMIT n]
+```
+
+#### Ejemplos por Motor:
+
+**1. Bucket de Documentos (`DOCUMENT`):**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> SHOW RECORDS employees LIMIT 5
+=== REGISTROS DE DOCUMENT BUCKET 'employees' (Mostrando 1 de 1) ===
+  [01] _id: emp_01          -> {_ref_equipment=kv::inventory_cache#laptop_mac_m3, name=Ada Lovelace, _ref_vector=vector::employee_biometrics#bio_01, _ref_department=document::departments#dep_rd, _id=emp_01, salary=185000.0, title=Lead Architect}
+       ↳ Ref [_ref_equipment]: KV Valor: MacBook Pro M3 Max 64GB
+       ↳ Ref [_ref_vector]: Vector [0.92, 0.11, -0.05]
+       ↳ Ref [_ref_department]: Documento {name=Research & Advanced Computing, _id=dep_rd, floor=12, budget=1.5E7}
+```
+
+**2. Bucket de Vectores (`VECTOR`):**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_ai_graph_db]> SHOW RECORDS concept_embeddings LIMIT 3
+=== REGISTROS DE VECTOR BUCKET 'concept_embeddings' (Dim: 3 | Mostrando 1 de 1) ===
+  [01] Vector ID: vec_neural_net  -> [0.88, 0.14, -0.42]
+```
+
+**3. Bucket de Grafos (`GRAPH`):**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_ai_graph_db]> SHOW RECORDS knowledge_network LIMIT 5
+=== REGISTROS DE GRAPH BUCKET 'knowledge_network' (3 vértices) ===
+  [01] Vértice: node_dl         (Aristas salientes: 1)
+       ↳ (node_dl)-[SUBFIELD_OF, props={weight=0.95}]->(node_ai)
+  [02] Vértice: node_ai         (Aristas salientes: 0)
+  [03] Vértice: node_nlp        (Aristas salientes: 1)
+       ↳ (node_nlp)-[LEVERAGES, props={weight=0.9}]->(node_dl)
+```
+
+**4. Bucket de Series Temporales (`TIMESERIES`):**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> SHOW RECORDS telemetry LIMIT 3
+=== REGISTROS DE TIMESERIES BUCKET 'telemetry' (Mostrando 1 de 1) ===
+  [01] Timestamp: 1759160500      -> Valor: 14.8000
+```
+
+**5. Bucket Clave-Valor (`KEYVALUE`):**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> SHOW RECORDS inventory_cache LIMIT 5
+=== REGISTROS DE KEYVALUE BUCKET 'inventory_cache' (Mostrando 1 de 1) ===
+  [01] Clave: laptop_mac_m3        -> Valor: MacBook Pro M3 Max 64GB
+```
+
+---
+
+### 12.3 Comando `COUNT`
+Proporciona el conteo de elementos almacenados en un bucket/unit específico o un censo global multimodelo de toda la base de datos activa.
+
+#### Sintaxis:
+```sql
+COUNT <nombre_bucket>
+COUNT FROM <nombre_bucket>
+COUNT ALL
+COUNT *
+```
+
+#### Ejemplos:
+
+**Conteo de una unidad específica:**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> COUNT employees
+[COUNT] [DOCUMENT] 'employees': 1 registro(s).
+
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> COUNT product_embeddings
+[COUNT] [VECTOR] 'product_embeddings': 1 vector(es).
+
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> COUNT catalog_graph
+[COUNT] [GRAPH] 'catalog_graph': 2 vértice(s).
+```
+
+**Conteo global de toda la base de datos:**
+```text
+jettra-shell [admin@127.0.0.1:9091/sample_enterprise_db]> COUNT ALL
+=== CONTEO TOTAL DE REGISTROS EN BASE DE DATOS: 'sample_enterprise_db' ===
+  * [DOCUMENT]   departments            : 1 registro(s)
+  * [DOCUMENT]   employees              : 1 registro(s)
+  * [DOCUMENT]   products               : 1 registro(s)
+  * [VECTOR]     product_embeddings     : 1 vector(es)
+  * [VECTOR]     employee_biometrics    : 1 vector(es)
+  * [GRAPH]      catalog_graph          : 2 vértice(s)
+  * [TIMESERIES] telemetry              : 1 punto(s)
+  * [KEYVALUE]   inventory_cache        : 1 clave(s)
+Gran Total en 'sample_enterprise_db': 9 registro(s) multimodelo.
+```
+
+---
+
+## 13. Operaciones CRUD sobre Registros
+
+```sql
+USE sample_enterprise_db;
+
+-- Inserción (Sintaxis amigable o SQL estándar)
+INSERT INTO employees ID emp_02 JSON {"name": "Alan Turing", "dept": "Cryptanalysis"};
+INSERT INTO employees VALUES ('emp_03', '{"name": "Donald Knuth", "dept": "Algorithms"}');
+
+-- Lectura puntual
+GET employees emp_02;
+
+-- Escaneo masivo con paginación
+FIND ALL employees LIMIT 10;
+
+-- Actualización
+UPDATE employees SET {salary: 210000} WHERE _id = 'emp_02';
+
+-- Eliminación
+DELETE employees emp_03;
+DELETE FROM employees WHERE _id = 'emp_02';
+```
+
+---
+
+## 14. Motores Multimodelo Especializados
+
+### 13.1 Motor Vectorial (Embeddings IA)
+```sql
+-- Indexar vector float[] de 3 dimensiones
+VECTOR INDEX product_embeddings emb_02 [0.85, 0.12, -0.33];
+
+-- Búsqueda de vecinos más cercanos (k-NN Cosine Similarity)
+VECTOR SEARCH product_embeddings [0.80, 0.10, -0.30] K 3;
+```
+
+### 13.2 Motor de Grafos
+```sql
+-- Crear vértices
+GRAPH ADD VERTEX catalog_graph prod_02;
+GRAPH ADD VERTEX catalog_graph cat_software;
+
+-- Conectar arista dirigida con peso
+GRAPH ADD EDGE catalog_graph prod_02 cat_software LABEL CATEGORIZED_IN WEIGHT 0.95;
+
+-- Consultar aristas salientes
+GRAPH GET EDGES catalog_graph prod_02;
+```
+
+### 13.3 Motor de Series Temporales (IoT)
+```sql
+-- Registrar punto métrico
+TS RECORD server_cpu 14.8 TIME 1759160500;
+
+-- Consultar rango temporal
+TS RANGE server_cpu 1759160000 1759161000;
+```
+
+### 13.4 Motor Clave-Valor (Memoria de Ultra Alta Velocidad)
+```sql
+KV PUT cache session_admin_token "JettraJWT.abc123xyz";
+KV GET cache session_admin_token;
+```
+
+---
+
+## 15. Respaldos Físicos en Caliente y Restauración (Backup & Restore)
+
+Generación de snapshots binarios con verificación de suma de comprobación CRC32:
+
+```sql
+-- Crear respaldo físico de la base de datos actual
+BACKUP DATABASE;
+
+-- Crear respaldo indicando base de datos y ruta destino explícita
+BACKUP DATABASE sample_enterprise_db TO '/var/backups/enterprise_2026.snap';
+
+-- Restaurar snapshot físico en caliente
+RESTORE DATABASE sample_enterprise_db FROM '/var/backups/enterprise_2026.snap';
+```
+
+---
+
+## 16. Tutorial Práctico Extremo a Extremo (Paso a Paso)
+
+```sql
+-- PASO 1: Iniciar sesión y validar telemetría
+connect local_master
+login admin admin-jettra
+status
+
+-- PASO 2: Instalar y persistir todas las bases de datos de prueba
+INSTALL SAMPLES
+SHOW DBS
+SHOW SAMPLES
+
+-- PASO 3: Seleccionar la base de datos empresarial y verificar colecciones
+USE sample_enterprise_db
+SHOW COLLECTIONS
+SHOW INDEXES
+
+-- PASO 4: Consultar con JettraQL y JettraSQL
+JQL FROM products WHERE category = Hardware;
+SQL SELECT * FROM employees;
+
+-- PASO 5: Probar resolución de referencias JettraRef
+lazy reference on
+GET products prod_01
+GET employees emp_01
+
+-- PASO 6: Crear un índice secundario sobre salarios y reconstruirlo
+CREATE INDEX idx_salaries ON employees (salary) TYPE BTREE
+SHOW INDEXES
+ALTER INDEX idx_salaries REBUILD
+
+-- PASO 7: Crear usuario desarrollador con privilegios específicos
+CREATE USER dev_analyst PASSWORD analyst-2026 ROLE DEVELOPER
+GRANT READ_ONLY ON sample_enterprise_db TO dev_analyst
+SHOW GRANTS FOR dev_analyst
+
+-- PASO 8: Respaldar la base de datos y cerrar sesión
+BACKUP DATABASE sample_enterprise_db TO './data/jettra/manual_backup.snap'
+logout
+```
+
+---
+
+## 17. Tabla Rápida de Comandos y Ayuda (`help`)
 
 ```text
-================================ JETTRASTORE SHELL HELP ================================
-🔌 CONEXIÓN, AUTENTICACIÓN Y SESIÓN:
-  connect <url> <port>                  Conecta la sesión a un servidor JettraStore.
-  login <username> <password>           Autentica con JettraJWT ('admin' / 'admin-jettra').
-  logout                                Cierra la sesión activa actual y desconecta.
-
-💾 GESTIÓN DE PERFILES DE CONEXIÓN:
-  save connection <nombre>              Guarda los parámetros de conexión actuales.
+==============================================================================================
+                         JETTRASTORE SHELL - GUÍA COMPLETA DE COMANDOS
+==============================================================================================
+1. CONEXIÓN Y SESIÓN:
+  connect <url> <port>                  Establece la dirección del nodo servidor JettraStore.
+  connect <nombre-perfil>               Conecta utilizando un perfil previamente guardado.
+  login <username> <password>           Autentica y obtiene un token de sesión criptográfico JettraJWT.
+  logout                                Cierra la sesión activa y revoca el token JWT.
+  save connection <nombre>              Guarda el perfil de conexión actual con un alias.
   remove connection <nombre>            Elimina un perfil de conexión guardado.
-  list connections / list conections    Muestra la tabla de todas las conexiones guardadas.
-  connect <nombre-perfil>               Conecta directamente usando un perfil guardado.
+  list connections / list conections    Lista todos los perfiles de conexión guardados.
 
-📊 TELEMETRÍA, RECURSOS Y CLÚSTER:
-  status                                Muestra consumo de recursos (RAM, PROCESADOR, DISCO).
-  show nodes                            Muestra todos los nodos del clúster Raft y su estado.
-  SHOW USERS / SECURITY STATUS          Muestra control de acceso (admin SUPER_ADMIN inmutable).
+2. TELEMETRÍA Y CLÚSTER:
+  status                                Monitorea RAM Panama FFM, CPU Loom y Disco LSM.
+  show nodes / list nodes               Muestra la topología del clúster Raft y nodos del anillo.
+  add node <id> <host> <port> [ROLE]    Agrega un nuevo nodo secundario al clúster Raft.
+  remove node <id>                      Remueve un nodo réplica del anillo dinámico.
+  start node <id>                       Inicia y activa el procesamiento para un nodo específico.
+  stop node <id>                        Detiene un nodo réplica (pausa el tráfico de descarga).
 
-⚙️ RESOLUCIÓN DE REFERENCIAS (JettraRef):
-  lazy reference on                     Activa la resolución perezosa bajo demanda (Proxy).
-  lazy reference off                    Desactiva lazy reference; carga directa en memoria (Eager).
-  lazy reference status                 Muestra el estado actual del modo lazy reference.
+3. BASES DE DATOS Y PERSISTENCIA EN DISCO:
+  show databases / show dbs             Lista todas las bases de datos detectadas en disco y memoria.
+  show samples / show sample dbs        Muestra las 5 bases de datos de prueba preconfiguradas.
+  create database <nombre>              Crea una nueva base de datos lógica.
+  drop database <nombre>                Elimina la base de datos especificada.
+  use <nombre>                          Conmuta la base de datos activa.
+  db stats                              Muestra estadísticas de la base de datos activa.
+  INSTALL SAMPLES                       Instala y persiste las 5 bases de datos de ejemplo.
+  backup database [nombre] [TO 'path']  Genera un snapshot físico .snap de la base de datos.
+  restore database [nombre] FROM 'path' Restaura un snapshot .snap en una base de datos.
 
-🔍 CONSULTAS Y LENGUAJES (JettraQL & JettraSQL):
-  FROM <collection> [WHERE k = v]       Consulta documental expresiva JettraQL.
-  MATCH (<src>)-[<lbl>]->(<tgt>)        Consulta de relaciones y aristas en grafos JettraQL.
-  VECTOR SIMILARITY <col> TO [...]      Búsqueda vectorial Top-K por similaridad coseno.
-  FETCH <col> <id> [RESOLVE REFS]       Recuperación de registro resolviendo enlaces JettraRef.
-  SELECT ... FROM <col>                 Sentencias SQL tradicionales en JettraStore.
+4. BUCKETS/UNITS, REGISTROS Y CONTEO:
+  show buckets / show unit              Lista todos los buckets/units de almacenamiento por motor.
+  show buckets <DOCUMENT|VECTOR|..>     Filtra las unidades por motor específico.
+  show records <bucket> [LIMIT n]       Muestra los registros del bucket (documentos, vectores, grafos, etc.).
+  count <bucket>                        Cuenta los registros contenidos en la unidad especificada.
+  count all / count *                   Censo y conteo total de registros en todos los motores de la base de datos.
 
-📁 BASES DE DATOS:
-  SHOW DATABASES / SHOW DBS             Lista todas las bases de datos disponibles.
-  CREATE DATABASE <dbname>              Crea una base de datos y la selecciona como activa.
-  DROP DATABASE <dbname>                Elimina la base de datos especificada.
-  USE <dbname>                          Conmuta la base de datos activa.
-  DB STATS / STATS                      Muestra resumen y telemetría de la base de datos activa.
+5. CONSULTAS POLÍGLOTAS (JETTRAQL Y JETTRASQL):
+  JQL FROM <col> [WHERE campo = valor]  Consulta declarativa sobre documentos.
+  JQL MATCH (a)-[r]->(b) IN <grafo>     Pattern matching sobre redes de grafos.
+  JQL VECTOR SIMILARITY <col> TO [...]  Búsqueda de vecinos más cercanos por similaridad coseno.
+  JQL FETCH <col> <id> [RESOLVE REFS]   Recupera un registro resolviendo referencias JettraRef.
+  SQL SELECT * FROM <col> [WHERE k = v] Consulta relacional con tabla formateada de columnas y filas.
+  SQL INSERT INTO <col> VALUES (id, json) Inserta registro en la colección activa.
+  SQL UPDATE <col> SET k = v WHERE _id = id Actualiza campos de un registro.
+  SQL DELETE FROM <col> WHERE _id = id  Elimina un registro mediante sintaxis SQL.
 
-🗃️ COLECCIONES Y MODELOS:
-  SHOW COLLECTIONS / SHOW TABLES        Lista colecciones y motores multimodelo activos.
-  CREATE COLLECTION <col> [TYPE <tipo>] Crea colección (DOCUMENT, VECTOR, GRAPH, TS, KV).
-  DROP COLLECTION <col>                 Elimina una colección y todos sus registros.
-  COUNT <col>                           Retorna la cantidad total de registros en la colección.
-  TRUNCATE <col>                        Vacía todos los registros de una colección.
+6. REGISTROS REFERENCIADOS (JETTRAREF) Y LAZY LOADING:
+  lazy reference on / off               Alterna la resolución diferida (Lazy) o inmediata (Eager).
+  insert ref <col> <id> KEY <k> TARGET <engine>::<col>#<id>  Vincula un puntero cruzado multimodelo.
+  resolve ref <engine>::<col>#<id>      Resuelve manualmente el destino de una referencia.
+  show refs <col> <id>                  Muestra todas las referencias de un registro y sus resoluciones.
+  get <col> <id>                        Obtiene un documento y resuelve sus punteros _ref_*.
 
-📝 REGISTROS Y CRUD (DOCUMENT ENGINE):
-  INSERT INTO <col> ID <id> JSON {..}   Inserta documento con _id y campos estructurados.
-  GET <col> <id>                        Obtiene un documento por ID (resuelve JettraRef).
-  FIND ALL <col> [LIMIT <n>]            Lista registros de la colección con paginación.
-  UPDATE <col> <id> SET k=v, ...        Actualiza campos específicos del documento.
-  DELETE <col> <id>                     Elimina un documento por su clave primaria _id.
+7. ADMINISTRACIÓN DE ÍNDICES:
+  create index <nombre> ON <col> (campo) [TYPE BTREE|HASH|SPARSE] [UNIQUE]  Crea índice secundario.
+  drop index <nombre>                   Elimina el índice especificado.
+  alter index <nombre> rebuild          Reconstruye el índice re-escaneando los documentos.
+  show indexes [ON <col>]               Muestra la tabla de índices creados en la base de datos.
 
-⚡ MOTORES MULTIMODELO ESPECIALIZADOS:
-  VECTOR INDEX <col> <id> [f1,f2,..]    Indexa vector float[] en el motor vectorial.
-  VECTOR SEARCH <col> [f1,f2,..] [K 5]  Búsqueda de similaridad coseno (Top-K matches).
-  GRAPH ADD VERTEX <col> <vId>          Agrega un nodo o vértice al grafo.
-  GRAPH ADD EDGE <c> <s> -> <t> LABEL <l> Agrega una arista dirigida con etiqueta y peso.
-  GRAPH GET EDGES <col> <vId>           Lista aristas salientes del vértice dado.
-  TS RECORD <col> <val> [TIME <ts>]     Inserta punto en serie temporal.
-  TS RANGE <col> <desde> <hasta>        Consulta rango temporal y calcula promedio.
-  KV PUT <col> <clave> <valor>          Almacena par clave-valor binario.
-  KV GET <col> <clave>                  Recupera valor correspondiente a la clave.
+8. ADMINISTRACIÓN DE USUARIOS Y ROLES (RBAC):
+  show users / list users               Muestra todos los usuarios, rol global y roles por base de datos.
+  create user <user> PASSWORD <pass> [ROLE <role>] Crea un nuevo usuario en el sistema.
+  drop user <user>                      Elimina un usuario (superuser 'admin' inmutable).
+  alter user <user> PASSWORD <newPass>  Actualiza la contraseña del usuario.
+  alter user <user> ROLE <newRole>      Actualiza el rol global del usuario.
+  grant <DB_OWNER|READ_WRITE|READ_ONLY> ON <db> TO <user>  Asigna privilegios sobre una base de datos.
+  revoke <db> FROM <user>               Revoca el acceso sobre la base de datos indicada.
+  show grants for <user>                Muestra los privilegios asignados al usuario especificado.
 
-💾 PERSISTENCIA Y MUESTRAS COMPLETAS:
-  INSTALL SAMPLES                       Instala TODAS las bases de datos de ejemplo (5 dbs).
-  BACKUP DATABASE <db> TO '<path>'      Genera respaldo instantáneo en archivos .jettra.
-  RESTORE DATABASE <db> FROM '<path>'   Restaura base de datos con validación de quórum.
-  SET PAGE_SIZE = <n>                   Define la cantidad de registros por página.
-  menu                                  Despliega el menú interactivo guiado.
-  exit, quit                            Cierra la sesión del shell.
-========================================================================================
+9. MOTORES ESPECIALIZADOS (VECTORES, GRAFOS, TIME SERIES, KV):
+  vector index <col> <id> [f1,f2,..]    Indexa vector float[] en el motor vectorial.
+  vector search <col> [f1,f2] K <num>   Búsqueda k-NN por similaridad coseno.
+  graph add vertex <grafo> <id>         Agrega un vértice a la red de grafos.
+  graph add edge <g> <a> <b> [LABEL l]  Agrega arista dirigida ponderada.
+  ts record <serie> <val> [TIME t]      Registra punto métrico en serie temporal.
+  ts range <serie> <inicio> <fin>       Consulta métricas en rango de tiempo.
+  kv put <tabla> <clave> <valor>        Almacena clave-valor en memoria de acceso ultra rápido.
+  kv get <tabla> <clave>                Recupera el valor asociado a la clave.
+==============================================================================================
 ```

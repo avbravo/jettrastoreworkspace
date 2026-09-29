@@ -1,5 +1,6 @@
 package io.jettra.store.engine.models;
 
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,6 +26,10 @@ public final class KeyValueEngine {
 
     public boolean containsKey(String key) {
         return store.containsKey(key);
+    }
+
+    public Map<String, byte[]> getAll() {
+        return Collections.unmodifiableMap(store);
     }
 
     public String getNamespace() { return namespace; }

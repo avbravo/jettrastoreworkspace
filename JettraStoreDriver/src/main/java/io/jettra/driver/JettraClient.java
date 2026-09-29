@@ -2,30 +2,34 @@ package io.jettra.driver;
 
 import io.jettra.driver.admin.JettraAdminClient;
 import io.jettra.driver.config.JettraClientConfig;
+import io.jettra.store.cluster.ClusterNode;
+import io.jettra.store.cluster.DynamicRingEngine;
 import io.jettra.store.core.JettraDatabase;
 import io.jettra.store.core.JettraStoreConfig;
 import io.jettra.store.engine.query.JettraSQLProcessor;
 import io.jettra.store.security.JettraSecurityManager;
 
-import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class JettraClient implements AutoCloseable {
     private final JettraClientConfig config;
-    private final String sessionToken;
+    private final ConcurrentHashMap<String, JettraDatabase> databases = new ConcurrentHashMap<>();
     private final JettraAdminClient adminClient;
-    private final JettraSecurityManager securityManager;
-    private final Map<String, JettraDatabase> databases = new ConcurrentHashMap<>();
+    private final String sessionToken;
+    private final JettraSecurityManager securityManager = new JettraSecurityManager();
+    private final DynamicRingEngine ringEngine = new DynamicRingEngine("node-01", 0.85, 0.45);
 
-    private JettraClient(JettraClientConfig config) {
+    public JettraClient(JettraClientConfig config) {
         this.config = config;
-        this.securityManager = new JettraSecurityManager();
         this.sessionToken = securityManager.authenticate(config.getUsername(), config.getPassword());
         this.adminClient = new JettraAdminClient(sessionToken);
-    }
 
-    public static JettraClient connect(JettraClientConfig config) {
-        return new JettraClient(config);
+        // Registrar nodos pares iniciales del cluster Raft
+        this.ringEngine.registerPeer(new ClusterNode("node-02", "192.168.1.102", 9091, ClusterNode.Role.SECONDARY));
+        this.ringEngine.registerPeer(new ClusterNode("node-03", "192.168.1.103", 9091, ClusterNode.Role.SECONDARY));
     }
 
     public static JettraClient connect(String host, int port, String user, String pass) {
@@ -36,8 +40,50 @@ public final class JettraClient implements AutoCloseable {
         return new JettraClient(cfg);
     }
 
+    public static JettraClient connect(JettraClientConfig config) {
+        return new JettraClient(config);
+    }
+
     public java.util.List<String> listDatabases() {
-        return new java.util.ArrayList<>(databases.keySet());
+        Set<String> result = new TreeSet<>(databases.keySet());
+
+        // 1. Escanear rutas físicas configuradas en database.properties y locales
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+        scanDatabasesFromPath(cfg.getStoragePath(), result);
+        scanDatabasesFromPath(cfg.getConfiguredStoragePath(), result);
+        scanDatabasesFromPath("./data/jettra", result);
+        scanDatabasesFromPath("data/jettra", result);
+        scanDatabasesFromPath("../data/jettra", result);
+        scanDatabasesFromPath("/jettra/data", result);
+
+        // Pre-cargar instancias en memoria
+        for (String dbName : result) {
+            getDatabase(dbName);
+        }
+        return new ArrayList<>(result);
+    }
+
+    private void scanDatabasesFromPath(String pathStr, Set<String> target) {
+        if (pathStr == null || pathStr.isBlank()) return;
+        try {
+            Path p = Path.of(pathStr);
+            if (Files.exists(p) && Files.isDirectory(p)) {
+                try (var stream = Files.list(p)) {
+                    stream.forEach(entry -> {
+                        String name = entry.getFileName().toString();
+                        if (Files.isDirectory(entry)) {
+                            if (!name.startsWith(".")) {
+                                target.add(name);
+                            }
+                        } else if (name.endsWith("_sstable.jettra")) {
+                            target.add(name.substring(0, name.indexOf("_sstable.jettra")));
+                        } else if (name.endsWith(".jettra") && !name.contains("_wal")) {
+                            target.add(name.substring(0, name.indexOf(".jettra")));
+                        }
+                    });
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     public boolean dropDatabase(String name) {
@@ -45,7 +91,7 @@ public final class JettraClient implements AutoCloseable {
     }
 
     public boolean databaseExists(String name) {
-        return databases.containsKey(name);
+        return databases.containsKey(name) || listDatabases().contains(name);
     }
 
     public JettraDatabase getDatabase(String name) {
@@ -66,6 +112,14 @@ public final class JettraClient implements AutoCloseable {
 
     public JettraAdminClient admin() {
         return adminClient;
+    }
+
+    public JettraSecurityManager getSecurityManager() {
+        return securityManager;
+    }
+
+    public DynamicRingEngine getRingEngine() {
+        return ringEngine;
     }
 
     public String getSessionToken() {

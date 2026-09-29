@@ -27,6 +27,10 @@ public final class TimeSeriesEngine {
         return sum / sub.size();
     }
 
+    public NavigableMap<Long, Double> getAll() {
+        return Collections.unmodifiableNavigableMap(series);
+    }
+
     public String getMetricName() { return metricName; }
     public int size() { return series.size(); }
 }

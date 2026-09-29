@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 public final class JettraStoreConfig {
+    private final String rawConfiguredPath;
     private final String storagePath;
     private final int memTableSizeMb;
     private final int ramGlobalLimitMb;
@@ -27,22 +28,28 @@ public final class JettraStoreConfig {
     public JettraStoreConfig(Properties props) {
         String configuredPath = System.getProperty("jettra.storage.path", 
             props.getProperty("jettra.storage.path", "./data/jettra"));
+        this.rawConfiguredPath = configuredPath;
         
         // Verificar si la ruta o su primer ancestro existente es escribible por el usuario actual
+        String effectivePath = configuredPath;
         try {
             Path path = Path.of(configuredPath);
-            Path test = path;
-            while (test != null && !Files.exists(test)) {
-                test = test.getParent();
-            }
-            if (test == null || !Files.isWritable(test)) {
-                configuredPath = "./data/jettra";
+            if (Files.exists(path)) {
+                if (!Files.isWritable(path)) {
+                    effectivePath = "./data/jettra";
+                }
+            } else {
+                try {
+                    Files.createDirectories(path);
+                } catch (Exception ex) {
+                    effectivePath = "./data/jettra";
+                }
             }
         } catch (Exception e) {
-            configuredPath = "./data/jettra";
+            effectivePath = "./data/jettra";
         }
 
-        this.storagePath = configuredPath;
+        this.storagePath = effectivePath;
         this.memTableSizeMb = Integer.parseInt(props.getProperty("jettra.storage.memtable.size.mb", "128"));
         this.ramGlobalLimitMb = Integer.parseInt(props.getProperty("jettra.storage.ram.global.limit.mb", "2048"));
         this.offHeapDirect = Boolean.parseBoolean(props.getProperty("jettra.storage.offheap.direct", "true"));
@@ -70,6 +77,7 @@ public final class JettraStoreConfig {
         return new JettraStoreConfig(props);
     }
 
+    public String getConfiguredStoragePath() { return rawConfiguredPath; }
     public String getStoragePath() { return storagePath; }
     public int getMemTableSizeMb() { return memTableSizeMb; }
     public int getRamGlobalLimitMb() { return ramGlobalLimitMb; }

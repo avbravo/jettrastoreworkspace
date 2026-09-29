@@ -21,7 +21,40 @@ public final class DynamicRingEngine {
     }
 
     public void registerPeer(ClusterNode peer) {
+        // Evitar duplicados por ID
+        peers.removeIf(p -> p.getId().equalsIgnoreCase(peer.getId()));
         peers.add(peer);
+    }
+
+    public boolean removePeer(String peerId) {
+        return peers.removeIf(p -> p.getId().equalsIgnoreCase(peerId));
+    }
+
+    public boolean startPeer(String peerId) {
+        ClusterNode node = getPeer(peerId);
+        if (node != null) {
+            node.start();
+            return true;
+        }
+        return false;
+    }
+
+    public boolean stopPeer(String peerId) {
+        ClusterNode node = getPeer(peerId);
+        if (node != null) {
+            node.stop();
+            return true;
+        }
+        return false;
+    }
+
+    public ClusterNode getPeer(String peerId) {
+        for (ClusterNode node : peers) {
+            if (node.getId().equalsIgnoreCase(peerId)) {
+                return node;
+            }
+        }
+        return null;
     }
 
     public synchronized void evaluateMemorySaturation(double currentUsagePercent, NativeMemTable activeMemTable) {
@@ -40,10 +73,11 @@ public final class DynamicRingEngine {
             String.format("Node %s reached %.1f%% RAM saturation. Converting dynamically to Distributed Ring Engine.", 
                 nodeId, currentMemoryUsage * 100));
 
-        // Particionar y transferir bloques a los nodos pares del anillo
-        if (!peers.isEmpty()) {
-            long bytesToOffload = memTable.getUsedBytes() / peers.size();
-            for (ClusterNode peer : peers) {
+        // Particionar y transferir bloques a los nodos pares activos del anillo
+        List<ClusterNode> activePeers = peers.stream().filter(ClusterNode::isOnline).toList();
+        if (!activePeers.isEmpty()) {
+            long bytesToOffload = memTable.getUsedBytes() / activePeers.size();
+            for (ClusterNode peer : activePeers) {
                 peer.receiveOffloadedRingPayload(nodeId, bytesToOffload);
             }
         }
@@ -58,22 +92,12 @@ public final class DynamicRingEngine {
     private void deactivateRingTransition() {
         ringActive.set(false);
         JettraPolice.getInstance().recordAlert("RING_NORMALIZED", 
-            String.format("Node %s returned to standard local storage state.", nodeId));
+            String.format("Node %s stabilized memory below release target (%.1f%%). Reverting to Single-Node High-Speed Mode.", 
+                nodeId, targetReleaseThreshold * 100));
     }
 
-    public boolean isRingActive() {
-        return ringActive.get();
-    }
-
-    public double getCurrentMemoryUsage() {
-        return currentMemoryUsage;
-    }
-
-    public void setCurrentMemoryUsage(double usage) {
-        this.currentMemoryUsage = usage;
-    }
-
-    public List<ClusterNode> getPeers() {
-        return peers;
-    }
+    public boolean isRingActive() { return ringActive.get(); }
+    public String getNodeId() { return nodeId; }
+    public List<ClusterNode> getPeers() { return peers; }
+    public double getCurrentMemoryUsage() { return currentMemoryUsage; }
 }

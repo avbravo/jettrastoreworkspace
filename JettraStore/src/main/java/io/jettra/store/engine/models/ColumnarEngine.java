@@ -38,6 +38,15 @@ public final class ColumnarEngine {
         return s;
     }
 
+    public Map<String, List<Double>> getNumericColumns() {
+        return Collections.unmodifiableMap(numericColumns);
+    }
+
+    public Map<String, List<String>> getTextColumns() {
+        return Collections.unmodifiableMap(textColumns);
+    }
+
     public String getTableName() { return tableName; }
     public int getRowCount() { return rowCount; }
+    public int size() { return rowCount; }
 }

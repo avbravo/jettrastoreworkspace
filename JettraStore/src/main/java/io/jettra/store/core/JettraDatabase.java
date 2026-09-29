@@ -1,5 +1,6 @@
 package io.jettra.store.core;
 
+import io.jettra.store.engine.index.JettraIndexManager;
 import io.jettra.store.engine.models.*;
 import io.jettra.store.engine.panama.NativeMemTable;
 import java.io.IOException;
@@ -12,6 +13,7 @@ public final class JettraDatabase {
     private final String databaseName;
     private final JettraStoreConfig config;
     private final NativeMemTable memTable;
+    private final JettraIndexManager indexManager;
 
     private final Map<String, DocumentEngine> documentEngines = new ConcurrentHashMap<>();
     private final Map<String, VectorEngine> vectorEngines = new ConcurrentHashMap<>();
@@ -24,6 +26,7 @@ public final class JettraDatabase {
     public JettraDatabase(String databaseName, JettraStoreConfig config) {
         this.databaseName = databaseName;
         this.config = config;
+        this.indexManager = new JettraIndexManager(databaseName);
         long memTableBytes = config.getMemTableSizeMb() * 1024L * 1024L;
         this.memTable = new NativeMemTable(memTableBytes);
     }
@@ -58,7 +61,9 @@ public final class JettraDatabase {
 
     public void flushMemTable() throws IOException {
         Path target = Path.of(config.getStoragePath(), databaseName + "_sstable" + config.getFileExtension());
-        Files.createDirectories(target.getParent());
+        if (target.getParent() != null) {
+            Files.createDirectories(target.getParent());
+        }
         memTable.flushToJettraFile(target);
     }
 
@@ -97,4 +102,5 @@ public final class JettraDatabase {
     public String getDatabaseName() { return databaseName; }
     public NativeMemTable getMemTable() { return memTable; }
     public JettraStoreConfig getConfig() { return config; }
+    public JettraIndexManager getIndexManager() { return indexManager; }
 }
