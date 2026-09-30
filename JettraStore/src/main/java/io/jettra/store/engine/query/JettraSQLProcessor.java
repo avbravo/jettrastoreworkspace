@@ -2,108 +2,216 @@ package io.jettra.store.engine.query;
 
 import io.jettra.store.core.JettraDatabase;
 import io.jettra.store.engine.models.DocumentEngine;
+
 import java.util.*;
 
 public final class JettraSQLProcessor {
     private final JettraDatabase database;
 
-    public record QueryResult(List<String> columns, List<List<Object>> rows, int affectedRows, String message) {}
+    public record QueryResult(List<String> columns, List<List<Object>> rows, int affectedRows, String message) {
+        public int totalRows() { return affectedRows; }
+        public String summary() { return message; }
+    }
 
     public JettraSQLProcessor(JettraDatabase database) {
         this.database = database;
     }
 
+    private static String sanitize(String str) {
+        if (str == null) return "";
+        return str.replace("'", "").replace(String.valueOf((char)34), "").replace(";", "").trim();
+    }
+
     public QueryResult execute(String sql) {
         String trimmed = sql.trim();
-        if (trimmed.endsWith(";")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
-        }
         String upper = trimmed.toUpperCase();
 
-        if (upper.startsWith("SELECT")) {
+        if (upper.startsWith("SELECT ")) {
             return executeSelect(trimmed);
-        } else if (upper.startsWith("INSERT INTO")) {
+        } else if (upper.startsWith("INSERT INTO ")) {
             return executeInsert(trimmed);
-        } else if (upper.startsWith("UPDATE")) {
+        } else if (upper.startsWith("UPDATE ")) {
             return executeUpdate(trimmed);
-        } else if (upper.startsWith("DELETE FROM")) {
+        } else if (upper.startsWith("DELETE FROM ")) {
             return executeDelete(trimmed);
-        } else if (upper.startsWith("BACKUP DATABASE")) {
-            return new QueryResult(List.of("status"), List.of(List.of("SUCCESS")), 0, "Database snapshot created successfully");
-        } else if (upper.startsWith("RESTORE DATABASE")) {
-            return new QueryResult(List.of("status"), List.of(List.of("SUCCESS")), 0, "Database snapshot restored successfully");
         }
-        return new QueryResult(List.of("result"), Collections.emptyList(), 0, "Command processed: " + trimmed);
+
+        return new QueryResult(List.of("result"), List.of(List.of("SQL not fully parsed: " + trimmed)), 1, "Generic execution");
     }
 
     private QueryResult executeSelect(String sql) {
-        // Formato: SELECT [columns] FROM <collection> [WHERE <field> = <val>]
         String upper = sql.toUpperCase();
         int fromIdx = upper.indexOf(" FROM ");
         if (fromIdx == -1) {
-            return new QueryResult(List.of("error"), List.of(List.of("Missing FROM clause")), 0, "Syntax error in SELECT");
+            return new QueryResult(List.of("error"), List.of(List.of("Sintaxis SQL inválida: falta la cláusula FROM")), 0, "Error de sintaxis");
         }
 
+        String selectFields = sql.substring(7, fromIdx).trim();
         String afterFrom = sql.substring(fromIdx + 6).trim();
-        String collection;
+
+        // Obtener configuración de límites de consulta
+        int defaultLimit = 50;
+        int maxLimit = 5000;
+        if (database != null && database.getConfig() != null) {
+            defaultLimit = database.getConfig().getQueryDefaultLimit();
+            maxLimit = database.getConfig().getQueryMaxLimit();
+        }
+
+        // 1. Extraer LIMIT y OFFSET si existen
+        int limit = defaultLimit;
+        int offset = 0;
+        boolean explicitLimit = false;
+
+        int limitIdx = afterFrom.toUpperCase().lastIndexOf(" LIMIT ");
+        if (limitIdx != -1) {
+            String afterLimit = afterFrom.substring(limitIdx + 7).trim();
+            afterFrom = afterFrom.substring(0, limitIdx).trim();
+
+            int offsetInLimitIdx = afterLimit.toUpperCase().indexOf(" OFFSET ");
+            if (offsetInLimitIdx != -1) {
+                String limStr = sanitize(afterLimit.substring(0, offsetInLimitIdx));
+                String offStr = sanitize(afterLimit.substring(offsetInLimitIdx + 8));
+                try { limit = Integer.parseInt(limStr); explicitLimit = true; } catch (Exception ignored) {}
+                try { offset = Integer.parseInt(offStr); } catch (Exception ignored) {}
+            } else {
+                String limStr = sanitize(afterLimit);
+                try { limit = Integer.parseInt(limStr); explicitLimit = true; } catch (Exception ignored) {}
+            }
+        } else {
+            int offsetIdx = afterFrom.toUpperCase().lastIndexOf(" OFFSET ");
+            if (offsetIdx != -1) {
+                String offStr = sanitize(afterFrom.substring(offsetIdx + 8));
+                afterFrom = afterFrom.substring(0, offsetIdx).trim();
+                try { offset = Integer.parseInt(offStr); } catch (Exception ignored) {}
+            }
+        }
+        limit = Math.min(Math.max(1, limit), maxLimit);
+
+        // 2. Extraer WHERE si existe
         String whereField = null;
         String whereVal = null;
-
         int whereIdx = afterFrom.toUpperCase().indexOf(" WHERE ");
+        String collection;
         if (whereIdx != -1) {
-            collection = afterFrom.substring(0, whereIdx).trim();
+            collection = sanitize(afterFrom.substring(0, whereIdx));
             String whereClause = afterFrom.substring(whereIdx + 7).trim();
             String[] kv = whereClause.split("=");
             if (kv.length == 2) {
-                whereField = kv[0].replaceAll("[;\"']", "").trim();
-                whereVal = kv[1].replaceAll("[;\"']", "").trim();
+                whereField = sanitize(kv[0]);
+                whereVal = sanitize(kv[1]);
             }
         } else {
-            collection = afterFrom.split("\\s+")[0].replaceAll("[;\"']", "").trim();
+            collection = sanitize(afterFrom.split("\s+")[0]);
         }
 
         DocumentEngine docEngine = database.getDocumentEngine(collection);
-        List<Map<String, Object>> allDocs = docEngine.findAll();
-
-        // Filtrado por WHERE
-        List<Map<String, Object>> filtered = new ArrayList<>();
-        for (Map<String, Object> doc : allDocs) {
-            if (whereField != null && whereVal != null) {
-                Object val = doc.get(whereField);
-                if (val != null && String.valueOf(val).equalsIgnoreCase(whereVal)) {
-                    filtered.add(doc);
-                }
-            } else {
-                filtered.add(doc);
-            }
-        }
-
-        if (filtered.isEmpty()) {
+        if (docEngine == null || docEngine.isEmpty()) {
             return new QueryResult(List.of("_id"), Collections.emptyList(), 0, "0 records returned from '" + collection + "'");
         }
 
-        // Descubrir todas las columnas únicas
-        Set<String> colSet = new LinkedHashSet<>();
-        colSet.add("_id");
-        for (Map<String, Object> doc : filtered) {
-            colSet.addAll(doc.keySet());
-        }
-        List<String> columns = new ArrayList<>(colSet);
+        long totalCount = docEngine.count();
 
-        List<List<Object>> rows = new ArrayList<>();
-        for (Map<String, Object> doc : filtered) {
-            List<Object> row = new ArrayList<>();
-            for (String col : columns) {
-                row.add(doc.getOrDefault(col, "NULL"));
+        // 2.5 Análisis predictivo y supervisión autónoma de JettraPolice (Anti-OOM)
+        int requestedLimit = explicitLimit ? limit : 0;
+        io.jettra.store.police.JettraPolice.PoliceDecision policeDecision = 
+            io.jettra.store.police.JettraPolice.getInstance().evaluateHeapSafety(
+                "SQL_SELECT", collection, totalCount, requestedLimit, 512L);
+
+        boolean policeIntervened = false;
+        if (policeDecision.interventionRequired()) {
+            policeIntervened = true;
+            limit = policeDecision.enforcedLimit();
+        }
+
+        // 3. Consulta acelerada por índices secundarios si aplica
+        Set<String> indexedDocIds = null;
+        if (whereField != null && whereVal != null && database.getIndexManager() != null) {
+            indexedDocIds = database.getIndexManager().findDocIds(collection, whereField, whereVal);
+        }
+
+        // 4. Streaming y filtrado acotado en memoria (Zero Full-Heap Allocation)
+        List<Map<String, Object>> collectedDocs = new ArrayList<>(Math.min(limit, 200));
+        LinkedHashSet<String> dynamicColumns = new LinkedHashSet<>();
+        dynamicColumns.add("_id");
+
+        int skipped = 0;
+        if (indexedDocIds != null) {
+            // Camino rápido indexado: O(1) recuperación directa
+            for (String docId : indexedDocIds) {
+                Map<String, Object> doc = docEngine.findById(docId);
+                if (doc != null) {
+                    if (skipped < offset) {
+                        skipped++;
+                        continue;
+                    }
+                    collectedDocs.add(doc);
+                    dynamicColumns.addAll(doc.keySet());
+                    if (collectedDocs.size() >= limit) {
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Streaming lazy secuencial con corte temprano
+            for (Map<String, Object> doc : docEngine) {
+                if (doc == null) continue;
+                if (whereField != null && whereVal != null) {
+                    Object val = doc.get(whereField);
+                    if (val == null || !String.valueOf(val).equalsIgnoreCase(whereVal)) {
+                        continue;
+                    }
+                }
+
+                if (skipped < offset) {
+                    skipped++;
+                    continue;
+                }
+
+                collectedDocs.add(doc);
+                dynamicColumns.addAll(doc.keySet());
+                if (collectedDocs.size() >= limit) {
+                    break;
+                }
+            }
+        }
+
+        // 5. Determinar columnas seleccionadas
+        List<String> finalCols = new ArrayList<>();
+        if (selectFields.equals("*")) {
+            finalCols.addAll(dynamicColumns);
+        } else {
+            for (String f : selectFields.split(",")) {
+                String c = sanitize(f);
+                if (!c.isEmpty()) finalCols.add(c);
+            }
+        }
+
+        // 6. Proyectar filas finales
+        List<List<Object>> rows = new ArrayList<>(collectedDocs.size());
+        for (Map<String, Object> doc : collectedDocs) {
+            List<Object> row = new ArrayList<>(finalCols.size());
+            for (String col : finalCols) {
+                row.add(doc.getOrDefault(col, null));
             }
             rows.add(row);
         }
 
-        return new QueryResult(columns, rows, rows.size(), "Selected " + rows.size() + " record(s) from '" + collection + "'");
+        String summaryMsg;
+        if (policeIntervened) {
+            summaryMsg = String.format("[JettraPolice SENTINEL: Paginación Lazy Anti-OOM Activada] %d fila(s) retornada(s) (Lote seguro: %d, Offset: %d) de un total de %d en '%s'. %s",
+                    rows.size(), limit, offset, totalCount, collection, policeDecision.rationale());
+        } else if (explicitLimit) {
+            summaryMsg = String.format("%d fila(s) retornada(s) (Límite: %d, Offset: %d) de un total estimado de %d en '%s'",
+                    rows.size(), limit, offset, totalCount, collection);
+        } else {
+            summaryMsg = String.format("%d fila(s) retornada(s) [Límite de seguridad: %d] (Total en colección: %d en '%s')",
+                    rows.size(), limit, totalCount, collection);
+        }
+
+        return new QueryResult(finalCols, rows, rows.size(), summaryMsg);
     }
 
     private QueryResult executeInsert(String sql) {
-        // Formato: INSERT INTO <collection> VALUES ('<id>', '<json_or_val>')
         try {
             int intoIdx = sql.toUpperCase().indexOf("INTO ");
             int valuesIdx = sql.toUpperCase().indexOf(" VALUES");
@@ -114,7 +222,7 @@ public final class JettraSQLProcessor {
                     valPart = valPart.substring(1, valPart.length() - 1).trim();
                 }
                 String[] parts = valPart.split(",", 2);
-                String id = parts[0].replaceAll("['\";]", "").trim();
+                String id = sanitize(parts[0]);
                 String dataStr = parts.length > 1 ? parts[1].trim() : "{}";
                 
                 Map<String, Object> doc = new LinkedHashMap<>();
@@ -124,16 +232,18 @@ public final class JettraSQLProcessor {
                     for (String pair : inside.split(",")) {
                         String[] kv = pair.split("[:=]", 2);
                         if (kv.length == 2) {
-                            String k = kv[0].replaceAll("['\";]", "").trim();
-                            String v = kv[1].replaceAll("['\";]", "").trim();
+                            String k = sanitize(kv[0]);
+                            String v = sanitize(kv[1]);
                             doc.put(k, v);
                         }
                     }
                 } else {
-                    doc.put("value", dataStr.replaceAll("['\";]", ""));
+                    doc.put("value", sanitize(dataStr));
                 }
                 database.getDocumentEngine(col).insert(id, doc);
-                database.getIndexManager().onDocumentInsert(col, id, doc);
+                if (database.getIndexManager() != null) {
+                    database.getIndexManager().onDocumentInsert(col, id, doc);
+                }
                 return new QueryResult(List.of("status", "id"), List.of(List.of("INSERTED", id)), 1, "Inserted 1 row into '" + col + "'");
             }
         } catch (Exception ignored) {}
@@ -141,7 +251,6 @@ public final class JettraSQLProcessor {
     }
 
     private QueryResult executeUpdate(String sql) {
-        // UPDATE <collection> SET <field> = <value> WHERE _id = '<id>'
         try {
             String upper = sql.toUpperCase();
             int setIdx = upper.indexOf(" SET ");
@@ -151,13 +260,13 @@ public final class JettraSQLProcessor {
                 String whereClause = whereIdx != -1 ? sql.substring(whereIdx + 7).trim() : null;
                 String targetId = null;
                 if (whereClause != null && whereClause.contains("=")) {
-                    targetId = whereClause.split("=")[1].replaceAll("['\";]", "").trim();
+                    targetId = sanitize(whereClause.split("=")[1]);
                 }
                 String setClause = whereIdx != -1 ? sql.substring(setIdx + 5, whereIdx).trim() : sql.substring(setIdx + 5).trim();
                 String[] kv = setClause.split("=");
                 if (kv.length == 2 && targetId != null) {
-                    String k = kv[0].replaceAll("['\";]", "").trim();
-                    String v = kv[1].replaceAll("['\";]", "").trim();
+                    String k = sanitize(kv[0]);
+                    String v = sanitize(kv[1]);
                     database.getDocumentEngine(col).update(targetId, Map.of(k, v));
                     return new QueryResult(List.of("status"), List.of(List.of("UPDATED")), 1, "Updated 1 record in '" + col + "'");
                 }
@@ -167,7 +276,6 @@ public final class JettraSQLProcessor {
     }
 
     private QueryResult executeDelete(String sql) {
-        // DELETE FROM <collection> WHERE _id = '<id>'
         try {
             int whereIdx = sql.toUpperCase().indexOf(" WHERE ");
             if (whereIdx != -1) {
@@ -175,9 +283,11 @@ public final class JettraSQLProcessor {
                 String whereClause = sql.substring(whereIdx + 7).trim();
                 String[] kv = whereClause.split("=");
                 if (kv.length == 2) {
-                    String id = kv[1].replaceAll("['\";]", "").trim();
+                    String id = sanitize(kv[1]);
                     boolean del = database.getDocumentEngine(col).delete(id);
-                    database.getIndexManager().onDocumentDelete(col, id, null);
+                    if (database.getIndexManager() != null) {
+                        database.getIndexManager().onDocumentDelete(col, id, null);
+                    }
                     return new QueryResult(List.of("affected"), List.of(List.of(del ? 1 : 0)), del ? 1 : 0, "Deleted " + (del ? 1 : 0) + " row from '" + col + "'");
                 }
             }

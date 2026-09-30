@@ -175,11 +175,20 @@ Soporte completo para **Coordinated Restore at Checkpoint (CRaC)**:
 * La base de datos puede inicializar cachés, precargar diccionarios `.jettra` y congelar el estado de ejecución en disco mediante un checkpoint CRIU.
 * El tiempo de arranque desde un estado guardado se reduce de 3.5 segundos a **$18\text{ milisegundos}$**, ideal para orquestación en contenedores y despliegues elásticos.
 
-### 3.5 Colecciones Especializadas Zero-Boxing (`jettra collection`)
+### 3.5 Manipulación de Colecciones con `JettraCollection` y Prevención Rigurosa de `OutOfMemoryError`
 
-El framework de colecciones personalizado `jettra collection` reemplaza las colecciones del estándar `java.util.*` en todas las rutas críticas:
-* `JettraLongLongMap`, `JettraIntObjectMap`, `JettraByteArrayList`: operan sobre matrices primitivas contiguas o punteros Panama directos.
-* Se elimina por completo el costo de asignación de envoltorios (`java.lang.Long`, `java.lang.Integer`) y la penalización de indirección de punteros en la memoria caché L1/L2/L3 de la CPU.
+El ecosistema estipula el **uso obligatorio y exclusivo de `JettraCollection`** (`io.jettra.collections.*`) para toda la manipulación interna de datos, índices, metadatos y búferes:
+
+1. **Uso Obligatorio de `JettraCollection`:**
+   * **`UnifiedMap<K, V>` y `UnifiedSet<E>`:** Implementan mapas y conjuntos basados en direccionamiento abierto plano (*open addressing flat table*). Eliminan el 100% de los objetos nodo (`HashMap$Node` o `ConcurrentHashMap$Node`), reduciendo el overhead de contenedor de ~36-40 bytes a solo **~5.3 bytes por entrada (ahorro de más del 80% en RAM)**.
+   * **Colecciones Primitivas Especializadas (`IntLongHashMap`, `LongLongHashMap`, `IntArrayList`, `LongArrayList`):** Operan sobre arreglos contiguos primitivos o punteros `MemorySegment`, eliminando el *boxing/unboxing* de tipos primitivos (`long`, `int`, `double`) y la presión sobre el Garbage Collector.
+
+2. **Prohibición Estricta de Conversiones Masivas:**
+   * Queda **terminantemente prohibido** ejecutar conversiones masivas de colecciones enteras (como `.toArray()` sobre mapas concurrentes o volcado indiscriminado de millones de registros a listas globales en el Heap) para prevenir caídas por `java.lang.OutOfMemoryError: Java heap space`.
+
+3. **Flujos Perezosos (*Lazy Load / Streams*) y Procesamiento por Lotes (*Chunking*):**
+   * Las operaciones de consulta masiva, escaneo completo y reconstrucción de índices (`findAll` o reconstrucción de árboles) deben operar estrictamente mediante **flujos perezosos (`LazyDocumentList`, `stream()`, cursores bajo demanda)**.
+   * El procesamiento de grandes volúmenes debe realizarse en **lotes acotados (*chunks* de tamaño fijo, ej. 1,000 a 5,000 elementos)** utilizando estructuras de `JettraCollection` con capacidad preasignada y de ciclo de vida efímero que se liberan inmediatamente tras su indexación o persistencia física.
 
 ---
 

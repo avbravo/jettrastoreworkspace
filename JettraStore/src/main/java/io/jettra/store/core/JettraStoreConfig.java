@@ -25,6 +25,16 @@ public final class JettraStoreConfig {
     private final int grpcPort;
     private final int restPort;
 
+    // Configuración avanzada de almacenamiento de índices y prevención de OOM
+    private final int indexInitialCapacity;
+    private final int indexMaxInMemoryKeys;
+    private final boolean indexCompactStorage;
+    private final String indexStoragePath;
+    private final int autoFlushBatchSize;
+    private final int queryDefaultLimit;
+    private final int queryMaxLimit;
+    private final int queryPageSize;
+
     public JettraStoreConfig(Properties props) {
         String configuredPath = System.getProperty("jettra.storage.path", 
             props.getProperty("jettra.storage.path", "/jettra/data"));
@@ -69,6 +79,14 @@ public final class JettraStoreConfig {
         this.ringReleaseTargetPercent = Integer.parseInt(props.getProperty("jettra.ring.release.target.percent", "45"));
         this.jettraPoliceActive = Boolean.parseBoolean(props.getProperty("jettrapolice.active", "true"));
         this.jettraPoliceIntervalMs = Long.parseLong(props.getProperty("jettrapolice.interval.ms", "500"));
+        try {
+            double ramWarn = Double.parseDouble(props.getProperty("jettrapolice.ram.warning.threshold", "75"));
+            double ramCrit = Double.parseDouble(props.getProperty("jettrapolice.ram.critical.threshold", "85"));
+            int maxBatch = Integer.parseInt(props.getProperty("jettrapolice.max.safe.batch.size", "100"));
+            io.jettra.store.police.JettraPolice.getInstance().setRamWarningThreshold(ramWarn);
+            io.jettra.store.police.JettraPolice.getInstance().setRamCriticalThreshold(ramCrit);
+            io.jettra.store.police.JettraPolice.getInstance().setMaxSafeBatchSize(maxBatch);
+        } catch (Exception ignored) {}
         this.jmhMetricsActive = Boolean.parseBoolean(props.getProperty("jmh.metrics.active", "false"));
         this.jwtAlgorithm = props.getProperty("jettra.security.jwt.algorithm", "Ed25519");
         this.jwtExpirationSeconds = Long.parseLong(props.getProperty("jettra.security.jwt.expiration.seconds", "86400"));
@@ -76,6 +94,20 @@ public final class JettraStoreConfig {
         this.defaultAdminPassword = props.getProperty("jettra.security.default.admin.password", "admin-jettra");
         this.grpcPort = Integer.parseInt(props.getProperty("jettra.network.grpc.port", "9091"));
         this.restPort = Integer.parseInt(props.getProperty("jettra.network.rest.port", "8080"));
+
+        this.indexInitialCapacity = Integer.parseInt(props.getProperty("jettra.index.initial.capacity", "65536"));
+        this.indexMaxInMemoryKeys = Integer.parseInt(props.getProperty("jettra.index.max.inmemory.keys", "100000"));
+        this.indexCompactStorage = Boolean.parseBoolean(props.getProperty("jettra.index.compact.storage", "true"));
+        
+        String configuredIndexPath = props.getProperty("jettra.index.storage.path", resolvedPath + "/indexes");
+        if (configuredIndexPath.startsWith("~" + java.io.File.separator) || configuredIndexPath.startsWith("~/")) {
+            configuredIndexPath = System.getProperty("user.home") + configuredIndexPath.substring(1);
+        }
+        this.indexStoragePath = configuredIndexPath;
+        this.autoFlushBatchSize = Integer.parseInt(props.getProperty("jettra.storage.autoflush.batch.size", "50000"));
+        this.queryDefaultLimit = Integer.parseInt(props.getProperty("jettra.query.default.limit", "50"));
+        this.queryMaxLimit = Integer.parseInt(props.getProperty("jettra.query.max.limit", "5000"));
+        this.queryPageSize = Integer.parseInt(props.getProperty("jettra.query.pagesize", "50"));
     }
 
     public static JettraStoreConfig load() {
@@ -122,4 +154,13 @@ public final class JettraStoreConfig {
     public String getDefaultAdminPassword() { return defaultAdminPassword; }
     public int getGrpcPort() { return grpcPort; }
     public int getRestPort() { return restPort; }
+
+    public int getIndexInitialCapacity() { return indexInitialCapacity; }
+    public int getIndexMaxInMemoryKeys() { return indexMaxInMemoryKeys; }
+    public boolean isIndexCompactStorage() { return indexCompactStorage; }
+    public String getIndexStoragePath() { return indexStoragePath; }
+    public int getAutoFlushBatchSize() { return autoFlushBatchSize; }
+    public int getQueryDefaultLimit() { return queryDefaultLimit; }
+    public int getQueryMaxLimit() { return queryMaxLimit; }
+    public int getQueryPageSize() { return queryPageSize; }
 }

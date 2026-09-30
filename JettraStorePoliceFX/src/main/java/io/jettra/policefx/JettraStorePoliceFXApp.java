@@ -126,6 +126,20 @@ public class JettraStorePoliceFXApp extends Application {
                     cameraTranslate.setX(agent.getTranslateX());
                     cameraTranslate.setZ(agent.getTranslateZ() - 260);
                 }
+
+                // Sincronización continua de supervisión reactiva de JettraPolice
+                var alerts = io.jettra.store.police.JettraPolice.getInstance().getAlerts();
+                if (!alerts.isEmpty()) {
+                    var lastAlert = alerts.getLast();
+                    if ("HEAP_EXHAUSTION_PREVENTED".equals(lastAlert.code())) {
+                        world3D.getAgentMesh().setStatus(JettraPoliceAgentMesh.AgentStatus.WARNING_RAM);
+                        world3D.getAgentMesh().setThought("Intervención Anti-OOM: Paginando lazy consulta masiva para proteger el Heap...");
+                        if (statusBadge != null && !statusBadge.getText().contains("ANTI-OOM")) {
+                            statusBadge.setText("AGENTE: INTERVENCIÓN PREVENTIVA HEAP (ANTI-OOM)");
+                            statusBadge.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 3 8 3 8; -fx-background-radius: 4;");
+                        }
+                    }
+                }
             }
         };
         timer.start();

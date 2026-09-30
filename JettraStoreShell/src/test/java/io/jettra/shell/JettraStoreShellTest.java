@@ -403,4 +403,28 @@ public class JettraStoreShellTest {
             assertTrue(showDatabases.contains("default_db"));
         }
     }
+
+    @Test
+    @DisplayName("select * from clientes debe ejecutarse de forma streaming acotada sin OutOfMemoryError")
+    public void testSelectClientesQueryStreamingAndLimit() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+            shell.executeCommand("use example_factura_db");
+
+            // 1. select * from clientes sin limit explicito aplica default limit acotado
+            String resDefault = shell.executeCommand("select * from clientes");
+            System.out.println("DEBUG select * from clientes:\n" + resDefault.substring(0, Math.min(resDefault.length(), 600)));
+            assertTrue(resDefault.contains("JETTRASQL RESULTADO"));
+            assertTrue(resDefault.contains("clientes"));
+            assertTrue(resDefault.contains("fila(s)"));
+
+            // 2. select con LIMIT explicito
+            String resLimit5 = shell.executeCommand("select * from clientes limit 5");
+            assertTrue(resLimit5.contains("5 fila(s) retornada(s)"));
+
+            // 3. select con WHERE usando índice
+            String resWhere = shell.executeCommand("select * from clientes where _id = cli_100");
+            assertTrue(resWhere.contains("JETTRASQL RESULTADO"));
+        }
+    }
 }

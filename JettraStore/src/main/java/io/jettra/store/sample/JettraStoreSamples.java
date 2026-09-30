@@ -304,6 +304,9 @@ public final class JettraStoreSamples {
             });
         }
 
+        try {
+            db.flushMemTable();
+        } catch (Exception ignored) {}
         System.gc();
         try {
             db.getIndexManager().createIndex("facturas", "idx_fac_cliente", "_ref_cliente", "HASH", false, db.getDocumentEngine("facturas"));

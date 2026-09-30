@@ -5,15 +5,17 @@
 
 ---
 
-## 1. Módulo `jettra collection` (Colecciones Primitivas Off-Heap Zero-Boxing)
+## 1. Módulo `JettraCollection` (Colecciones Ultra-Eficientes y Prevención de OOM)
 
 ### Propósito y Arquitectura
-`jettra collection` es el pilar de rendimiento de memoria en `JettraStore`. En arquitecturas de bases de datos que procesan millones de lecturas y escrituras por segundo, las estructuras tradicionales de `java.util.*` provocan una saturación severa del montículo de la JVM debido al *boxing/unboxing* de tipos primitivos (`long`, `int`, `double`) y la fragmentación de memoria provocada por las cabeceras de objetos.
+`JettraCollection` (`io.jettra.collections.*`) es el pilar de rendimiento de memoria y prevención absoluta de `OutOfMemoryError` en `JettraStore`. En bases de datos que procesan millones de lecturas, escrituras e índices concurrentes, las estructuras tradicionales de `java.util.*` provocan una saturación severa del montículo de la JVM debido al *boxing/unboxing* de tipos primitivos, el overhead de 32 bytes por nodo (`HashMap$Node`) y conversiones costosas como `.toArray()`.
 
 ### Componentes Principales
-* **`JettraLongLongHashMap`:** Mapa hash asociativo de `long` a `long` implementado mediante direccionamiento abierto (*open addressing*) con sondeo lineal (*linear probing*), almacenado en memoria contigua fuera del montículo (`MemorySegment`).
-* **`JettraByteArrayList`:** Lista dinámica de bytes planos que replica la funcionalidad de `ArrayList<Byte>` sin generar instancias de envoltura, optimizada para recepción directa de streams `jettraGRPC`.
-* **`JettraIntObjectMap<V>`:** Mapa optimizado para identificar índices dispersos por ID entero de bloque.
+* **`UnifiedMap<K, V>`:** Mapa hash de direccionamiento abierto plano donde claves y valores alternan directamente en una tabla `Object[]` contigua. Elimina el 100% de los nodos `HashMap$Node`, ahorrando hasta un 75% de RAM.
+* **`UnifiedSet<E>`:** Conjunto plano que reduce la sobrecarga de contenedor de ~36-40 bytes a solo ~5.3 bytes por elemento (ahorro de más del 85%).
+* **`IntLongHashMap` / `LongLongHashMap`:** Mapas primitivos contiguos sin envolturas de objetos (`Long`, `Integer`), integrables con punteros Panama (`MemorySegment`).
+* **`IntArrayList` / `LongArrayList`:** Listas contiguas de tipos primitivos para índices y secuencias sin boxing.
+* **Directrices de Operación Anticolapso:** Queda estrictamente prohibido el volcado masivo mediante `.toArray()`. Las consultas e indexaciones masivas operan mediante flujos perezosos (`LazyDocumentList`, `stream()`) procesados en lotes acotados (*chunks* de 1,000 a 5,000 elementos).
 
 ---
 

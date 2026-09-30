@@ -50,7 +50,7 @@ public final class JettraDatabase {
     public JettraDatabase(String databaseName, JettraStoreConfig config, DynamicRingEngine ringEngine) {
         this.databaseName = databaseName;
         this.config = config != null ? config : JettraStoreConfig.load();
-        this.indexManager = new JettraIndexManager(databaseName);
+        this.indexManager = new JettraIndexManager(databaseName, this.config);
         long memTableBytes = this.config.getMemTableSizeMb() * 1024L * 1024L;
         this.memTable = new NativeMemTable(memTableBytes);
         this.ringEngine = (ringEngine != null) ? ringEngine : new DynamicRingEngine("node-01", 

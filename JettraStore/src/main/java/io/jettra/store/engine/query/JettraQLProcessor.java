@@ -36,26 +36,55 @@ public final class JettraQLProcessor {
     }
 
     private JQLResult executeFrom(String jql) {
-        // Formato: FROM <collection> [WHERE <campo> = <valor>]
-        String[] parts = jql.substring(5).trim().split("\\s+");
+        // Formato: FROM <collection> [WHERE <campo> = <valor>] [LIMIT <n>]
+        int limit = (database != null && database.getConfig() != null) ? database.getConfig().getQueryDefaultLimit() : 50;
+        int maxLimit = (database != null && database.getConfig() != null) ? database.getConfig().getQueryMaxLimit() : 5000;
+
+        String upper = jql.toUpperCase();
+        int limitIdx = upper.lastIndexOf(" LIMIT ");
+        String workingJql = jql;
+        if (limitIdx != -1) {
+            String limStr = jql.substring(limitIdx + 7).replace(";", "").replace("'", "").replace(String.valueOf((char)34), "").trim();
+            try { limit = Math.min(Integer.parseInt(limStr), maxLimit); } catch (Exception ignored) {}
+            workingJql = jql.substring(0, limitIdx).trim();
+        }
+
+        String[] parts = workingJql.substring(5).trim().split("\\s+");
         String collection = parts[0].replaceAll("[;]", "");
         DocumentEngine engine = database.getDocumentEngine(collection);
-        List<Map<String, Object>> allDocs = engine.findAll();
+        if (engine == null || engine.isEmpty()) {
+            return new JQLResult("FROM", List.of("_id", "document"), Collections.emptyList(), 0, 
+                String.format("JettraQL FROM '%s' retornó 0 registro(s)", collection));
+        }
+
+        // Supervisión predictiva JettraPolice sobre la consulta JQL
+        boolean explicitLimit = (limitIdx != -1);
+        int requestedLimit = explicitLimit ? limit : 0;
+        io.jettra.store.police.JettraPolice.PoliceDecision policeDecision = 
+            io.jettra.store.police.JettraPolice.getInstance().evaluateHeapSafety(
+                "JQL_FROM", collection, engine.count(), requestedLimit, 512L);
+
+        boolean policeIntervened = false;
+        if (policeDecision.interventionRequired()) {
+            policeIntervened = true;
+            limit = policeDecision.enforcedLimit();
+        }
 
         String filterKey = null;
         String filterVal = null;
-        int whereIdx = jql.toUpperCase().indexOf(" WHERE ");
+        int whereIdx = workingJql.toUpperCase().indexOf(" WHERE ");
         if (whereIdx != -1) {
-            String whereClause = jql.substring(whereIdx + 7).trim();
+            String whereClause = workingJql.substring(whereIdx + 7).trim();
             String[] kv = whereClause.split("=");
             if (kv.length == 2) {
                 filterKey = kv[0].trim();
-                filterVal = kv[1].replaceAll("['\";]", "").trim();
+                filterVal = kv[1].replace(";", "").replace("'", "").replace(String.valueOf((char)34), "").trim();
             }
         }
 
-        List<List<Object>> rows = new ArrayList<>();
-        for (Map<String, Object> doc : allDocs) {
+        List<List<Object>> rows = new ArrayList<>(Math.min(limit, 1000));
+        for (Map<String, Object> doc : engine) {
+            if (doc == null) continue;
             if (filterKey != null && filterVal != null) {
                 Object val = doc.get(filterKey);
                 if (val == null || !String.valueOf(val).equalsIgnoreCase(filterVal)) {
@@ -63,10 +92,17 @@ public final class JettraQLProcessor {
                 }
             }
             rows.add(List.of(doc.getOrDefault("_id", "unknown"), doc.toString()));
+            if (rows.size() >= limit) {
+                break;
+            }
         }
 
-        return new JQLResult("FROM", List.of("_id", "document"), rows, rows.size(), 
-            String.format("JettraQL FROM '%s' retornó %d registro(s)", collection, rows.size()));
+        String summaryMsg = policeIntervened 
+            ? String.format("[JettraPolice SENTINEL: Paginación Lazy Anti-OOM Activada] JettraQL FROM '%s' retornó %d registro(s) (Lote seguro: %d). %s",
+                collection, rows.size(), limit, policeDecision.rationale())
+            : String.format("JettraQL FROM '%s' retornó %d registro(s) (Límite aplicado: %d)", collection, rows.size(), limit);
+
+        return new JQLResult("FROM", List.of("_id", "document"), rows, rows.size(), summaryMsg);
     }
 
     private JQLResult executeGraphMatch(String jql) {

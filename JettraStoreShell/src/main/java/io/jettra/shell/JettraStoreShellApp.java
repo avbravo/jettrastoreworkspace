@@ -1056,7 +1056,13 @@ Seleccione una conexión para iniciar:
 
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("=== JETTRASQL RESULTADO (%d ms) ===\n", elapsed));
-        sb.append("Mensaje: ").append(res.message()).append("\n");
+        if (res.message().contains("[JettraPolice SENTINEL")) {
+            sb.append("🛡️  [JETTRAPOLICE SENTINEL: INTERVENCIÓN PREVENTIVA DE MEMORIA HEAP]\n");
+            sb.append("   Estrategia: Streaming perezoso (Lazy Load) con distribución por lotes seguros.\n");
+            sb.append("   Diagnóstico: ").append(res.message()).append("\n");
+        } else {
+            sb.append("Mensaje: ").append(res.message()).append("\n");
+        }
 
         if (!res.rows().isEmpty()) {
             // Renderizar tabla ASCII con formato dinámico
@@ -1069,13 +1075,25 @@ Seleccione una conexión para iniciar:
             for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
             sb.append("\n");
 
+            int maxDisplay = Math.min(res.rows().size(), pageSize > 0 ? pageSize : 50);
+            int displayCount = 0;
             for (List<Object> row : res.rows()) {
+                if (++displayCount > maxDisplay) break;
                 sb.append("|");
                 for (int i = 0; i < cols.size(); i++) {
                     String val = (i < row.size() && row.get(i) != null) ? row.get(i).toString() : "";
                     sb.append(String.format(" %-" + Math.max(cols.get(i).length(), 12) + "s |", val));
                 }
                 sb.append("\n");
+            }
+            if (res.rows().size() > maxDisplay) {
+                sb.append(String.format("... y %d fila(s) más. Use LIMIT o aumente PAGE_SIZE para ver más.\n", 
+                    res.rows().size() - maxDisplay));
+            }
+            if (res.message().contains("[JettraPolice SENTINEL")) {
+                sb.append(String.format("💡 Consejo JettraPolice: Para iterar la siguiente página lazy ejecute: %s LIMIT %d OFFSET %d\n",
+                    clean.contains("LIMIT") ? clean.replaceAll("(?i)LIMIT\\s+\\d+", "").trim() : clean, 
+                    res.rows().size(), res.rows().size()));
             }
             sb.append("+");
             for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
@@ -1680,16 +1698,16 @@ Seleccione una conexión para iniciar:
             });
         }
 
-        // Liberación preventiva y creación de índices secundarios mediante streaming
+        // Flush persistencia física para volcar buffers a almacenamiento antes de indexación
+        try {
+            db.flushMemTable();
+        } catch (Exception ignored) {}
+
+        // Liberación preventiva de memoria y creación de índices compactos (Zero-Set Singletons)
         System.gc();
         try {
             db.getIndexManager().createIndex("facturas", "idx_fac_cliente", "_ref_cliente", "HASH", false, db.getDocumentEngine("facturas"));
             db.getIndexManager().createIndex("clientes", "idx_cli_rfc", "rfc_tax_id", "BTREE", false, db.getDocumentEngine("clientes"));
-        } catch (Exception ignored) {}
-
-        // Flush persistencia física
-        try {
-            db.flushMemTable();
         } catch (Exception ignored) {}
 
         this.currentDatabase = "example_factura_db";

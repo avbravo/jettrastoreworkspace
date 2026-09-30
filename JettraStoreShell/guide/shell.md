@@ -73,6 +73,34 @@ Seleccione una opción [1-7]: 1
 [SUCCESS] Base de datos de ejemplo instalada exitosamente en archivos .jettra.
 ```
 
+### 3.2 Carga Masiva de Ejemplo de Facturación Multimodelo (`LOAD SAMPLE example_factura_db`)
+Para pruebas de estrés y validación multimodelo de 3,000,000 de objetos:
+```text
+admin@jettra-cluster:primary> LOAD SAMPLE example_factura_db
+
+==============================================================================================
+        CARGA MASIVA EXITOSA: BASE DE DATOS 'example_factura_db' (3,000,000 OBJETOS)
+==============================================================================================
+[OK] Tiempo de Inserción y Timbrado Multimodelo: 5051 ms (Java 25 Virtual Threads)
+[OK] Objetos Repartidos en 9 Buckets Especializados:
+  * [DOCUMENT]   'facturas'              : 1,000,000 facturas electrónicas timbradas
+  * [DOCUMENT]   'detalles_factura'      : 1,000,000 renglones/items vinculados
+  * [DOCUMENT]   'clientes'              :   200,000 clientes empresariales con RFC/RUC
+  * [KEYVALUE]   'cache_folios'          :   300,000 folios fiscales en caché ultrarrápida
+  * [VECTOR]     'factura_embeddings'    :   200,000 vectores 3D indexados para IA
+  * [GRAPH]      'red_comercial'         :   200,000 vértices conectados (clientes -> facturas)
+  * [TIMESERIES] 'volumen_facturacion'   :    50,000 métricas históricas de facturación
+  * [GEOSPATIAL] 'sucursales_fiscales'   :    25,000 puntos GIS de sucursales emisoras
+  * [COLUMNAR]   'analitica_fiscal'      :    25,000 filas de cálculo analítico de IVA/Totales
+----------------------------------------------------------------------------------------------
+GRAN TOTAL EN 'example_factura_db': 3,000,000 objetos multimodelo conectados mediante JettraRef.
+Índices Creados: idx_fac_cliente (HASH), idx_cli_rfc (BTREE)
+Base de datos activa conmutada a: 'example_factura_db'
+==============================================================================================
+```
+* **Garantía Anti-OOM:** Las inserciones se despachan en lotes (*chunks*) acotados de 25,000 a 50,000 registros mediante `UnifiedMap` de `JettraCollection`.
+* **Zero `.toArray()`:** La indexación secundaria sobre 1,200,000 campos se ejecuta por streaming directo (`forEach`), evitando duplicaciones masivas en memoria.
+
 ---
 
 ## 4. Comandos de Administración de Usuarios y Seguridad
