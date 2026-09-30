@@ -27,26 +27,30 @@ public final class JettraStoreConfig {
 
     public JettraStoreConfig(Properties props) {
         String configuredPath = System.getProperty("jettra.storage.path", 
-            props.getProperty("jettra.storage.path", "./data/jettra"));
+            props.getProperty("jettra.storage.path", "/jettra/data"));
         this.rawConfiguredPath = configuredPath;
         
-        // Verificar si la ruta o su primer ancestro existente es escribible por el usuario actual
+        // Crear directorio de almacenamiento si no existe
+        Path path = Path.of(configuredPath);
         String effectivePath = configuredPath;
         try {
-            Path path = Path.of(configuredPath);
-            if (Files.exists(path)) {
-                if (!Files.isWritable(path)) {
-                    effectivePath = "./data/jettra";
-                }
-            } else {
-                try {
-                    Files.createDirectories(path);
-                } catch (Exception ex) {
-                    effectivePath = "./data/jettra";
-                }
+            if (!Files.exists(path)) {
+                Files.createDirectories(path);
             }
-        } catch (Exception e) {
+        } catch (Exception ex) {
+            System.err.printf("[JettraStoreConfig] Advertencia: No se pudo crear directorio '%s': %s%n", 
+                configuredPath, ex.getMessage());
+        }
+
+        if (Files.exists(path) && Files.isWritable(path)) {
+            effectivePath = configuredPath;
+        } else {
+            System.err.printf("[JettraStoreConfig] Advertencia: Directorio '%s' no accesible para escritura. Conmutando a fallback local './data/jettra'.%n", 
+                configuredPath);
             effectivePath = "./data/jettra";
+            try {
+                Files.createDirectories(Path.of(effectivePath));
+            } catch (Exception ignored) {}
         }
 
         this.storagePath = effectivePath;
@@ -69,11 +73,28 @@ public final class JettraStoreConfig {
 
     public static JettraStoreConfig load() {
         Properties props = new Properties();
+        // 1. Cargar defaults de resources del classpath
         try (InputStream is = JettraStoreConfig.class.getResourceAsStream("/database.properties")) {
             if (is != null) {
                 props.load(is);
             }
         } catch (IOException ignored) {}
+
+        // 2. Sobrescribir con archivo externo config/database.properties o database.properties si existe
+        Path externalConfig = Path.of("config/database.properties");
+        if (Files.exists(externalConfig)) {
+            try (InputStream is = Files.newInputStream(externalConfig)) {
+                props.load(is);
+            } catch (IOException ignored) {}
+        } else {
+            Path currentConfig = Path.of("database.properties");
+            if (Files.exists(currentConfig)) {
+                try (InputStream is = Files.newInputStream(currentConfig)) {
+                    props.load(is);
+                } catch (IOException ignored) {}
+            }
+        }
+
         return new JettraStoreConfig(props);
     }
 

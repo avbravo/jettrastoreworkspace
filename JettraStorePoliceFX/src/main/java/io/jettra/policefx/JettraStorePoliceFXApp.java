@@ -31,9 +31,10 @@ public class JettraStorePoliceFXApp extends Application {
 
     // 3D Camera Controls
     private PerspectiveCamera camera;
-    private final Rotate cameraRotateX = new Rotate(-22, Rotate.X_AXIS);
+    // Configuración Inicial Óptima: Plano Cartesiano en Primer Plano
+    private final Rotate cameraRotateX = new Rotate(-34, Rotate.X_AXIS);
     private final Rotate cameraRotateY = new Rotate(0, Rotate.Y_AXIS);
-    private final Translate cameraTranslate = new Translate(0, -100, -520);
+    private final Translate cameraTranslate = new Translate(0, -180, -400);
     private double mouseAnchorX, mouseAnchorY;
     private boolean followMode = false;
 
@@ -478,11 +479,15 @@ public class JettraStorePoliceFXApp extends Application {
         b3.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 9px; -fx-font-weight: bold; -fx-background-radius: 12;");
         b3.setOnAction(e -> focusOnTarget(110, -40, 60, "sample_enterprise_db"));
 
+        Button bPlano = new Button("📐 Plano Cartesiano");
+        bPlano.setStyle("-fx-background-color: #06B6D4; -fx-text-fill: white; -fx-font-size: 9px; -fx-font-weight: bold; -fx-background-radius: 12;");
+        bPlano.setOnAction(e -> focusOnCartesianPlane());
+
         Button b4 = new Button("Origen (0,0,0)");
         b4.setStyle("-fx-background-color: #334155; -fx-text-fill: #E2E8F0; -fx-font-size: 9px; -fx-background-radius: 12;");
         b4.setOnAction(e -> resetCamera());
 
-        bar.getChildren().addAll(lbl, b1, b2, b3, b4);
+        bar.getChildren().addAll(lbl, bPlano, b1, b2, b3, b4);
         return bar;
     }
 
@@ -548,6 +553,7 @@ public class JettraStorePoliceFXApp extends Application {
         Label h3 = new Label("• Teclas W,S,A,D: Desplazar");
         Label h4 = new Label("• C: Resetear Cámara");
         Label h5 = new Label("• F: Modo Seguir Agente (Follow)");
+        Label h6 = new Label("• P: Plano Cartesiano (Primer Plano)");
 
         String itemStyle = "-fx-text-fill: #CBD5E1; -fx-font-size: 10px;";
         h1.setStyle(itemStyle);
@@ -556,7 +562,8 @@ public class JettraStorePoliceFXApp extends Application {
         h4.setStyle(itemStyle);
         h5.setStyle(itemStyle);
 
-        overlay.getChildren().addAll(helpTitle, h1, h2, h3, h4, h5);
+        h6.setStyle(itemStyle);
+        overlay.getChildren().addAll(helpTitle, h1, h2, h3, h4, h5, h6);
         return overlay;
     }
 
@@ -613,11 +620,15 @@ public class JettraStorePoliceFXApp extends Application {
             addLiveFeedEvent("Modo Seguir Agente: " + (followMode ? "ACTIVADO" : "DESACTIVADO"));
         });
 
+        Button btnCartesian = new Button("Plano Cartesiano (P)");
+        btnCartesian.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnCartesian.setOnAction(e -> focusOnCartesianPlane());
+
         Button btnResetCam = new Button("Reset Cámara (C)");
         btnResetCam.setStyle("-fx-background-color: #334155; -fx-text-fill: #E2E8F0;");
         btnResetCam.setOnAction(e -> resetCamera());
 
-        bottom.getChildren().addAll(btnNormal, btnRamAlert, btnSecurityAlert, btnFacturas, btnFollow, btnResetCam);
+        bottom.getChildren().addAll(btnNormal, btnCartesian, btnRamAlert, btnSecurityAlert, btnFacturas, btnFollow, btnResetCam);
         return bottom;
     }
 
@@ -644,7 +655,9 @@ public class JettraStorePoliceFXApp extends Application {
 
     private void initKeyboardControls(Scene scene) {
         scene.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.C) {
+            if (e.getCode() == KeyCode.P) {
+                focusOnCartesianPlane();
+            } else if (e.getCode() == KeyCode.C) {
                 resetCamera();
             } else if (e.getCode() == KeyCode.F) {
                 followMode = !followMode;
@@ -661,14 +674,20 @@ public class JettraStorePoliceFXApp extends Application {
         });
     }
 
-    private void resetCamera() {
-        cameraRotateX.setAngle(-22);
+    public void focusOnCartesianPlane() {
+        followMode = false;
+        cameraRotateX.setAngle(-34);
         cameraRotateY.setAngle(0);
         cameraTranslate.setX(0);
-        cameraTranslate.setY(-100);
-        cameraTranslate.setZ(-520);
-        followMode = false;
-        addLiveFeedEvent("Cámara reiniciada a perspectiva inicial completa.");
+        cameraTranslate.setY(-180);
+        cameraTranslate.setZ(-400);
+        updateAgentThought("Inspeccionando coordenadas en Plano Cartesiano tridimensional...", "Análisis Espacial en Primer Plano", "[Plano Cartesiano]", "#06B6D4");
+        addLiveFeedEvent("[3D] Plano cartesiano enfocado en primer plano (Ejes X, Y, Z y retícula activa).");
+    }
+
+    private void resetCamera() {
+        focusOnCartesianPlane();
+        addLiveFeedEvent("Cámara 3D restablecida con Plano Cartesiano en primer plano.");
     }
 
     private void addLiveFeedEvent(String msg) {

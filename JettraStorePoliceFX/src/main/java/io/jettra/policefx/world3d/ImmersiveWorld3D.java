@@ -74,143 +74,169 @@ public final class ImmersiveWorld3D extends Group {
     }
 
     private void buildCartesianGroundPlane() {
-        // Base de obsidiana espacial profunda
-        Box ground = new Box(720, 2.5, 720);
-        PhongMaterial groundMat = new PhongMaterial(Color.rgb(15, 23, 42));
-        groundMat.setSpecularColor(Color.rgb(30, 41, 59));
+        // Base de obsidiana espacial profunda situada a profundidad Y=16
+        Box ground = new Box(740, 4.0, 740);
+        PhongMaterial groundMat = new PhongMaterial(Color.rgb(10, 15, 28));
+        groundMat.setSpecularColor(Color.rgb(20, 30, 50));
         ground.setMaterial(groundMat);
-        ground.setTranslateY(10);
+        ground.setTranslateY(16);
 
-        // Marco Perimetral Neón Cian (Borde elegante del plano)
-        Box borderN = new Box(724, 3, 4);
-        borderN.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199, 0.85)));
-        borderN.setTranslateZ(360);
-        borderN.setTranslateY(9);
+        // Marco Perimetral Neón Cian Resplandeciente
+        Box borderN = new Box(744, 4, 5);
+        borderN.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199)));
+        borderN.setTranslateZ(370);
+        borderN.setTranslateY(14);
 
-        Box borderS = new Box(724, 3, 4);
-        borderS.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199, 0.85)));
-        borderS.setTranslateZ(-360);
-        borderS.setTranslateY(9);
+        Box borderS = new Box(744, 4, 5);
+        borderS.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199)));
+        borderS.setTranslateZ(-370);
+        borderS.setTranslateY(14);
 
-        Box borderE = new Box(4, 3, 724);
-        borderE.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199, 0.85)));
-        borderE.setTranslateX(360);
-        borderE.setTranslateY(9);
+        Box borderE = new Box(5, 4, 744);
+        borderE.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199)));
+        borderE.setTranslateX(370);
+        borderE.setTranslateY(14);
 
-        Box borderW = new Box(4, 3, 724);
-        borderW.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199, 0.85)));
-        borderW.setTranslateX(-360);
-        borderW.setTranslateY(9);
+        Box borderW = new Box(5, 4, 744);
+        borderW.setMaterial(new PhongMaterial(Color.rgb(2, 132, 199)));
+        borderW.setTranslateX(-370);
+        borderW.setTranslateY(14);
 
         getChildren().addAll(ground, borderN, borderS, borderE, borderW);
     }
 
     private void buildCartesianAxes() {
-        // EJE X (Rojo Coral Neón) - 700 unidades
-        Box xAxis = new Box(700, 2.5, 2.5);
-        PhongMaterial xMat = new PhongMaterial(Color.rgb(244, 63, 94));
+        // EJE X (Rojo Coral Neón) - 720 unidades en Primer Plano (Y = 0.0)
+        Box xAxis = new Box(720, 3.5, 3.5);
+        PhongMaterial xMat = new PhongMaterial(Color.rgb(255, 42, 109));
         xMat.setSpecularColor(Color.WHITE);
         xAxis.setMaterial(xMat);
-        xAxis.setTranslateY(7.5);
+        xAxis.setTranslateY(0.0);
 
-        // Punteros de flecha/extremo Eje X
-        Cylinder xTipPos = new Cylinder(5, 12);
+        // Punteros de flecha/extremo Eje X (+X y -X)
+        Cylinder xTipPos = new Cylinder(7, 18);
         xTipPos.setMaterial(xMat);
         xTipPos.getTransforms().add(new Rotate(90, Rotate.Z_AXIS));
-        xTipPos.setTranslateX(350);
-        xTipPos.setTranslateY(7.5);
+        xTipPos.setTranslateX(360);
+        xTipPos.setTranslateY(0.0);
 
-        Cylinder xTipNeg = new Cylinder(5, 12);
+        Cylinder xTipNeg = new Cylinder(7, 18);
         xTipNeg.setMaterial(xMat);
         xTipNeg.getTransforms().add(new Rotate(90, Rotate.Z_AXIS));
-        xTipNeg.setTranslateX(-350);
-        xTipNeg.setTranslateY(7.5);
+        xTipNeg.setTranslateX(-360);
+        xTipNeg.setTranslateY(0.0);
 
-        // EJE Y (Verde Esmeralda Vertical) - 180 unidades apuntando al cenit
-        Box yAxis = new Box(2.5, 180, 2.5);
-        PhongMaterial yMat = new PhongMaterial(Color.rgb(34, 197, 94));
+        // EJE Y (Verde Esmeralda Neón) - 200 unidades apuntando al cenit
+        Box yAxis = new Box(3.5, 200, 3.5);
+        PhongMaterial yMat = new PhongMaterial(Color.rgb(0, 255, 102));
         yMat.setSpecularColor(Color.WHITE);
         yAxis.setMaterial(yMat);
-        yAxis.setTranslateY(-80);
+        yAxis.setTranslateY(-90.0);
+
+        Cylinder yTipPos = new Cylinder(7, 18);
+        yTipPos.setMaterial(yMat);
+        yTipPos.setTranslateY(-190.0);
 
         // Anillos de elevación vertical cada 40 unidades en Eje Y
         Group yRings = new Group();
-        for (int y = -30; y >= -150; y -= 40) {
-            Cylinder yr = new Cylinder(10, 1.2);
-            yr.setMaterial(new PhongMaterial(Color.rgb(74, 222, 128, 0.6)));
+        for (int y = -30; y >= -170; y -= 40) {
+            Cylinder yr = new Cylinder(12, 1.8);
+            yr.setMaterial(new PhongMaterial(Color.rgb(74, 222, 128, 0.8)));
             yr.setTranslateY(y);
             yRings.getChildren().add(yr);
         }
 
-        // EJE Z (Azul Eléctrico Neón) - 700 unidades
-        Box zAxis = new Box(2.5, 2.5, 700);
-        PhongMaterial zMat = new PhongMaterial(Color.rgb(56, 189, 248));
+        // EJE Z (Azul Eléctrico Neón / Cian) - 720 unidades en Primer Plano (Y = 0.0)
+        Box zAxis = new Box(3.5, 3.5, 720);
+        PhongMaterial zMat = new PhongMaterial(Color.rgb(0, 242, 254));
         zMat.setSpecularColor(Color.WHITE);
         zAxis.setMaterial(zMat);
-        zAxis.setTranslateY(7.5);
+        zAxis.setTranslateY(0.0);
 
-        // MARCADOR DE ORIGEN (0,0,0) MULTI-NIVEL (Baliza de Precisión JettraICore)
-        Sphere originCore = new Sphere(6);
+        // Punteros de flecha/extremo Eje Z (+Z y -Z)
+        Cylinder zTipPos = new Cylinder(7, 18);
+        zTipPos.setMaterial(zMat);
+        zTipPos.getTransforms().add(new Rotate(90, Rotate.X_AXIS));
+        zTipPos.setTranslateZ(360);
+        zTipPos.setTranslateY(0.0);
+
+        Cylinder zTipNeg = new Cylinder(7, 18);
+        zTipNeg.setMaterial(zMat);
+        zTipNeg.getTransforms().add(new Rotate(90, Rotate.X_AXIS));
+        zTipNeg.setTranslateZ(-360);
+        zTipNeg.setTranslateY(0.0);
+
+        // MARCADOR DE ORIGEN (0,0,0) HIPER-TECNOLÓGICO EN PRIMER PLANO
+        Sphere originCore = new Sphere(8);
         PhongMaterial goldCoreMat = new PhongMaterial(Color.rgb(250, 204, 21));
         goldCoreMat.setSpecularColor(Color.WHITE);
         originCore.setMaterial(goldCoreMat);
-        originCore.setTranslateY(7.5);
+        originCore.setTranslateY(0.0);
 
-        Cylinder originRing1 = new Cylinder(16, 1.0);
-        originRing1.setMaterial(new PhongMaterial(Color.rgb(245, 158, 11, 0.75)));
-        originRing1.setTranslateY(8);
+        Cylinder originRing1 = new Cylinder(20, 1.5);
+        originRing1.setMaterial(new PhongMaterial(Color.rgb(245, 158, 11, 0.85)));
+        originRing1.setTranslateY(0.5);
 
-        Cylinder originRing2 = new Cylinder(28, 0.8);
-        originRing2.setMaterial(new PhongMaterial(Color.rgb(56, 189, 248, 0.5)));
-        originRing2.setTranslateY(8.2);
+        Cylinder originRing2 = new Cylinder(34, 1.2);
+        originRing2.setMaterial(new PhongMaterial(Color.rgb(56, 189, 248, 0.75)));
+        originRing2.setTranslateY(0.8);
 
-        getChildren().addAll(xAxis, xTipPos, xTipNeg, yAxis, yRings, zAxis,
+        getChildren().addAll(xAxis, xTipPos, xTipNeg, yAxis, yTipPos, yRings, zAxis, zTipPos, zTipNeg,
                              originCore, originRing1, originRing2);
     }
 
     private void buildCartesianGrid() {
         Group gridGroup = new Group();
 
-        // 1. Líneas Primarias cada 60 unidades (Brillantes, Cian suave)
-        PhongMaterial primaryGridMat = new PhongMaterial(Color.rgb(56, 189, 248, 0.40));
-        // 2. Líneas Secundarias cada 30 unidades (Sub-retícula sutil)
-        PhongMaterial secondaryGridMat = new PhongMaterial(Color.rgb(51, 65, 85, 0.22));
+        // 1. Líneas Primarias cada 60 unidades (Brillantes, Cian Eléctrico en Primer Plano)
+        PhongMaterial primaryGridMat = new PhongMaterial(Color.rgb(0, 242, 254, 0.75));
+        primaryGridMat.setSpecularColor(Color.CYAN);
+
+        // 2. Líneas Secundarias cada 30 unidades (Sub-retícula Tech Nítida)
+        PhongMaterial secondaryGridMat = new PhongMaterial(Color.rgb(14, 165, 233, 0.45));
 
         for (int i = -330; i <= 330; i += 30) {
             if (i == 0) continue;
             boolean isPrimary = (i % 60 == 0);
             PhongMaterial mat = isPrimary ? primaryGridMat : secondaryGridMat;
-            double thickness = isPrimary ? 1.0 : 0.6;
+            double thickness = isPrimary ? 1.6 : 0.9;
 
-            // Línea Paralela a X
-            Box lineX = new Box(660, thickness, thickness);
+            // Línea Paralela a X (Elevada en Y = 0.5 para Máxima Visibilidad Frontal)
+            Box lineX = new Box(680, thickness, thickness);
             lineX.setMaterial(mat);
             lineX.setTranslateZ(i);
-            lineX.setTranslateY(8.5);
+            lineX.setTranslateY(0.5);
 
-            // Línea Paralela a Z
-            Box lineZ = new Box(thickness, thickness, 660);
+            // Línea Paralela a Z (Elevada en Y = 0.5)
+            Box lineZ = new Box(thickness, thickness, 680);
             lineZ.setMaterial(mat);
             lineZ.setTranslateX(i);
-            lineZ.setTranslateY(8.5);
+            lineZ.setTranslateY(0.5);
 
             gridGroup.getChildren().addAll(lineX, lineZ);
 
-            // Marcadores de hito en coordenadas principales
-            if (isPrimary && Math.abs(i) <= 240) {
-                Box markX = new Box(4, 1.5, 4);
-                markX.setMaterial(new PhongMaterial(Color.rgb(250, 204, 21, 0.6)));
+            // Marcadores de hito y coordenadas en primer plano
+            if (isPrimary && Math.abs(i) <= 300) {
+                Box markX = new Box(6, 2.2, 6);
+                markX.setMaterial(new PhongMaterial(Color.rgb(250, 204, 21, 0.85)));
                 markX.setTranslateX(i);
-                markX.setTranslateY(8.2);
+                markX.setTranslateY(0.0);
                 markX.setTranslateZ(0);
 
-                Box markZ = new Box(4, 1.5, 4);
-                markZ.setMaterial(new PhongMaterial(Color.rgb(56, 189, 248, 0.6)));
+                Box markZ = new Box(6, 2.2, 6);
+                markZ.setMaterial(new PhongMaterial(Color.rgb(56, 189, 248, 0.85)));
                 markZ.setTranslateX(0);
-                markZ.setTranslateY(8.2);
+                markZ.setTranslateY(0.0);
                 markZ.setTranslateZ(i);
 
-                gridGroup.getChildren().addAll(markX, markZ);
+                // Cuadrantes luminosos en las esquinas principales del plano
+                Box cornerBeacon = new Box(5, 4.0, 5);
+                cornerBeacon.setMaterial(new PhongMaterial(Color.rgb(168, 85, 247, 0.70)));
+                cornerBeacon.setTranslateX(i);
+                cornerBeacon.setTranslateY(-1.0);
+                cornerBeacon.setTranslateZ(i);
+
+                gridGroup.getChildren().addAll(markX, markZ, cornerBeacon);
             }
         }
         getChildren().add(gridGroup);

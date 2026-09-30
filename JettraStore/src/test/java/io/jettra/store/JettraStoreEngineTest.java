@@ -116,4 +116,23 @@ public class JettraStoreEngineTest {
         assertTrue(restored);
         Files.deleteIfExists(backupPath);
     }
+
+    @Test
+    @DisplayName("Debe crear el directorio configurado en database.properties y almacenar datos")
+    public void testConfiguredStoragePathCreationAndStore() throws IOException {
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+        assertEquals("/jettra/data", cfg.getStoragePath());
+        assertTrue(Files.exists(Path.of(cfg.getStoragePath())));
+        assertTrue(Files.isDirectory(Path.of(cfg.getStoragePath())));
+        assertTrue(Files.isWritable(Path.of(cfg.getStoragePath())));
+
+        JettraDatabase db = new JettraDatabase("verify_storage_db", cfg);
+        db.getDocumentEngine("items").insert("i1", Map.of("title", "Product"));
+        db.flushMemTable();
+
+        Path expectedFile = Path.of(cfg.getStoragePath(), "verify_storage_db_sstable" + cfg.getFileExtension());
+        assertTrue(Files.exists(expectedFile));
+        assertTrue(Files.size(expectedFile) > 0);
+        Files.deleteIfExists(expectedFile);
+    }
 }

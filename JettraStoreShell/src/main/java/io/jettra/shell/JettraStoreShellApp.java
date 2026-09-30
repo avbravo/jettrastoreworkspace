@@ -57,10 +57,80 @@ public final class JettraStoreShellApp {
         }
     }
 
+    private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".jettra");
+    private static final Path CONFIG_FILE = CONFIG_DIR.resolve("connections.properties");
+
     private void initDefaultConnections() {
         savedConnections.put("local_master", new SavedConnection("local_master", "127.0.0.1", 9091, "admin"));
         savedConnections.put("node-02-replica", new SavedConnection("node-02-replica", "127.0.0.1", 9092, "admin"));
         savedConnections.put("node-03-replica", new SavedConnection("node-03-replica", "127.0.0.1", 9093, "admin"));
+        loadSavedConnections();
+    }
+
+    private void loadSavedConnections() {
+        try {
+            if (Files.exists(CONFIG_FILE)) {
+                Properties props = new Properties();
+                try (var in = Files.newInputStream(CONFIG_FILE)) {
+                    props.load(in);
+                }
+                for (String name : props.stringPropertyNames()) {
+                    String val = props.getProperty(name);
+                    String[] parts = val.split(":", 3);
+                    if (parts.length >= 2) {
+                        String h = parts[0];
+                        int p = Integer.parseInt(parts[1]);
+                        String u = parts.length > 2 ? parts[2] : "admin";
+                        savedConnections.put(name, new SavedConnection(name, h, p, u));
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public void persistSavedConnections() {
+        try {
+            if (!Files.exists(CONFIG_DIR)) {
+                Files.createDirectories(CONFIG_DIR);
+            }
+            Properties props = new Properties();
+            for (SavedConnection sc : savedConnections.values()) {
+                props.setProperty(sc.name(), sc.host() + ":" + sc.port() + ":" + sc.user());
+            }
+            try (var out = Files.newOutputStream(CONFIG_FILE)) {
+                props.store(out, "JettraStore Shell Saved Connections");
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public List<SavedConnection> getOrderedConnectionsList() {
+        List<SavedConnection> list = new ArrayList<>(savedConnections.values());
+        list.sort(Comparator.comparing(SavedConnection::name));
+        return list;
+    }
+
+    public String getConnectionsMenuDisplay() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("""
+================================================================================
+               JETTRASTORE INTERACTIVE DISTRIBUTED SHELL (JAVA 25+)             
+================================================================================
+=========================== MENÚ DE CONEXIONES =================================
+Seleccione una conexión para iniciar:
+""");
+        List<SavedConnection> list = getOrderedConnectionsList();
+        for (int i = 0; i < list.size(); i++) {
+            SavedConnection sc = list.get(i);
+            String defMarker = sc.name().equals("local_master") ? "  [Predeterminado]" : "";
+            sb.append(String.format("  [%d] %-20s (%s:%d - Usuario: %s)%s%n", 
+                (i + 1), sc.name(), sc.host(), sc.port(), sc.user(), defMarker));
+        }
+        sb.append("""
+  [N] Conexión nueva (donde el usuario ejecuta el connect)
+  [0] Salir del Shell
+================================================================================
+""");
+        return sb.toString();
     }
 
     public String executeCommand(String command) {
@@ -76,6 +146,8 @@ public final class JettraStoreShellApp {
         // 1. Ayuda y Menú
         if (upper.equals("HELP") || upper.equals("?")) {
             return getHelpText();
+        } else if (upper.equals("MENU CONNECTIONS") || upper.equals("CONNECTIONS MENU")) {
+            return getConnectionsMenuDisplay();
         } else if (upper.equals("MENU")) {
             return getInteractiveMenu();
         }
@@ -346,6 +418,7 @@ public final class JettraStoreShellApp {
         String user = parts.length > 3 ? parts[3].trim() : (authenticated ? currentUser : "admin");
 
         savedConnections.put(name, new SavedConnection(name, host, port, user));
+        persistSavedConnections();
         return String.format("[SUCCESS] Conexión '%s' guardada (%s:%d, usuario: %s).", name, host, port, user);
     }
 
@@ -354,6 +427,7 @@ public final class JettraStoreShellApp {
         if (name.isBlank()) return "[ERROR] Uso: remove connection <nombre-conexion>";
         SavedConnection removed = savedConnections.remove(name);
         if (removed != null) {
+            persistSavedConnections();
             return String.format("[SUCCESS] Conexión guardada '%s' eliminada correctamente.", name);
         } else {
             return String.format("[WARN] No existe una conexión guardada con el nombre '%s'.", name);
@@ -2212,44 +2286,157 @@ public final class JettraStoreShellApp {
         Console console = System.console();
         Scanner scanner = new Scanner(System.in);
 
-        System.out.println("================================================================================");
-        System.out.println("               JETTRASTORE INTERACTIVE DISTRIBUTED SHELL (JAVA 25+)             ");
-        System.out.println("================================================================================");
-
-        String host = "127.0.0.1";
-        int port = 9091;
-        String user = "admin";
-        String pass = "admin-jettra";
-
-        if (console != null) {
-            String inputHost = console.readLine(">> JettraStore Host [%s]: ", host);
-            if (inputHost != null && !inputHost.isBlank()) host = inputHost.trim();
-
-            String inputPort = console.readLine(">> JettraStore Port [%d]: ", port);
-            if (inputPort != null && !inputPort.isBlank()) {
-                try { port = Integer.parseInt(inputPort.trim()); } catch (Exception ignored) {}
-            }
-
-            String inputUser = console.readLine(">> Username [%s]: ", user);
-            if (inputUser != null && !inputUser.isBlank()) user = inputUser.trim();
-
-            char[] passArray = console.readPassword(">> Password [hidden]: ");
-            if (passArray != null && passArray.length > 0) pass = new String(passArray);
-        }
-
         JettraStoreShellApp shell = new JettraStoreShellApp(false);
-        boolean ok = shell.connectAndLogin(host, port, user, pass);
-        if (ok) {
-            System.out.printf("[AUTH OK] Autenticado exitosamente como '%s' (%s:%d)%n", user, host, port);
-        } else {
-            System.out.printf("[WARN] No se pudo conectar a %s:%d. Inicie sesión manualmente en la consola.%n", host, port);
+
+        // 1. Mostrar menú de conexiones creadas al iniciar
+        System.out.print(shell.getConnectionsMenuDisplay());
+
+        String targetHost = "127.0.0.1";
+        int targetPort = 9091;
+        String suggestedUser = "admin";
+
+        String option = "";
+        System.out.print(">> Seleccione una opción [1]: ");
+        if (console != null) {
+            option = console.readLine();
+        } else if (scanner.hasNextLine()) {
+            option = scanner.nextLine();
+        }
+        if (option == null || option.isBlank()) {
+            option = "1";
+        }
+        option = option.trim();
+
+        if (option.equalsIgnoreCase("0") || option.equalsIgnoreCase("exit") || option.equalsIgnoreCase("quit")) {
+            System.out.println("Saliendo de JettraStore Shell...");
+            return;
         }
 
-        System.out.println("Escriba 'help' o '?' para ver los comandos disponibles, o 'exit' / 'quit' para salir.\n");
+        List<SavedConnection> conns = shell.getOrderedConnectionsList();
+        boolean isNewConnection = option.equalsIgnoreCase("N") || option.equalsIgnoreCase("nueva") || 
+                                  option.toUpperCase().startsWith("CONNECT");
 
+        if (!isNewConnection) {
+            try {
+                int idx = Integer.parseInt(option) - 1;
+                if (idx >= 0 && idx < conns.size()) {
+                    SavedConnection chosen = conns.get(idx);
+                    targetHost = chosen.host();
+                    targetPort = chosen.port();
+                    suggestedUser = chosen.user();
+                    shell.executeCommand(String.format("CONNECT %s %d", targetHost, targetPort));
+                    System.out.printf("[CONNECT] Conexión seleccionada: '%s' (%s:%d)%n", chosen.name(), targetHost, targetPort);
+                } else {
+                    System.out.println("[WARN] Opción fuera de rango. Usando conexión predeterminada: 127.0.0.1:9091");
+                    shell.executeCommand("CONNECT 127.0.0.1 9091");
+                }
+            } catch (NumberFormatException e) {
+                if (shell.getSavedConnections().containsKey(option)) {
+                    SavedConnection chosen = shell.getSavedConnections().get(option);
+                    targetHost = chosen.host();
+                    targetPort = chosen.port();
+                    suggestedUser = chosen.user();
+                    shell.executeCommand(String.format("CONNECT %s %d", targetHost, targetPort));
+                    System.out.printf("[CONNECT] Conexión seleccionada: '%s' (%s:%d)%n", chosen.name(), targetHost, targetPort);
+                } else {
+                    isNewConnection = true;
+                }
+            }
+        }
+
+        // Si eligió 'Conexión nueva', el usuario ejecuta el connect
+        if (isNewConnection) {
+            System.out.println("""
+--------------------------------------------------------------------------------
+                         OPCIÓN: CONEXIÓN NUEVA
+--------------------------------------------------------------------------------
+Ejecute el comando 'connect <host> <puerto>' (o presione Enter para [127.0.0.1 9091]):""");
+            System.out.print(">> ");
+            String connCmd = "";
+            if (console != null) {
+                connCmd = console.readLine();
+            } else if (scanner.hasNextLine()) {
+                connCmd = scanner.nextLine();
+            }
+            if (connCmd == null || connCmd.isBlank()) {
+                connCmd = "connect 127.0.0.1 9091";
+            }
+            connCmd = connCmd.trim();
+            if (!connCmd.toUpperCase().startsWith("CONNECT ")) {
+                connCmd = "CONNECT " + connCmd;
+            }
+            String connectResult = shell.executeCommand(connCmd);
+            System.out.println(connectResult);
+            targetHost = shell.getCurrentHost();
+            targetPort = shell.getCurrentPort();
+
+            // Preguntar si desea guardar el perfil
+            System.out.print(">> ¿Desea guardar esta conexión en el menú? (s/N): ");
+            String saveAns = "";
+            if (console != null) saveAns = console.readLine();
+            else if (scanner.hasNextLine()) saveAns = scanner.nextLine();
+            if (saveAns != null && (saveAns.trim().equalsIgnoreCase("s") || saveAns.trim().equalsIgnoreCase("si"))) {
+                System.out.print(">> Ingrese un nombre/alias para la conexión: ");
+                String alias = "";
+                if (console != null) alias = console.readLine();
+                else if (scanner.hasNextLine()) alias = scanner.nextLine();
+                if (alias != null && !alias.isBlank()) {
+                    shell.executeCommand(String.format("SAVE CONNECTION %s %s %d %s", alias.trim(), targetHost, targetPort, suggestedUser));
+                    System.out.printf("[SUCCESS] Perfil '%s' guardado para futuros arranques.%n", alias.trim());
+                }
+            }
+        }
+
+        // 2. Solicitar la ejecución del login para autentificar el usuario
+        System.out.println("""
+--------------------------------------------------------------------------------
+                     AUTENTICACIÓN REQUERIDA (LOGIN)
+--------------------------------------------------------------------------------""");
+        System.out.printf("Servidor activo: %s:%d%n", targetHost, targetPort);
+        System.out.printf("Ejecute el comando 'login <usuario> <password>' o presione Enter para usuario [%s]:%n", suggestedUser);
+        System.out.print(">> ");
+        String loginInput = "";
+        if (console != null) {
+            loginInput = console.readLine();
+        } else if (scanner.hasNextLine()) {
+            loginInput = scanner.nextLine();
+        }
+
+        String finalUser = suggestedUser;
+        String finalPass = "admin-jettra";
+
+        if (loginInput != null && loginInput.toUpperCase().startsWith("LOGIN ")) {
+            String loginResult = shell.executeCommand(loginInput);
+            System.out.println(loginResult);
+        } else {
+            if (loginInput != null && !loginInput.isBlank()) {
+                finalUser = loginInput.trim();
+            }
+            if (console != null) {
+                char[] pArr = console.readPassword(">> Password para '%s' [hidden]: ", finalUser);
+                if (pArr != null && pArr.length > 0) finalPass = new String(pArr);
+            } else {
+                System.out.printf(">> Password para '%s': ", finalUser);
+                if (scanner.hasNextLine()) {
+                    String p = scanner.nextLine();
+                    if (p != null && !p.isBlank()) finalPass = p.trim();
+                }
+            }
+            boolean ok = shell.connectAndLogin(targetHost, targetPort, finalUser, finalPass);
+            if (ok) {
+                System.out.printf("[AUTH OK] Autenticado exitosamente como '%s' (Rol: %s) en %s:%d%n", 
+                    shell.getCurrentUser(), shell.getCurrentRole(), targetHost, targetPort);
+            } else {
+                System.out.printf("[AUTH WARN] No se pudo autenticar en %s:%d. Inicie sesión en la consola con: login <usuario> <password>%n", targetHost, targetPort);
+            }
+        }
+
+        System.out.println("\nEscriba 'help' o '?' para ver los comandos disponibles, 'menu' para el menú interactivo, o 'exit' para salir.\n");
+
+        // 3. Ciclo interactivo de comandos
         while (true) {
             String prompt = String.format("jettra-shell [%s@%s:%d/%s]> ", 
-                shell.currentUser, shell.currentHost, shell.currentPort, shell.currentDatabase);
+                shell.getCurrentUser(), shell.getCurrentHost(), shell.getCurrentPort(), shell.getCurrentDatabase());
             System.out.print(prompt);
             String line;
             if (console != null) {

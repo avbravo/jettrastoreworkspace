@@ -12,6 +12,8 @@ import io.jettra.store.security.JettraSecurityManager;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,6 +39,10 @@ public final class JettraStoreServer {
     }
 
     public void start() throws IOException {
+        Path storageDir = java.nio.file.Path.of(config.getStoragePath());
+        if (!java.nio.file.Files.exists(storageDir)) {
+            java.nio.file.Files.createDirectories(storageDir);
+        }
         System.out.println("================================================================================");
         System.out.println("            JETTRASTORE DISTRIBUTED MULTI-MODEL DATABASE (JAVA 25+)            ");
         System.out.println("================================================================================");
