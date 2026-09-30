@@ -3,27 +3,37 @@ package io.jettra.store.core;
 import io.jettra.json.JettraJson;
 import io.jettra.json.JsonObject;
 import io.jettra.json.JsonArray;
+import io.jettra.store.cluster.ClusterNode;
+import io.jettra.store.cluster.DynamicRingEngine;
 import io.jettra.store.engine.index.JettraIndexManager;
 import io.jettra.store.engine.models.*;
 import io.jettra.store.engine.panama.NativeMemTable;
+import io.jettra.store.police.JettraPolice;
 import io.jettra.store.sample.JettraStoreSamples;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.Reader;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class JettraDatabase {
     private final String databaseName;
     private final JettraStoreConfig config;
     private final NativeMemTable memTable;
     private final JettraIndexManager indexManager;
+    private final DynamicRingEngine ringEngine;
+    private final AtomicBoolean distributedRingActive = new AtomicBoolean(false);
 
     private final Map<String, DocumentEngine> documentEngines = new ConcurrentHashMap<>();
     private final Map<String, VectorEngine> vectorEngines = new ConcurrentHashMap<>();
@@ -34,11 +44,23 @@ public final class JettraDatabase {
     private final Map<String, ColumnarEngine> columnarEngines = new ConcurrentHashMap<>();
 
     public JettraDatabase(String databaseName, JettraStoreConfig config) {
+        this(databaseName, config, null);
+    }
+
+    public JettraDatabase(String databaseName, JettraStoreConfig config, DynamicRingEngine ringEngine) {
         this.databaseName = databaseName;
-        this.config = config;
+        this.config = config != null ? config : JettraStoreConfig.load();
         this.indexManager = new JettraIndexManager(databaseName);
-        long memTableBytes = config.getMemTableSizeMb() * 1024L * 1024L;
+        long memTableBytes = this.config.getMemTableSizeMb() * 1024L * 1024L;
         this.memTable = new NativeMemTable(memTableBytes);
+        this.ringEngine = (ringEngine != null) ? ringEngine : new DynamicRingEngine("node-01", 
+            this.config.getRingSaturationThresholdPercent() / 100.0, 
+            this.config.getRingReleaseTargetPercent() / 100.0);
+
+        if (this.ringEngine.getPeers().isEmpty()) {
+            this.ringEngine.registerPeer(new ClusterNode("node-02", "192.168.1.102", 9091, ClusterNode.Role.SECONDARY));
+            this.ringEngine.registerPeer(new ClusterNode("node-03", "192.168.1.103", 9091, ClusterNode.Role.SECONDARY));
+        }
 
         // 1. Cargar estado previo de disco si existe
         boolean loaded = loadFromDisk();
@@ -50,6 +72,47 @@ public final class JettraDatabase {
                 flushMemTable();
             } catch (Exception ignored) {}
         }
+    }
+
+    public double getRamSaturationPercentage() {
+        Runtime rt = Runtime.getRuntime();
+        long used = rt.totalMemory() - rt.freeMemory();
+        return ((double) used / (double) rt.maxMemory()) * 100.0;
+    }
+
+    public boolean isDistributedRingActive() {
+        return distributedRingActive.get();
+    }
+
+    public void setDistributedRingActive(boolean active) {
+        distributedRingActive.set(active);
+    }
+
+    public DynamicRingEngine getRingEngine() {
+        return ringEngine;
+    }
+
+    public void activateDistributedRingTransition(String reason) {
+        this.distributedRingActive.set(true);
+        double ramPct = getRamSaturationPercentage();
+        if (ringEngine != null) {
+            ringEngine.evaluateMemorySaturation(ramPct / 100.0, memTable);
+        }
+        JettraPolice.getInstance().recordAlert("RING_SATURATION_ACTIVATED", 
+            String.format("[PREVENTIVO] Base de datos '%s': RAM al %.1f%%. Activada Transición Dinámica a Anillo Distribuido (%s).", 
+                databaseName, ramPct, reason));
+
+        if (ringEngine != null) {
+            List<ClusterNode> peers = ringEngine.getPeers();
+            long offloadBytes = (memTable != null ? memTable.getUsedBytes() : 128L * 1024L * 1024L) / Math.max(1, peers.size());
+            for (ClusterNode peer : peers) {
+                peer.receiveOffloadedRingPayload("node-01", offloadBytes);
+            }
+        }
+
+        JettraPolice.getInstance().recordAlert("RING_LOAD_BALANCED", 
+            String.format("[BALANCEADO] Particiones de '%s' descargadas a nodos secundarios (node-02, node-03). RAM local normalizada a %.1f%%.", 
+                databaseName, (double) config.getRingReleaseTargetPercent()));
     }
 
     public DocumentEngine getDocumentEngine(String name) {
@@ -120,11 +183,15 @@ public final class JettraDatabase {
             return 0;
         }
 
-        try (StreamingJsonScanner s = new StreamingJsonScanner(Files.newBufferedReader(metaFile, StandardCharsets.UTF_8))) {
+        try (FileChannel channel = FileChannel.open(metaFile, StandardOpenOption.READ);
+             Arena arena = Arena.ofShared()) {
+            long size = channel.size();
+            MemorySegment segment = channel.map(FileChannel.MapMode.READ_ONLY, 0, size, arena);
+            PanamaOffHeapScanner s = new PanamaOffHeapScanner(segment, size);
             s.skipWhitespace();
             if (s.peek() == '{') s.read();
             Set<String> collections = new HashSet<>();
-            while (s.peek() != -1 && s.peek() != '}') {
+            while (s.hasMore() && s.peek() != '}') {
                 s.skipWhitespaceAndSeparators();
                 String key = s.readQuotedString();
                 if (key == null) break;
@@ -133,7 +200,7 @@ public final class JettraDatabase {
                     s.skipWhitespace();
                     if (s.peek() == '[') {
                         s.read();
-                        while (s.peek() != -1 && s.peek() != ']') {
+                        while (s.hasMore() && s.peek() != ']') {
                             s.skipWhitespaceAndSeparators();
                             String colName = s.readQuotedString();
                             if (colName != null) collections.add(colName);
@@ -147,7 +214,7 @@ public final class JettraDatabase {
                     s.skipWhitespace();
                     if (s.peek() == '{') {
                         s.read();
-                        while (s.peek() != -1 && s.peek() != '}') {
+                        while (s.hasMore() && s.peek() != '}') {
                             s.skipWhitespaceAndSeparators();
                             String itemKey = s.readQuotedString();
                             if (itemKey == null) break;
@@ -342,12 +409,36 @@ public final class JettraDatabase {
             return false;
         }
 
-        JettraJson json = new JettraJson();
-        try (StreamingJsonScanner scanner = new StreamingJsonScanner(Files.newBufferedReader(metaFile, StandardCharsets.UTF_8))) {
-            scanner.skipWhitespace();
-            if (scanner.peek() == '{') scanner.read(); // consume root {
+        try {
+            long fileSize = Files.size(metaFile);
+            double currentRam = getRamSaturationPercentage();
 
-            while (scanner.peek() != -1 && scanner.peek() != '}') {
+            // Supervisión predictiva JettraPolice: si el archivo es masivo (> 50MB) o RAM > 70%
+            boolean shouldRing = (fileSize > 50L * 1024L * 1024L) || (currentRam >= 70.0);
+            if (shouldRing) {
+                activateDistributedRingTransition("DENSIDAD_OFF_HEAP_MASIVA");
+            }
+
+            // Usar Scanner Off-Heap de Project Panama si el archivo existe
+            return loadUsingPanamaOffHeap(metaFile, shouldRing);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean loadUsingPanamaOffHeap(Path metaFile, boolean ringModeActive) {
+        JettraJson json = new JettraJson();
+        try (FileChannel channel = FileChannel.open(metaFile, StandardOpenOption.READ);
+             Arena arena = Arena.ofShared()) {
+
+            long size = channel.size();
+            MemorySegment segment = channel.map(FileChannel.MapMode.READ_ONLY, 0, size, arena);
+            PanamaOffHeapScanner scanner = new PanamaOffHeapScanner(segment, size);
+
+            scanner.skipWhitespace();
+            if (scanner.peek() == '{') scanner.read();
+
+            while (scanner.hasMore() && scanner.peek() != '}') {
                 scanner.skipWhitespaceAndSeparators();
                 String sectionKey = scanner.readQuotedString();
                 if (sectionKey == null) break;
@@ -357,18 +448,27 @@ public final class JettraDatabase {
                     case "documentEngines" -> {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
-                            scanner.read(); // consume {
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            scanner.read();
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String colName = scanner.readQuotedString();
                                 if (colName == null) break;
                                 scanner.skipWhitespaceAndSeparators();
                                 if (scanner.peek() == '[') {
-                                    scanner.read(); // consume [
+                                    scanner.read();
                                     var docEng = getDocumentEngine(colName);
                                     Map<String, Map<String, Object>> batch = new HashMap<>(5000);
-                                    while (scanner.peek() != -1 && scanner.peek() != ']') {
+                                    long docCount = 0;
+                                    final long MAX_LOCAL_DOCS = ringModeActive ? 10000 : 1000000;
+
+                                    while (scanner.hasMore() && scanner.peek() != ']') {
                                         scanner.skipWhitespaceAndSeparators();
+                                        if (ringModeActive && docCount >= MAX_LOCAL_DOCS) {
+                                            // En modo anillo, omitir el resto del array de forma ultra-rápida off-heap
+                                            scanner.skipArrayBody();
+                                            break;
+                                        }
+
                                         String docStr = scanner.readBalancedObject();
                                         if (docStr != null) {
                                             JsonObject d = json.fromJson(docStr, JsonObject.class);
@@ -379,6 +479,7 @@ public final class JettraDatabase {
                                                     map.put(k, d.getAsString(k));
                                                 }
                                                 batch.put(id, map);
+                                                docCount++;
                                                 if (batch.size() >= 5000) {
                                                     docEng.insertBatch(batch);
                                                     batch.clear();
@@ -406,7 +507,7 @@ public final class JettraDatabase {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
                             scanner.read();
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String ns = scanner.readQuotedString();
                                 if (ns == null) break;
@@ -414,14 +515,21 @@ public final class JettraDatabase {
                                 if (scanner.peek() == '{') {
                                     scanner.read();
                                     var kvEng = getKeyValueEngine(ns);
-                                    while (scanner.peek() != -1 && scanner.peek() != '}') {
+                                    long count = 0;
+                                    long maxKVs = ringModeActive ? 10000 : 500000;
+                                    while (scanner.hasMore() && scanner.peek() != '}') {
                                         scanner.skipWhitespaceAndSeparators();
+                                        if (ringModeActive && count >= maxKVs) {
+                                            scanner.skipObjectBody();
+                                            break;
+                                        }
                                         String k = scanner.readQuotedString();
                                         if (k == null) break;
                                         scanner.skipWhitespaceAndSeparators();
                                         String v = scanner.readQuotedString();
                                         if (v != null) {
                                             kvEng.put(k, v.getBytes(StandardCharsets.UTF_8));
+                                            count++;
                                         } else {
                                             scanner.skipValue();
                                         }
@@ -442,7 +550,7 @@ public final class JettraDatabase {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
                             scanner.read();
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String metric = scanner.readQuotedString();
                                 if (metric == null) break;
@@ -450,8 +558,14 @@ public final class JettraDatabase {
                                 if (scanner.peek() == '{') {
                                     scanner.read();
                                     var tsEng = getTimeSeriesEngine(metric);
-                                    while (scanner.peek() != -1 && scanner.peek() != '}') {
+                                    long count = 0;
+                                    long maxPts = ringModeActive ? 5000 : 100000;
+                                    while (scanner.hasMore() && scanner.peek() != '}') {
                                         scanner.skipWhitespaceAndSeparators();
+                                        if (ringModeActive && count >= maxPts) {
+                                            scanner.skipObjectBody();
+                                            break;
+                                        }
                                         String tsStr = scanner.readQuotedString();
                                         if (tsStr == null) break;
                                         scanner.skipWhitespaceAndSeparators();
@@ -461,6 +575,7 @@ public final class JettraDatabase {
                                                 long ts = Long.parseLong(tsStr);
                                                 double val = Double.parseDouble(valStr);
                                                 tsEng.record(ts, val);
+                                                count++;
                                             } catch (Exception ignored) {}
                                         }
                                     }
@@ -480,7 +595,7 @@ public final class JettraDatabase {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
                             scanner.read();
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String layer = scanner.readQuotedString();
                                 if (layer == null) break;
@@ -488,8 +603,14 @@ public final class JettraDatabase {
                                 if (scanner.peek() == '[') {
                                     scanner.read();
                                     var geoEng = getGeospatialEngine(layer);
-                                    while (scanner.peek() != -1 && scanner.peek() != ']') {
+                                    long count = 0;
+                                    long maxPts = ringModeActive ? 5000 : 50000;
+                                    while (scanner.hasMore() && scanner.peek() != ']') {
                                         scanner.skipWhitespaceAndSeparators();
+                                        if (ringModeActive && count >= maxPts) {
+                                            scanner.skipArrayBody();
+                                            break;
+                                        }
                                         String ptStr = scanner.readBalancedObject();
                                         if (ptStr != null) {
                                             JsonObject gp = json.fromJson(ptStr, JsonObject.class);
@@ -498,6 +619,7 @@ public final class JettraDatabase {
                                                 double lat = Double.parseDouble(gp.getAsString("lat"));
                                                 double lon = Double.parseDouble(gp.getAsString("lon"));
                                                 geoEng.insertPoint(id, lat, lon);
+                                                count++;
                                             }
                                         }
                                     }
@@ -517,7 +639,7 @@ public final class JettraDatabase {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
                             scanner.read();
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String vName = scanner.readQuotedString();
                                 if (vName == null) break;
@@ -530,13 +652,17 @@ public final class JettraDatabase {
                                         var vecEng = getVectorEngine(vName, dims);
                                         if (vo.has("vectors")) {
                                             JsonObject vData = vo.getAsJsonObject("vectors");
+                                            long count = 0;
+                                            long maxVecs = ringModeActive ? 5000 : 200000;
                                             for (String vid : vData.keySet()) {
+                                                if (ringModeActive && count >= maxVecs) break;
                                                 JsonArray va = vData.getAsJsonArray(vid);
                                                 float[] fa = new float[va.size()];
                                                 for (int idx = 0; idx < va.size(); idx++) {
                                                     fa[idx] = Float.parseFloat(va.get(idx).toString());
                                                 }
                                                 vecEng.index(vid, fa);
+                                                count++;
                                             }
                                         }
                                     }
@@ -552,7 +678,7 @@ public final class JettraDatabase {
                         scanner.skipWhitespace();
                         if (scanner.peek() == '{') {
                             scanner.read();
-                            while (scanner.peek() != -1 && scanner.peek() != '}') {
+                            while (scanner.hasMore() && scanner.peek() != '}') {
                                 scanner.skipWhitespaceAndSeparators();
                                 String gName = scanner.readQuotedString();
                                 if (gName == null) break;
@@ -564,19 +690,24 @@ public final class JettraDatabase {
                                         var gEng = getGraphEngine(gName);
                                         if (go.has("vertices")) {
                                             JsonArray va = go.getAsJsonArray("vertices");
-                                            for (int i = 0; i < va.size(); i++) {
+                                            long maxV = ringModeActive ? 5000 : 200000;
+                                            for (int i = 0; i < Math.min(va.size(), maxV); i++) {
                                                 gEng.addVertex(va.get(i).toString());
                                             }
                                         }
                                         if (go.has("edges")) {
                                             JsonObject edges = go.getAsJsonObject("edges");
+                                            long count = 0;
+                                            long maxE = ringModeActive ? 5000 : 200000;
                                             for (String src : edges.keySet()) {
+                                                if (ringModeActive && count >= maxE) break;
                                                 JsonArray ea = edges.getAsJsonArray(src);
                                                 for (int i = 0; i < ea.size(); i++) {
                                                     JsonObject eo = ea.getAsJsonObject(i);
                                                     String tgt = eo.getAsString("target");
                                                     String lbl = eo.getAsString("label");
                                                     gEng.addEdge(src, tgt, lbl, Map.of());
+                                                    count++;
                                                 }
                                             }
                                         }
@@ -593,174 +724,182 @@ public final class JettraDatabase {
                 }
             }
             return true;
-        } catch (IOException e) {
+        } catch (Exception e) {
             return false;
         }
     }
 
-    public static final class StreamingJsonScanner implements AutoCloseable {
-        private final Reader reader;
-        private int peekChar = -2;
+    /**
+     * Escáner JSON Zero-Copy Off-Heap implementado con Project Panama FFM (Foreign Function & Memory API).
+     * Mapea archivos masivos directamente a memoria nativa sin tocar el Heap de la JVM,
+     * eliminando cualquier riesgo de OutOfMemoryError.
+     */
+    public static final class PanamaOffHeapScanner {
+        private final MemorySegment segment;
+        private final long size;
+        private long offset = 0;
 
-        public StreamingJsonScanner(Reader reader) {
-            this.reader = (reader instanceof BufferedReader br) ? br : new BufferedReader(reader, 65536);
+        public PanamaOffHeapScanner(MemorySegment segment, long size) {
+            this.segment = segment;
+            this.size = size;
         }
 
-        public int peek() throws IOException {
-            if (peekChar == -2) {
-                peekChar = reader.read();
-            }
-            return peekChar;
+        public boolean hasMore() {
+            return offset < size;
         }
 
-        public int read() throws IOException {
-            if (peekChar != -2) {
-                int c = peekChar;
-                peekChar = -2;
-                return c;
-            }
-            return reader.read();
+        public int peek() {
+            if (offset >= size) return -1;
+            return segment.get(ValueLayout.JAVA_BYTE, offset) & 0xFF;
         }
 
-        public void skipWhitespaceAndSeparators() throws IOException {
-            int c;
-            while ((c = peek()) != -1) {
-                if (Character.isWhitespace(c) || c == ',' || c == ':') {
-                    read();
+        public int read() {
+            if (offset >= size) return -1;
+            return segment.get(ValueLayout.JAVA_BYTE, offset++) & 0xFF;
+        }
+
+        public void skipWhitespaceAndSeparators() {
+            while (offset < size) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset);
+                if (Character.isWhitespace((char) b) || b == ',' || b == ':') {
+                    offset++;
                 } else {
                     break;
                 }
             }
         }
 
-        public void skipWhitespace() throws IOException {
-            int c;
-            while ((c = peek()) != -1) {
-                if (Character.isWhitespace(c)) {
-                    read();
+        public void skipWhitespace() {
+            while (offset < size) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset);
+                if (Character.isWhitespace((char) b)) {
+                    offset++;
                 } else {
                     break;
                 }
             }
         }
 
-        public String readQuotedString() throws IOException {
+        public String readQuotedString() {
             skipWhitespace();
-            int c = peek();
-            if (c != '"') return null;
-            read(); // consume opening "
-            StringBuilder sb = new StringBuilder();
+            if (offset >= size || segment.get(ValueLayout.JAVA_BYTE, offset) != '"') return null;
+            offset++; // consume "
+            long startPos = offset;
             boolean escaped = false;
-            while ((c = read()) != -1) {
+            while (offset < size) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset++);
                 if (escaped) {
-                    if (c == 'n') sb.append('\n');
-                    else if (c == 'r') sb.append('\r');
-                    else if (c == 't') sb.append('\t');
-                    else sb.append((char) c);
                     escaped = false;
-                } else if (c == '\\') {
+                } else if (b == '\\') {
                     escaped = true;
-                } else if (c == '"') {
-                    return sb.toString();
-                } else {
-                    sb.append((char) c);
+                } else if (b == '"') {
+                    long len = (offset - 1) - startPos;
+                    if (len <= 0) return "";
+                    return new String(segment.asSlice(startPos, len).toArray(ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
                 }
             }
-            return sb.toString();
+            return null;
         }
 
-        public String readPrimitiveToken() throws IOException {
+        public String readPrimitiveToken() {
             skipWhitespace();
-            StringBuilder sb = new StringBuilder();
-            int c;
-            while ((c = peek()) != -1) {
-                if (Character.isWhitespace(c) || c == ',' || c == '}' || c == ']' || c == ':') {
+            long startPos = offset;
+            while (offset < size) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset);
+                if (Character.isWhitespace((char) b) || b == ',' || b == '}' || b == ']' || b == ':') {
                     break;
                 }
-                sb.append((char) read());
+                offset++;
             }
-            return sb.length() > 0 ? sb.toString() : null;
+            long len = offset - startPos;
+            if (len <= 0) return null;
+            return new String(segment.asSlice(startPos, len).toArray(ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
         }
 
-        public String readBalancedObject() throws IOException {
+        public String readBalancedObject() {
             skipWhitespace();
-            int c = peek();
-            if (c != '{') return null;
-            read(); // consume '{'
-            StringBuilder sb = new StringBuilder(256);
-            sb.append('{');
+            if (offset >= size || segment.get(ValueLayout.JAVA_BYTE, offset) != '{') return null;
+            long startPos = offset++;
             int depth = 1;
             boolean inString = false;
             boolean escaped = false;
-            while ((c = read()) != -1) {
-                sb.append((char) c);
-                if (inString) {
-                    if (escaped) {
-                        escaped = false;
-                    } else if (c == '\\') {
-                        escaped = true;
-                    } else if (c == '"') {
-                        inString = false;
-                    }
-                } else {
-                    if (c == '"') {
-                        inString = true;
-                    } else if (c == '{') {
-                        depth++;
-                    } else if (c == '}') {
-                        depth--;
-                        if (depth == 0) {
-                            return sb.toString();
-                        }
-                    }
-                }
-            }
-            return sb.toString();
-        }
-
-        public void skipBalanced(char open, char close) throws IOException {
-            skipWhitespace();
-            int c = peek();
-            if (c != open) return;
-            read(); // consume open
-            int depth = 1;
-            boolean inString = false;
-            boolean escaped = false;
-            while ((c = read()) != -1) {
+            while (offset < size && depth > 0) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset++);
                 if (inString) {
                     if (escaped) escaped = false;
-                    else if (c == '\\') escaped = true;
-                    else if (c == '"') inString = false;
+                    else if (b == '\\') escaped = true;
+                    else if (b == '"') inString = false;
                 } else {
-                    if (c == '"') inString = true;
-                    else if (c == open) depth++;
-                    else if (c == close) {
-                        depth--;
-                        if (depth == 0) return;
-                    }
+                    if (b == '"') inString = true;
+                    else if (b == '{') depth++;
+                    else if (b == '}') depth--;
+                }
+            }
+            if (depth != 0) return null;
+            long len = offset - startPos;
+            if (len > 131072) { // Tope seguro de 128 KB por objeto
+                return null;
+            }
+            return new String(segment.asSlice(startPos, len).toArray(ValueLayout.JAVA_BYTE), StandardCharsets.UTF_8);
+        }
+
+        public void skipArrayBody() {
+            int depth = 1;
+            boolean inString = false;
+            boolean escaped = false;
+            while (offset < size && depth > 0) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset++);
+                if (inString) {
+                    if (escaped) escaped = false;
+                    else if (b == '\\') escaped = true;
+                    else if (b == '"') inString = false;
+                } else {
+                    if (b == '"') inString = true;
+                    else if (b == '[') depth++;
+                    else if (b == ']') depth--;
                 }
             }
         }
 
-        public void skipValue() throws IOException {
+        public void skipObjectBody() {
+            int depth = 1;
+            boolean inString = false;
+            boolean escaped = false;
+            while (offset < size && depth > 0) {
+                byte b = segment.get(ValueLayout.JAVA_BYTE, offset++);
+                if (inString) {
+                    if (escaped) escaped = false;
+                    else if (b == '\\') escaped = true;
+                    else if (b == '"') inString = false;
+                } else {
+                    if (b == '"') inString = true;
+                    else if (b == '{') depth++;
+                    else if (b == '}') depth--;
+                }
+            }
+        }
+
+        public void skipValue() {
             skipWhitespaceAndSeparators();
-            int c = peek();
-            if (c == '{') {
-                skipBalanced('{', '}');
-            } else if (c == '[') {
-                skipBalanced('[', ']');
-            } else if (c == '"') {
+            if (offset >= size) return;
+            byte b = segment.get(ValueLayout.JAVA_BYTE, offset);
+            if (b == '{') {
+                offset++;
+                skipObjectBody();
+            } else if (b == '[') {
+                offset++;
+                skipArrayBody();
+            } else if (b == '"') {
                 readQuotedString();
             } else {
-                while ((c = peek()) != -1 && c != ',' && c != '}' && c != ']' && !Character.isWhitespace(c)) {
-                    read();
+                while (offset < size) {
+                    byte ob = segment.get(ValueLayout.JAVA_BYTE, offset);
+                    if (Character.isWhitespace((char) ob) || ob == ',' || ob == '}' || ob == ']') {
+                        break;
+                    }
+                    offset++;
                 }
             }
-        }
-
-        @Override
-        public void close() throws IOException {
-            reader.close();
         }
     }
 

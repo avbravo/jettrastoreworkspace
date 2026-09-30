@@ -165,7 +165,7 @@ public final class JettraClient implements AutoCloseable {
     }
 
     public JettraDatabase getDatabase(String name) {
-        return databases.computeIfAbsent(name, k -> new JettraDatabase(k, JettraStoreConfig.load()));
+        return databases.computeIfAbsent(name, k -> new JettraDatabase(k, JettraStoreConfig.load(), ringEngine));
     }
 
     public io.jettra.store.engine.query.JettraQLProcessor.JQLResult jql(String databaseName, String query) {

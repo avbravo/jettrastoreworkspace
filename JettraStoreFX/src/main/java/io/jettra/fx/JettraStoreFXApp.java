@@ -508,9 +508,18 @@ public class JettraStoreFXApp extends Application {
             if (newVal != null && !newVal.equals(currentDatabase)) {
                 this.currentDatabase = newVal;
                 if (client != null && isConnected) {
-                    client.getDatabase(currentDatabase);
+                    var db = client.getDatabase(currentDatabase);
+                    if (db.isDistributedRingActive() || client.getRingEngine().isRingActive()) {
+                        currentDbBadge.setText("BD: " + currentDatabase + " [ANILLO]");
+                        currentDbBadge.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: black; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+                        logStatus("[CLUSTER] Base de datos '" + currentDatabase + "': Transición Dinámica a Motor de Anillo Distribuido ACTIVA.");
+                    } else {
+                        currentDbBadge.setText("BD: " + currentDatabase);
+                        currentDbBadge.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+                    }
+                } else {
+                    currentDbBadge.setText("BD: " + currentDatabase);
                 }
-                currentDbBadge.setText("BD: " + currentDatabase);
                 loadBucketsForCurrentDatabase();
             }
         });
@@ -694,9 +703,11 @@ public class JettraStoreFXApp extends Application {
 
             if (db.getDocumentEngineNames().contains(bucketName)) {
                 DocumentEngine engine = db.getDocumentEngine(bucketName);
-                List<Map<String, Object>> docs = engine.findAll();
                 count = engine.count();
-                for (Map<String, Object> doc : docs) {
+                int previewLimit = 500;
+                int added = 0;
+                for (Map<String, Object> doc : engine) {
+                    if (added++ >= previewLimit) break;
                     String id = String.valueOf(doc.getOrDefault("_id", ""));
                     String refs = doc.keySet().stream().filter(k -> k.startsWith("_ref")).map(k -> k + "->" + doc.get(k)).reduce("", (a, b) -> a + " " + b);
                     items.add(new RecordItem(id, doc.toString(), refs.isBlank() ? "(Sin Ref)" : refs.trim()));

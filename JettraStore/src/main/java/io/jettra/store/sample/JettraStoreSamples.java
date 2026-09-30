@@ -158,7 +158,7 @@ public final class JettraStoreSamples {
                 var docEngine = db.getDocumentEngine("clientes");
                 int chunkSize = Math.min(cliTotal, 5_000);
                 for (int base = 0; base < cliTotal; base += chunkSize) {
-                    Map<String, Map<String, Object>> batch = new HashMap<>(chunkSize);
+                    Map<String, Map<String, Object>> batch = io.jettra.collections.map.UnifiedMap.newMap(chunkSize);
                     int end = Math.min(base + chunkSize, cliTotal);
                     for (int i = base; i < end; i++) {
                         String id = "cli_" + i;
@@ -179,7 +179,7 @@ public final class JettraStoreSamples {
                 var docEngine = db.getDocumentEngine("facturas");
                 int chunkSize = Math.min(facTotal, 5_000);
                 for (int base = 0; base < facTotal; base += chunkSize) {
-                    Map<String, Map<String, Object>> batch = new HashMap<>(chunkSize);
+                    Map<String, Map<String, Object>> batch = io.jettra.collections.map.UnifiedMap.newMap(chunkSize);
                     int end = Math.min(base + chunkSize, facTotal);
                     for (int i = base; i < end; i++) {
                         String id = "fac_" + i;
@@ -204,7 +204,7 @@ public final class JettraStoreSamples {
                 var docEngine = db.getDocumentEngine("detalles_factura");
                 int chunkSize = Math.min(detTotal, 5_000);
                 for (int base = 0; base < detTotal; base += chunkSize) {
-                    Map<String, Map<String, Object>> batch = new HashMap<>(chunkSize);
+                    Map<String, Map<String, Object>> batch = io.jettra.collections.map.UnifiedMap.newMap(chunkSize);
                     int end = Math.min(base + chunkSize, detTotal);
                     for (int i = base; i < end; i++) {
                         String id = "det_" + i;
@@ -304,6 +304,7 @@ public final class JettraStoreSamples {
             });
         }
 
+        System.gc();
         try {
             db.getIndexManager().createIndex("facturas", "idx_fac_cliente", "_ref_cliente", "HASH", false, db.getDocumentEngine("facturas"));
             db.getIndexManager().createIndex("clientes", "idx_cli_rfc", "rfc_tax_id", "BTREE", false, db.getDocumentEngine("clientes"));
