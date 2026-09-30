@@ -30,23 +30,30 @@ public final class JettraStoreConfig {
             props.getProperty("jettra.storage.path", "/jettra/data"));
         this.rawConfiguredPath = configuredPath;
         
+        String resolvedPath = configuredPath;
+        if (resolvedPath.startsWith("~" + java.io.File.separator) || resolvedPath.startsWith("~/")) {
+            resolvedPath = System.getProperty("user.home") + resolvedPath.substring(1);
+        } else if (resolvedPath.equals("~")) {
+            resolvedPath = System.getProperty("user.home");
+        }
+
         // Crear directorio de almacenamiento si no existe
-        Path path = Path.of(configuredPath);
-        String effectivePath = configuredPath;
+        Path path = Path.of(resolvedPath);
+        String effectivePath = resolvedPath;
         try {
             if (!Files.exists(path)) {
                 Files.createDirectories(path);
             }
         } catch (Exception ex) {
             System.err.printf("[JettraStoreConfig] Advertencia: No se pudo crear directorio '%s': %s%n", 
-                configuredPath, ex.getMessage());
+                resolvedPath, ex.getMessage());
         }
 
         if (Files.exists(path) && Files.isWritable(path)) {
-            effectivePath = configuredPath;
+            effectivePath = resolvedPath;
         } else {
             System.err.printf("[JettraStoreConfig] Advertencia: Directorio '%s' no accesible para escritura. Conmutando a fallback local './data/jettra'.%n", 
-                configuredPath);
+                resolvedPath);
             effectivePath = "./data/jettra";
             try {
                 Files.createDirectories(Path.of(effectivePath));

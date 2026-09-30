@@ -208,9 +208,9 @@ Seleccione una conexión para iniciar:
             return handleShowDatabases();
         } else if (upper.equals("SHOW SAMPLES") || upper.equals("SHOW SAMPLE DBS") || upper.equals("SHOW SAMPLE DATABASES") || upper.equals("SHOW DBS SAMPLES")) {
             return handleShowSampleDatabases();
-        } else if (upper.startsWith("CREATE DATABASE ")) {
+        } else if (upper.startsWith("CREATE DATABASE ") || upper.startsWith("CREATE DB ")) {
             return handleCreateDatabase(trimmed);
-        } else if (upper.startsWith("DROP DATABASE ")) {
+        } else if (upper.startsWith("DROP DATABASE ") || upper.startsWith("DROP DB ")) {
             return handleDropDatabase(trimmed);
         } else if (upper.startsWith("USE ")) {
             return handleUseDatabase(trimmed);
@@ -596,10 +596,15 @@ Seleccione una conexión para iniciar:
         sb.append("| Base de Datos                      | Tipo     | Colecciones | Estado         |\n");
         sb.append("+------------------------------------+----------+-------------+----------------+\n");
         for (String db : dbs) {
-            JettraDatabase jettraDb = client.getDatabase(db);
-            int colCount = jettraDb.getAllCollectionNames().size();
+            int colCount;
+            boolean loaded = client.isDatabaseLoaded(db);
+            if (loaded) {
+                colCount = client.getDatabase(db).getAllCollectionNames().size();
+            } else {
+                colCount = client.getLightweightCollectionCount(db);
+            }
             String tipo = db.startsWith("sample_") ? "SAMPLE" : (db.equals("default_db") ? "SYSTEM" : "USER");
-            String status = db.equals(currentDatabase) ? "* ACTIVA" : "DISPONIBLE";
+            String status = db.equals(currentDatabase) ? "* ACTIVA" : (loaded ? "EN MEMORIA" : "DISPONIBLE");
             sb.append(String.format("| %-34s | %-8s | %-11d | %-14s |\n", db, tipo, colCount, status));
         }
         sb.append("+------------------------------------+----------+-------------+----------------+\n");
@@ -646,16 +651,16 @@ Seleccione una conexión para iniciar:
     }
 
     private String handleCreateDatabase(String command) {
-        String dbName = cleanQuotes(command.substring("CREATE DATABASE ".length()));
-        if (dbName.isBlank()) return "[ERROR] Nombre de base de datos requerido.";
+        String dbName = cleanQuotes(command.replaceAll("(?i)^(CREATE\\s+DATABASE|CREATE\\s+DB)\\s+", "").trim());
+        if (dbName.isBlank()) return "[ERROR] Nombre de base de datos requerido. Uso: CREATE DATABASE <nombre> o CREATE DB <nombre>";
         this.client.getDatabase(dbName);
         this.currentDatabase = dbName;
         return "[SUCCESS] Base de datos '" + dbName + "' creada exitosamente y seleccionada como activa.";
     }
 
     private String handleDropDatabase(String command) {
-        String dbName = cleanQuotes(command.substring("DROP DATABASE ".length()));
-        if (dbName.isBlank()) return "[ERROR] Nombre de base de datos requerido.";
+        String dbName = cleanQuotes(command.replaceAll("(?i)^(DROP\\s+DATABASE|DROP\\s+DB)\\s+", "").trim());
+        if (dbName.isBlank()) return "[ERROR] Nombre de base de datos requerido. Uso: DROP DATABASE <nombre> o DROP DB <nombre>";
         boolean dropped = client.dropDatabase(dbName);
         if (dbName.equalsIgnoreCase(currentDatabase)) {
             this.currentDatabase = "default_db";
@@ -1414,8 +1419,10 @@ Seleccione una conexión para iniciar:
         enterprise.getGraphEngine("catalog_graph").addEdge("prod_01", "cat_hardware", "BELONGS_TO", Map.of("weight", 1.0));
         enterprise.getTimeSeriesEngine("telemetry").record(System.currentTimeMillis(), 42.5);
         enterprise.getKeyValueEngine("inventory_cache").put("laptop_mac_m3", "MacBook Pro M3 Max 64GB".getBytes(StandardCharsets.UTF_8));
-        enterprise.getIndexManager().createIndex("employees", "idx_emp_name", "name", "BTREE", false, enterprise.getDocumentEngine("employees"));
-        enterprise.getIndexManager().createIndex("products", "idx_prod_cat", "category", "HASH", false, enterprise.getDocumentEngine("products"));
+        try {
+            enterprise.getIndexManager().createIndex("employees", "idx_emp_name", "name", "BTREE", false, enterprise.getDocumentEngine("employees"));
+            enterprise.getIndexManager().createIndex("products", "idx_prod_cat", "category", "HASH", false, enterprise.getDocumentEngine("products"));
+        } catch (Exception ignored) {}
 
         // 2. sample_ecommerce_db
         JettraDatabase ecommerce = client.getDatabase("sample_ecommerce_db");
@@ -1429,7 +1436,9 @@ Seleccione una conexión para iniciar:
         ));
         ecommerce.getColumnarEngine("order_analytics").appendRow(Map.of("revenue", 899.50));
         ecommerce.getKeyValueEngine("shopping_carts").put("cart_cust_101", "item_quantum_gpu:2".getBytes(StandardCharsets.UTF_8));
-        ecommerce.getIndexManager().createIndex("customers", "idx_cust_tier", "tier", "HASH", false, ecommerce.getDocumentEngine("customers"));
+        try {
+            ecommerce.getIndexManager().createIndex("customers", "idx_cust_tier", "tier", "HASH", false, ecommerce.getDocumentEngine("customers"));
+        } catch (Exception ignored) {}
 
         // 3. sample_ai_graph_db
         JettraDatabase aiGraph = client.getDatabase("sample_ai_graph_db");
@@ -1488,6 +1497,7 @@ Seleccione una conexión para iniciar:
 
     public String installFacturaSampleDatabase() {
         long start = System.currentTimeMillis();
+        client.dropDatabase("example_factura_db");
         JettraDatabase db = client.getDatabase("example_factura_db");
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {

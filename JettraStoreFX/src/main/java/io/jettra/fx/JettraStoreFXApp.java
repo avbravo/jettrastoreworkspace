@@ -643,14 +643,18 @@ public class JettraStoreFXApp extends Application {
         if (client == null || !isConnected) return;
         try {
             List<String> dbs = client.listDatabases();
-            if (dbs.isEmpty()) {
-                dbs = List.of("sample_enterprise_db", "sample_ecommerce_db", "example_factura_db");
-            }
             dbListView.setItems(FXCollections.observableArrayList(dbs));
-            if (!dbs.isEmpty() && (currentDatabase == null || !dbs.contains(currentDatabase))) {
-                currentDatabase = dbs.getFirst();
+            if (!dbs.isEmpty()) {
+                if (currentDatabase == null || !dbs.contains(currentDatabase)) {
+                    currentDatabase = dbs.getFirst();
+                }
+                dbListView.getSelectionModel().select(currentDatabase);
+            } else {
+                currentDatabase = null;
+                bucketListView.setItems(FXCollections.observableArrayList());
+                recordsTable.setItems(FXCollections.observableArrayList());
+                recordCountBadge.setText("Registros: 0");
             }
-            dbListView.getSelectionModel().select(currentDatabase);
             loadBucketsForCurrentDatabase();
         } catch (Exception e) {
             logStatus("Error al listar bases de datos: " + e.getMessage());
@@ -658,18 +662,20 @@ public class JettraStoreFXApp extends Application {
     }
 
     private void loadBucketsForCurrentDatabase() {
-        if (client == null || !isConnected || currentDatabase == null) return;
+        if (client == null || !isConnected || currentDatabase == null) {
+            bucketListView.setItems(FXCollections.observableArrayList());
+            recordsTable.setItems(FXCollections.observableArrayList());
+            recordCountBadge.setText("Registros: 0");
+            return;
+        }
         try {
             JettraDatabase db = client.getDatabase(currentDatabase);
             Set<String> allCols = db.getAllCollectionNames();
             List<String> list = new ArrayList<>(allCols);
-            if (list.isEmpty()) {
-                // Buckets virtuales o de muestra
-                list.addAll(List.of("products", "customers", "orders", "invoices"));
-            }
             bucketListView.setItems(FXCollections.observableArrayList(list));
             if (!list.isEmpty()) {
                 bucketListView.getSelectionModel().select(0);
+                loadRecordsForBucket(list.getFirst());
             } else {
                 recordsTable.setItems(FXCollections.observableArrayList());
                 recordCountBadge.setText("Registros: 0");
@@ -683,24 +689,75 @@ public class JettraStoreFXApp extends Application {
         if (client == null || !isConnected || currentDatabase == null || bucketName == null) return;
         try {
             JettraDatabase db = client.getDatabase(currentDatabase);
-            DocumentEngine engine = db.getDocumentEngine(bucketName);
-            List<Map<String, Object>> docs = engine.findAll();
-            long count = engine.count();
-            recordCountBadge.setText("Registros: " + count);
-
             ObservableList<RecordItem> items = FXCollections.observableArrayList();
-            for (Map<String, Object> doc : docs) {
-                String id = String.valueOf(doc.getOrDefault("_id", ""));
-                String refs = doc.keySet().stream().filter(k -> k.startsWith("_ref")).map(k -> k + "->" + doc.get(k)).reduce("", (a, b) -> a + " " + b);
-                items.add(new RecordItem(id, doc.toString(), refs.isBlank() ? "(Sin Ref)" : refs.trim()));
+            long count = 0;
+
+            if (db.getDocumentEngineNames().contains(bucketName)) {
+                DocumentEngine engine = db.getDocumentEngine(bucketName);
+                List<Map<String, Object>> docs = engine.findAll();
+                count = engine.count();
+                for (Map<String, Object> doc : docs) {
+                    String id = String.valueOf(doc.getOrDefault("_id", ""));
+                    String refs = doc.keySet().stream().filter(k -> k.startsWith("_ref")).map(k -> k + "->" + doc.get(k)).reduce("", (a, b) -> a + " " + b);
+                    items.add(new RecordItem(id, doc.toString(), refs.isBlank() ? "(Sin Ref)" : refs.trim()));
+                }
+            } else if (db.getVectorEngineNames().contains(bucketName)) {
+                var vecEngine = db.getVectorEngine(bucketName, 3);
+                var vecs = vecEngine.getAllVectors();
+                count = vecs.size();
+                for (var entry : vecs.entrySet()) {
+                    items.add(new RecordItem(entry.getKey(), Arrays.toString(entry.getValue()), "Vector [" + vecEngine.getDimensions() + "D]"));
+                }
+            } else if (db.getGraphEngineNames().contains(bucketName)) {
+                var graphEngine = db.getGraphEngine(bucketName);
+                var edgesMap = graphEngine.getAllEdges();
+                count = graphEngine.size();
+                for (String v : graphEngine.getVertices()) {
+                    var out = edgesMap.getOrDefault(v, List.of());
+                    String edgeDesc = out.isEmpty() ? "(Vértice aislado)" : out.stream().map(e -> e.label() + " -> " + e.targetVertex()).reduce("", (a, b) -> a + "; " + b);
+                    items.add(new RecordItem(v, edgeDesc.startsWith("; ") ? edgeDesc.substring(2) : edgeDesc, "Graph (" + out.size() + " aristas)"));
+                }
+            } else if (db.getKeyValueEngineNames().contains(bucketName)) {
+                var kvEngine = db.getKeyValueEngine(bucketName);
+                var map = kvEngine.getAll();
+                count = kvEngine.size();
+                for (var entry : map.entrySet()) {
+                    String valStr = new String(entry.getValue(), java.nio.charset.StandardCharsets.UTF_8);
+                    items.add(new RecordItem(entry.getKey(), valStr, "KeyValue"));
+                }
+            } else if (db.getTimeSeriesEngineNames().contains(bucketName)) {
+                var tsEngine = db.getTimeSeriesEngine(bucketName);
+                var series = tsEngine.getAll();
+                count = tsEngine.size();
+                for (var entry : series.entrySet()) {
+                    String timeStr = java.time.Instant.ofEpochMilli(entry.getKey()).toString();
+                    items.add(new RecordItem(String.valueOf(entry.getKey()), "Valor: " + entry.getValue() + " (" + timeStr + ")", "TimeSeries"));
+                }
+            } else if (db.getGeospatialEngineNames().contains(bucketName)) {
+                var geoEngine = db.getGeospatialEngine(bucketName);
+                var pts = geoEngine.getAllPoints();
+                count = geoEngine.size();
+                for (var entry : pts.entrySet()) {
+                    items.add(new RecordItem(entry.getKey(), "Lat: " + entry.getValue().latitude() + ", Lon: " + entry.getValue().longitude(), "Geospatial"));
+                }
+            } else if (db.getColumnarEngineNames().contains(bucketName)) {
+                var colEngine = db.getColumnarEngine(bucketName);
+                count = colEngine.size();
+                var numCols = colEngine.getNumericColumns();
+                var txtCols = colEngine.getTextColumns();
+                for (int i = 0; i < count; i++) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (var e : numCols.entrySet()) {
+                        if (i < e.getValue().size()) row.put(e.getKey(), e.getValue().get(i));
+                    }
+                    for (var e : txtCols.entrySet()) {
+                        if (i < e.getValue().size()) row.put(e.getKey(), e.getValue().get(i));
+                    }
+                    items.add(new RecordItem("row_" + (i + 1), row.toString(), "Columnar"));
+                }
             }
 
-            if (items.isEmpty()) {
-                // Semillas de visualización en caso de que esté recién creado
-                items.add(new RecordItem("item_001", "{name: 'Producto Primario', price: 99.99}", "document::cat#c1"));
-                items.add(new RecordItem("item_002", "{name: 'Componente Secundario', price: 149.50}", "vector::emb#v2"));
-            }
-
+            recordCountBadge.setText("Registros: " + count);
             recordsTable.setItems(items);
             if (!items.isEmpty()) {
                 recordsTable.getSelectionModel().select(0);
@@ -835,7 +892,28 @@ public class JettraStoreFXApp extends Application {
                 Map<String, Object> map = new HashMap<>();
                 map.put("_id", entry.getKey());
                 map.put("raw_data", entry.getValue());
-                client.getDatabase(currentDatabase).getDocumentEngine(bucket).insert(entry.getKey(), map);
+                JettraDatabase db = client.getDatabase(currentDatabase);
+                String id = entry.getKey();
+                String val = entry.getValue();
+                if (db.getDocumentEngineNames().contains(bucket)) {
+                    db.getDocumentEngine(bucket).insert(id, map);
+                } else if (db.getKeyValueEngineNames().contains(bucket)) {
+                    db.getKeyValueEngine(bucket).put(id, val.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                } else if (db.getVectorEngineNames().contains(bucket)) {
+                    String[] parts = val.replace("[", "").replace("]", "").split(",");
+                    float[] floats = new float[parts.length];
+                    for (int i = 0; i < parts.length; i++) floats[i] = Float.parseFloat(parts[i].trim());
+                    db.getVectorEngine(bucket, floats.length).index(id, floats);
+                } else if (db.getGraphEngineNames().contains(bucket)) {
+                    db.getGraphEngine(bucket).addVertex(id);
+                } else if (db.getTimeSeriesEngineNames().contains(bucket)) {
+                    db.getTimeSeriesEngine(bucket).record(System.currentTimeMillis(), Double.parseDouble(val.trim()));
+                } else if (db.getGeospatialEngineNames().contains(bucket)) {
+                    String[] parts = val.split(",");
+                    db.getGeospatialEngine(bucket).insertPoint(id, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()));
+                } else {
+                    db.getDocumentEngine(bucket).insert(id, map);
+                }
                 loadRecordsForBucket(bucket);
                 logStatus("Registro '" + entry.getKey() + "' insertado con éxito.");
             } catch (Exception e) {
@@ -850,7 +928,12 @@ public class JettraStoreFXApp extends Application {
         if (sel == null || bucket == null) return;
 
         try {
-            client.getDatabase(currentDatabase).getDocumentEngine(bucket).delete(sel.id());
+            JettraDatabase db = client.getDatabase(currentDatabase);
+            if (db.getDocumentEngineNames().contains(bucket)) {
+                db.getDocumentEngine(bucket).delete(sel.id());
+            } else if (db.getKeyValueEngineNames().contains(bucket)) {
+                db.getKeyValueEngine(bucket).remove(sel.id());
+            }
             loadRecordsForBucket(bucket);
             logStatus("Registro '" + sel.id() + "' eliminado de '" + bucket + "'.");
         } catch (Exception e) {

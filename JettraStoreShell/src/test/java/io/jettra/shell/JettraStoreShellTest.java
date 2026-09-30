@@ -351,4 +351,56 @@ public class JettraStoreShellTest {
             assertTrue(showRecs.contains("REGISTROS DE DOCUMENT BUCKET 'facturas'"));
         }
     }
+
+    @Test
+    @DisplayName("Debe eliminar fisicamente la base de datos con DROP DATABASE y DROP DB")
+    public void testDropDatabaseCommand() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+
+            // 1. Crear BD 'test_drop_db' y verificar existencia
+            String created = shell.executeCommand("CREATE DATABASE test_drop_db");
+            assertTrue(created.contains("[SUCCESS]"));
+            shell.executeCommand("USE test_drop_db");
+            shell.executeCommand("CREATE COLLECTION users");
+            shell.executeCommand("INSERT INTO users (id, name) VALUES ('u1', 'Alice')");
+
+            String dbsBefore = shell.executeCommand("SHOW DATABASES");
+            assertTrue(dbsBefore.contains("test_drop_db"));
+
+            // 2. Eliminar con DROP DATABASE
+            String dropResult = shell.executeCommand("DROP DATABASE test_drop_db");
+            assertTrue(dropResult.contains("[SUCCESS]"));
+
+            String dbsAfter = shell.executeCommand("SHOW DATABASES");
+            assertFalse(dbsAfter.contains("test_drop_db"));
+
+            // 3. Crear con CREATE DB y eliminar con DROP DB
+            shell.executeCommand("CREATE DB test_drop_db2");
+            String dbs2 = shell.executeCommand("SHOW DATABASES");
+            assertTrue(dbs2.contains("test_drop_db2"));
+
+            String dropResult2 = shell.executeCommand("DROP DB test_drop_db2");
+            assertTrue(dropResult2.contains("[SUCCESS]"));
+
+            String dbsAfter2 = shell.executeCommand("SHOW DATABASES");
+            assertFalse(dbsAfter2.contains("test_drop_db2"));
+        }
+    }
+
+    @Test
+    @DisplayName("show dbs debe ejecutarse de forma perezosa (lazy) sin cargar todo el contenido a RAM")
+    public void testShowDatabasesLazyLoadingAndNoOOM() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+
+            // 1. show dbs y show databases deben listar sin error de memoria
+            String showDbs = shell.executeCommand("show dbs");
+            assertTrue(showDbs.contains("default_db"));
+            assertTrue(showDbs.contains("Base de Datos"));
+
+            String showDatabases = shell.executeCommand("show databases");
+            assertTrue(showDatabases.contains("default_db"));
+        }
+    }
 }

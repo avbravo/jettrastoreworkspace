@@ -56,10 +56,6 @@ public final class JettraClient implements AutoCloseable {
         scanDatabasesFromPath("../data/jettra", result);
         scanDatabasesFromPath("/jettra/data", result);
 
-        // Pre-cargar instancias en memoria
-        for (String dbName : result) {
-            getDatabase(dbName);
-        }
         return new ArrayList<>(result);
     }
 
@@ -79,6 +75,8 @@ public final class JettraClient implements AutoCloseable {
                             target.add(name.substring(0, name.indexOf("_sstable.jettra")));
                         } else if (name.endsWith(".jettra") && !name.contains("_wal")) {
                             target.add(name.substring(0, name.indexOf(".jettra")));
+                        } else if (name.endsWith("_meta.json")) {
+                            target.add(name.substring(0, name.indexOf("_meta.json")));
                         }
                     });
                 }
@@ -87,7 +85,79 @@ public final class JettraClient implements AutoCloseable {
     }
 
     public boolean dropDatabase(String name) {
-        return databases.remove(name) != null;
+        if (name == null || name.isBlank()) return false;
+        boolean inMemory = false;
+        JettraDatabase db = databases.remove(name);
+        if (db != null) {
+            inMemory = true;
+            try {
+                db.drop();
+            } catch (Exception ignored) {}
+        }
+
+        boolean onDisk = deletePhysicalDatabase(name.trim());
+        return inMemory || onDisk;
+    }
+
+    private boolean deletePhysicalDatabase(String name) {
+        JettraStoreConfig cfg = JettraStoreConfig.load();
+        Set<String> searchPaths = new LinkedHashSet<>();
+        if (cfg.getStoragePath() != null) searchPaths.add(cfg.getStoragePath());
+        if (cfg.getConfiguredStoragePath() != null) searchPaths.add(cfg.getConfiguredStoragePath());
+        searchPaths.add("./data/jettra");
+        searchPaths.add("data/jettra");
+        searchPaths.add("../data/jettra");
+        searchPaths.add("../../data/jettra");
+        searchPaths.add("/jettra/data");
+        searchPaths.add(System.getProperty("user.home") + "/jettra/data");
+
+        boolean deleted = false;
+        for (String pathStr : searchPaths) {
+            try {
+                Path p = Path.of(pathStr);
+                if (!Files.exists(p)) continue;
+
+                // 1. Si es directorio con el nombre de la BD
+                Path dbDir = p.resolve(name);
+                if (Files.exists(dbDir)) {
+                    if (Files.isDirectory(dbDir)) {
+                        try (var stream = Files.walk(dbDir)) {
+                            stream.sorted(Comparator.reverseOrder())
+                                  .forEach(f -> {
+                                      try { Files.deleteIfExists(f); } catch (Exception ignored) {}
+                                  });
+                        }
+                        deleted = true;
+                    } else {
+                        deleted |= Files.deleteIfExists(dbDir);
+                    }
+                }
+
+                // 2. Archivos asociados
+                deleted |= Files.deleteIfExists(p.resolve(name + "_sstable.jettra"));
+                deleted |= Files.deleteIfExists(p.resolve(name + ".jettra"));
+                deleted |= Files.deleteIfExists(p.resolve(name + "_wal.jettra"));
+                deleted |= Files.deleteIfExists(p.resolve(name + "_meta.json"));
+                deleted |= Files.deleteIfExists(p.resolve(name + "_sstable" + cfg.getFileExtension()));
+                deleted |= Files.deleteIfExists(p.resolve(name + cfg.getFileExtension()));
+                deleted |= Files.deleteIfExists(p.resolve(name + ".snap"));
+                deleted |= Files.deleteIfExists(p.resolve(name + "_backup.snap"));
+
+            } catch (Exception ignored) {}
+        }
+        return deleted;
+    }
+
+    public boolean isDatabaseLoaded(String name) {
+        return name != null && databases.containsKey(name);
+    }
+
+    public int getLightweightCollectionCount(String dbName) {
+        if (dbName == null) return 0;
+        if (databases.containsKey(dbName)) {
+            return databases.get(dbName).getAllCollectionNames().size();
+        }
+        return io.jettra.store.core.JettraDatabase.getLightweightCollectionCount(dbName, JettraStoreConfig.load());
     }
 
     public boolean databaseExists(String name) {
