@@ -3,35 +3,35 @@
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="JettraStore Stress &amp; Load Test Plan">
       <stringProp name="TestPlan.comments">Stress testing 3-node cluster with JettraJWT, Panama FFM and ring saturation</stringProp>
-      <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
-      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments">
         <collectionProp name="Arguments.arguments">
           <elementProp name="SERVER_HOST" elementType="Argument">
             <stringProp name="Argument.name">SERVER_HOST</stringProp>
             <stringProp name="Argument.value">${__P(host,127.0.0.1)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="SERVER_PORT" elementType="Argument">
             <stringProp name="Argument.name">SERVER_PORT</stringProp>
             <stringProp name="Argument.value">${__P(port,8080)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
       </elementProp>
     </TestPlan>
     <hashTree>
-      <!-- setUp Thread Group: Autenticación inicial con admin / admin-jettra -->
       <SetupThreadGroup guiclass="SetupThreadGroupGui" testclass="SetupThreadGroup" testname="setUp: Authenticate JettraJWT">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
-        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <stringProp name="LoopController.loops">1</stringProp>
           <boolProp name="LoopController.continue_forever">false</boolProp>
-          <intProp name="LoopController.loops">1</intProp>
         </elementProp>
       </SetupThreadGroup>
       <hashTree>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /api/v1/auth/login">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /api/v1/auth/login" enabled="true">
           <stringProp name="HTTPSampler.domain">${SERVER_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${SERVER_PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -41,13 +41,15 @@
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
                 <stringProp name="Argument.value">{ &quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: &quot;admin-jettra&quot; }</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
           </elementProp>
         </HTTPSamplerProxy>
         <hashTree>
-          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Content-Type JSON">
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Content-Type JSON" enabled="true">
             <collectionProp name="HeaderManager.headers">
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">Content-Type</stringProp>
@@ -56,7 +58,7 @@
             </collectionProp>
           </HeaderManager>
           <hashTree/>
-          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract JettraJWT">
+          <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract JettraJWT" enabled="true">
             <stringProp name="JSONPostProcessor.referenceNames">JETTRA_TOKEN</stringProp>
             <stringProp name="JSONPostProcessor.jsonPathExprs">$.token</stringProp>
             <stringProp name="JSONPostProcessor.match_numbers">1</stringProp>
@@ -65,18 +67,18 @@
           <hashTree/>
         </hashTree>
       </hashTree>
-
-      <!-- Main Thread Group: Concurrencia Masiva de Inserción y Consultas -->
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="Main Workload: Concurrent CRUD &amp; Vectors">
         <stringProp name="ThreadGroup.num_threads">${__P(threads,50)}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">5</stringProp>
+        <intProp name="ThreadGroup.ramp_time">5</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
-        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
-          <intProp name="LoopController.loops">100</intProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <stringProp name="LoopController.loops">100</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
         </elementProp>
       </ThreadGroup>
       <hashTree>
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JettraJWT Header">
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JettraJWT Header" enabled="true">
           <collectionProp name="HeaderManager.headers">
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Authorization</stringProp>
@@ -89,7 +91,7 @@
           </collectionProp>
         </HeaderManager>
         <hashTree/>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST Ingest Document with Vector Ref">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST Ingest Document with Vector Ref" enabled="true">
           <stringProp name="HTTPSampler.domain">${SERVER_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${SERVER_PORT}</stringProp>
           <stringProp name="HTTPSampler.path">/api/v1/doc/meter_test_db/products</stringProp>
@@ -98,13 +100,15 @@
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
                 <stringProp name="Argument.value">{ &quot;name&quot;: &quot;StressItem_${__UUID()}&quot;, &quot;price&quot;: 99.9, &quot;lazy_ref&quot;: &quot;vector::biometrics#emb_01&quot; }</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
           </elementProp>
         </HTTPSamplerProxy>
         <hashTree/>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST Execute JettraSQL Query">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST Execute JettraSQL Query" enabled="true">
           <stringProp name="HTTPSampler.domain">${SERVER_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${SERVER_PORT}</stringProp>
           <stringProp name="HTTPSampler.path">/api/v1/query/sql</stringProp>
@@ -113,24 +117,27 @@
           <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
             <collectionProp name="Arguments.arguments">
               <elementProp name="" elementType="HTTPArgument">
+                <boolProp name="HTTPArgument.always_encode">false</boolProp>
                 <stringProp name="Argument.value">{ &quot;sql&quot;: &quot;SELECT * FROM products WHERE price &gt; 50.0 LIMIT 10&quot; }</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
           </elementProp>
         </HTTPSamplerProxy>
         <hashTree/>
       </hashTree>
-
-      <!-- tearDown Thread Group: Limpieza Lógica Automatizada -->
       <PostThreadGroup guiclass="PostThreadGroupGui" testclass="PostThreadGroup" testname="tearDown: Drop Test Database">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
-        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
-          <intProp name="LoopController.loops">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
         </elementProp>
       </PostThreadGroup>
       <hashTree>
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JettraJWT Auth Header">
+        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="JettraJWT Auth Header" enabled="true">
           <collectionProp name="HeaderManager.headers">
             <elementProp name="" elementType="Header">
               <stringProp name="Header.name">Authorization</stringProp>
@@ -139,11 +146,15 @@
           </collectionProp>
         </HeaderManager>
         <hashTree/>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DELETE /api/v1/db/meter_test_db">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="DELETE /api/v1/db/meter_test_db" enabled="true">
           <stringProp name="HTTPSampler.domain">${SERVER_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${SERVER_PORT}</stringProp>
           <stringProp name="HTTPSampler.path">/api/v1/db/meter_test_db</stringProp>
           <stringProp name="HTTPSampler.method">DELETE</stringProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
         </HTTPSamplerProxy>
         <hashTree/>
       </hashTree>

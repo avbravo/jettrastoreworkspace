@@ -33,6 +33,12 @@ public final class JettraStoreShellApp {
     private boolean showReferences = true;
     private int pageSize = 20;
 
+    // Estado de Paginación Interactiva de Consultas
+    private String lastPagedBaseQuery = null;
+    private int currentQueryPage = 1;
+    private long totalQueryRecords = 0;
+    private int totalQueryPages = 1;
+
     // Perfiles de Conexión Guardados
     public record SavedConnection(String name, String host, int port, String user) {}
     private final Map<String, SavedConnection> savedConnections = new ConcurrentHashMap<>();
@@ -190,6 +196,13 @@ Seleccione una conexión para iniciar:
             return handleStopNode(trimmed);
         }
 
+        // Configuración de Storage Mode (JVM-RAM vs DISK-MEMORY / JettraMemory)
+        if (upper.equals("STORAGE_MODE") || upper.equals("STORAGE MODE") || upper.equals("SHOW STORAGE_MODE") || upper.equals("SHOW STORAGE MODE")) {
+            return handleShowStorageMode();
+        } else if (upper.startsWith("STORAGE_MODE ") || upper.startsWith("STORAGE MODE ") || upper.startsWith("SET STORAGE_MODE ") || upper.startsWith("SET STORAGE_MODE=") || upper.startsWith("SET STORAGE_MODE =")) {
+            return handleSetStorageMode(trimmed);
+        }
+
         // 6. Configuración Lazy Reference (lazy reference on / off (lazy reference on / lazy reference off))
         if (upper.equals("LAZY REFERENCE ON") || upper.equals("SET LAZY_REFERENCE ON") || upper.equals("SET LAZY_REFERENCE = TRUE")) {
             this.lazyLoad = true;
@@ -281,6 +294,21 @@ Seleccione una conexión para iniciar:
             return handleUpdate(trimmed);
         } else if (upper.startsWith("DELETE FROM ") || upper.startsWith("DELETE ") || upper.startsWith("REMOVE ")) {
             return handleDeleteRecord(trimmed);
+        }
+
+        // Paginación y Desplazamiento de Consultas (Primero, Anterior, Siguiente, Última)
+        if (upper.startsWith("SET PAGE_SIZE ") || upper.startsWith("PAGE_SIZE ") || upper.startsWith("PAGESIZE ") || upper.startsWith("SET PAGESIZE ") || upper.startsWith("SIZE ")) {
+            return handleSetPageSize(trimmed);
+        } else if (upper.equals("FIRST") || upper.equals("PRIMERO") || upper.equals("PRI") || upper.equals("PAGE FIRST") || upper.equals("|<<") || (upper.equals("F") && lastPagedBaseQuery != null)) {
+            return handleNavigatePage("FIRST");
+        } else if (upper.equals("PREV") || upper.equals("ANTERIOR") || upper.equals("PREVIOUS") || upper.equals("ANT") || upper.equals("PAGE PREV") || upper.equals("<") || ((upper.equals("A") || upper.equals("P")) && lastPagedBaseQuery != null)) {
+            return handleNavigatePage("PREV");
+        } else if (upper.equals("NEXT") || upper.equals("SIGUIENTE") || upper.equals("SIG") || upper.equals("PAGE NEXT") || upper.equals(">") || ((upper.equals("S") || upper.equals("N")) && lastPagedBaseQuery != null)) {
+            return handleNavigatePage("NEXT");
+        } else if (upper.equals("LAST") || upper.equals("ULTIMO") || upper.equals("ULTIMA") || upper.equals("ULT") || upper.equals("PAGE LAST") || upper.equals(">>|") || ((upper.equals("U") || upper.equals("L")) && lastPagedBaseQuery != null)) {
+            return handleNavigatePage("LAST");
+        } else if (upper.startsWith("PAGE ") || upper.startsWith("PAGINA ") || upper.startsWith("GOTO ")) {
+            return handleNavigatePage(trimmed);
         }
 
         // 12. Soporte Políglota: JettraQL y JettraSQL
@@ -1045,7 +1073,82 @@ Seleccione una conexión para iniciar:
     }
 
     // --- 9. Soporte JettraQL y JettraSQL ---
+    private String handleSetPageSize(String command) {
+        String[] parts = command.trim().split("\\s+");
+        String valStr = parts[parts.length - 1].replaceAll("[;]", "");
+        try {
+            int newSize = Integer.parseInt(valStr);
+            if (newSize <= 0) return "[ERROR] El tamaño de página debe ser mayor a 0.";
+            this.pageSize = Math.min(newSize, 5000);
+            if (lastPagedBaseQuery != null) {
+                this.totalQueryPages = (int) Math.max(1, Math.ceil((double) totalQueryRecords / pageSize));
+                this.currentQueryPage = Math.min(currentQueryPage, totalQueryPages);
+                return String.format("[PAGINACIÓN] Tamaño de página configurado a %d registros.\n%s", 
+                    pageSize, executePagedQuery(lastPagedBaseQuery, currentQueryPage));
+            }
+            return String.format("[PAGINACIÓN] Tamaño de página configurado a %d registros para futuras consultas.", pageSize);
+        } catch (Exception e) {
+            return "[ERROR] Uso: PAGE_SIZE <tamaño> (ejemplo: PAGE_SIZE 25)";
+        }
+    }
+
+    private String handleNavigatePage(String action) {
+        if (lastPagedBaseQuery == null) {
+            return "[INFO] No hay una consulta previa activa para paginar. Ejecute primero un SELECT o FIND ALL.";
+        }
+
+        int targetPage = currentQueryPage;
+        String upper = action.toUpperCase();
+
+        if (upper.equals("FIRST") || upper.equals("PRIMERO") || upper.equals("PAGE FIRST") || upper.equals("|<<") || upper.equals("P")) {
+            targetPage = 1;
+        } else if (upper.equals("PREV") || upper.equals("ANTERIOR") || upper.equals("PAGE PREV") || upper.equals("<") || upper.equals("A")) {
+            targetPage = Math.max(1, currentQueryPage - 1);
+        } else if (upper.equals("NEXT") || upper.equals("SIGUIENTE") || upper.equals("PAGE NEXT") || upper.equals(">") || upper.equals("S")) {
+            targetPage = Math.min(totalQueryPages, currentQueryPage + 1);
+        } else if (upper.equals("LAST") || upper.equals("ULTIMO") || upper.equals("PAGE LAST") || upper.equals(">>|") || upper.equals("U")) {
+            targetPage = totalQueryPages;
+        } else if (upper.startsWith("PAGE ") || upper.startsWith("PAGINA ")) {
+            String[] parts = action.split("\\s+");
+            try {
+                targetPage = Math.max(1, Math.min(totalQueryPages, Integer.parseInt(parts[1].replaceAll("[;]", ""))));
+            } catch (Exception ignored) {
+                return "[ERROR] Uso: PAGE <número_página>";
+            }
+        }
+
+        this.currentQueryPage = targetPage;
+        return executePagedQuery(lastPagedBaseQuery, currentQueryPage);
+    }
+
+    private String executePagedQuery(String baseQuery, int page) {
+        int offset = (page - 1) * pageSize;
+        String pagedSql = baseQuery + " LIMIT " + pageSize + " OFFSET " + offset;
+        return handleJettraSQLInternal(pagedSql, false);
+    }
+
+    private String renderPaginationBar(int currentPage, int totalPages, int currentPageSize, long totalRecords, int rowsInPage) {
+        long startRow = totalRecords == 0 ? 0 : (long) (currentPage - 1) * currentPageSize + 1;
+        long endRow = totalRecords == 0 ? 0 : Math.min(totalRecords, (long) (currentPage - 1) * currentPageSize + rowsInPage);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐\n");
+        sb.append(String.format("│  PÁGINA [ %d / %d ]  •  Registros %d a %d de %d total  •  Tamaño de página: %d               │\n",
+            currentPage, totalPages, startRow, endRow, totalRecords, currentPageSize));
+        sb.append("├──────────────────────────────────────────────────────────────────────────────────────────────────────┤\n");
+        sb.append("│  OPCIONES DE DESPLAZAMIENTO:                                                                         │\n");
+        sb.append("│    [F] Primero (|<<)   - Va a la primera página       [A] Anterior (<)    - Página anterior          │\n");
+        sb.append("│    [S] Siguiente (>)   - Página siguiente             [U] Última (>>|)    - Va a la última página    │\n");
+        sb.append("│    PAGE <n>            - Salta a una página directa   PAGE_SIZE <n>       - Modifica tamaño de página│\n");
+        sb.append("└──────────────────────────────────────────────────────────────────────────────────────────────────────┘\n");
+        return sb.toString();
+    }
+
     private String handleJettraSQL(String command) {
+        return handleJettraSQLInternal(command, true);
+    }
+
+    private String handleJettraSQLInternal(String command, boolean isNewQuery) {
         String clean = command;
         if (clean.toUpperCase().startsWith("SQL ")) clean = clean.substring(4).trim();
         else if (clean.toUpperCase().startsWith("JETTRASQL ")) clean = clean.substring(10).trim();
@@ -1100,6 +1203,35 @@ Seleccione una conexión para iniciar:
             sb.append("\n");
         }
         sb.append(String.format("Total: %d fila(s) seleccionadas / afectadas.\n", res.affectedRows()));
+
+        // Gestión y visualización de paginación interactiva
+        if (clean.toUpperCase().startsWith("SELECT ")) {
+            if (isNewQuery) {
+                // Registrar consulta base sin LIMIT ni OFFSET
+                this.lastPagedBaseQuery = clean.replaceAll("(?i)\\s+LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?", "").trim();
+                this.currentQueryPage = 1;
+                // Extraer nombre de colección para conteo total
+                String upperQ = lastPagedBaseQuery.toUpperCase();
+                int fromPos = upperQ.indexOf(" FROM ");
+                if (fromPos != -1) {
+                    String afterFrom = lastPagedBaseQuery.substring(fromPos + 6).trim().split("\\s+")[0].replaceAll("[;]", "");
+                    try {
+                        var engine = client.getDatabase(currentDatabase).getDocumentEngine(afterFrom);
+                        this.totalQueryRecords = engine != null ? engine.count() : res.affectedRows();
+                    } catch (Exception e) {
+                        this.totalQueryRecords = res.affectedRows();
+                    }
+                } else {
+                    this.totalQueryRecords = res.affectedRows();
+                }
+                this.totalQueryPages = (int) Math.max(1, Math.ceil((double) totalQueryRecords / pageSize));
+            }
+
+            if (totalQueryPages > 1 || res.rows().size() >= pageSize) {
+                sb.append(renderPaginationBar(currentQueryPage, totalQueryPages, pageSize, totalQueryRecords, res.rows().size()));
+            }
+        }
+
         return sb.toString();
     }
 
@@ -2257,6 +2389,9 @@ Seleccione una conexión para iniciar:
               SQL UPDATE <col> SET k = v WHERE _id = id Actualiza campos de un registro.
               SQL DELETE FROM <col> WHERE _id = id  Elimina un registro mediante sintaxis SQL.
 
+              STORAGE_MODE                          Muestra el modo de almacenamiento activo (JVM-RAM o DISK-MEMORY).
+              STORAGE_MODE <JVM_RAM | DISK_MEMORY>  Conmuta el modo entre RAM JVM (Heap/Stack) o DISK-MEMORY (JettraMemory LSM).
+
             5. REGISTROS REFERENCIADOS (JETTRAREF) Y LAZY LOADING:
               lazy reference on / off (lazy reference on / lazy reference off)               Alterna la resolución diferida (Lazy) o inmediata (Eager).
               insert ref <col> <id> KEY <k> TARGET <engine>::<col>#<id>  Vincula un puntero cruzado multimodelo.
@@ -2319,6 +2454,47 @@ Seleccione una conexión para iniciar:
     public boolean isLazyLoad() { return lazyLoad; }
     public Map<String, SavedConnection> getSavedConnections() { return savedConnections; }
     public JettraClient getClient() { return client; }
+
+    private String handleShowStorageMode() {
+        if (currentDatabase == null) {
+            return """
+                ==============================================================================================
+                                          MODO DE ALMACENAMIENTO GLOBAL (JettraStore)                        
+                ==============================================================================================
+                  Modo Activo: JVM_RAM (Memoria RAM Heap/Stack de Java)
+                  Modos Disponibles:
+                   * JVM_RAM      : Trabaja en memoria RAM usando áreas de Heap y Stack de la JVM.
+                   * DISK_MEMORY  : Modo directo en disco sin pausas GC usando JettraMemory (LSM Panama FFM).
+                  Comando para cambiar: STORAGE_MODE <JVM_RAM | DISK_MEMORY>
+                ==============================================================================================""";
+        }
+        var mode = client.getStorageMode(currentDatabase);
+        return String.format("""
+            ==============================================================================================
+                            MODO DE ALMACENAMIENTO ACTIVO PARA '%s'                                      
+            ==============================================================================================
+              Modo Actual      : %s (%s)
+              Descripción      : %s
+              Motor Off-Heap   : JettraMemory (LSM Direct Panama FFM)
+              Comando para conmutar: STORAGE_MODE <JVM_RAM | DISK_MEMORY>
+            ==============================================================================================""",
+            currentDatabase, mode.name(), mode.getCode(), mode.getDescription()
+        );
+    }
+
+    private String handleSetStorageMode(String cmd) {
+        String arg = cmd.replaceFirst("(?i)^(SET\\s+)?STORAGE_MODE\\s*(=)?\\s*", "").trim();
+        var mode = io.jettra.store.core.StorageMode.fromString(arg);
+        if (currentDatabase != null) {
+            client.setStorageMode(currentDatabase, mode);
+            return String.format("[STORAGE_MODE] Modo de almacenamiento para '%s' configurado a: %s (%s)",
+                currentDatabase, mode.getCode(), mode.getDescription());
+        } else {
+            client.setGlobalStorageMode(mode);
+            return String.format("[STORAGE_MODE] Modo de almacenamiento global configurado a: %s (%s)",
+                mode.getCode(), mode.getDescription());
+        }
+    }
 
     public static void main(String[] args) {
         Console console = System.console();

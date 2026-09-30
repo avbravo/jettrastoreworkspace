@@ -3,8 +3,7 @@ package io.jettra.fx;
 import io.jettra.driver.JettraClient;
 import io.jettra.fx.profile.ConnectionProfile;
 import io.jettra.fx.view3d.Cluster3DVisualizer;
-import io.jettra.store.core.JettraDatabase;
-import io.jettra.store.engine.models.DocumentEngine;
+import io.jettra.store.core.StorageMode;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -66,6 +65,13 @@ public class JettraStoreFXApp extends Application {
     private Label currentDbBadge;
     private Label currentBucketBadge;
     private Label recordCountBadge;
+    private Label storageModeBadge;
+    private ComboBox<String> cmbStorageMode;
+    private int currentExplorerPage = 1;
+    private int explorerPageSize = 25;
+    private long totalExplorerRecords = 0;
+    private int totalExplorerPages = 1;
+    private Label lblExplorerPageStatus;
 
     // Monitoreo de Recursos y Almacenamiento
     private ProgressBar jvmHeapBar;
@@ -238,13 +244,26 @@ public class JettraStoreFXApp extends Application {
         this.userSessionLabel = new Label();
         userSessionLabel.setStyle("-fx-text-fill: #FACC15; -fx-font-weight: bold; -fx-font-size: 12px;\");");
 
+        // Botón de Alternar Storage Mode en Header
+        Button btnToggleStorage = new Button("💽 Modo Almacenamiento");
+        btnToggleStorage.setStyle("-fx-background-color: #047857; -fx-text-fill: white; -fx-font-size: 11px; -fx-background-radius: 6;");
+        btnToggleStorage.setOnAction(e -> {
+            if (client != null && currentDatabase != null) {
+                StorageMode current = client.getStorageMode(currentDatabase);
+                StorageMode next = current.isDiskMemory() ? StorageMode.JVM_RAM : StorageMode.DISK_MEMORY;
+                client.setStorageMode(currentDatabase, next);
+                updateStorageModeBadge(next);
+                logStatus("Conmutado modo de almacenamiento a: " + next.getCode());
+            }
+        });
+
         // Botón Acceso Rápido a Conexión / Login
         Button btnQuickConn = new Button("🔌 Conexión / Login");
         btnQuickConn.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #E2E8F0; -fx-border-color: #0284C7; " +
                              "-fx-border-radius: 6; -fx-background-radius: 6; -fx-font-size: 11px;");
         btnQuickConn.setOnAction(e -> mainTabPane.getSelectionModel().select(0));
 
-        header.getChildren().addAll(icon, titleBox, raftBadge, statusConnectionBadge, spacer, userSessionLabel, btnQuickConn);
+        header.getChildren().addAll(icon, titleBox, raftBadge, statusConnectionBadge, spacer, btnToggleStorage, userSessionLabel, btnQuickConn);
         return header;
     }
 
@@ -486,7 +505,32 @@ public class JettraStoreFXApp extends Application {
         this.recordCountBadge = new Label("Registros: 0");
         recordCountBadge.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4;");
 
-        topContext.getChildren().addAll(lblContext, currentDbBadge, currentBucketBadge, recordCountBadge);
+        Label policeBadge = new Label("🛡️ JettraPolice: ACTIVO");
+        policeBadge.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+
+        Label memoryBadge = new Label("⚡ JettraMemory: OFF-HEAP");
+        memoryBadge.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+
+        this.storageModeBadge = new Label("MODO: JVM-RAM");
+        storageModeBadge.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+
+        this.cmbStorageMode = new ComboBox<>(FXCollections.observableArrayList(
+            "🧠 JVM-RAM (Stack & Heap)",
+            "💽 DISK-MEMORY (JettraMemory LSM)"
+        ));
+        cmbStorageMode.getSelectionModel().select(0);
+        cmbStorageMode.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #38BDF8; -fx-font-size: 11px; -fx-border-color: #0284C7; -fx-border-radius: 4;");
+        cmbStorageMode.setOnAction(e -> {
+            if (client != null && isConnected && currentDatabase != null) {
+                int idx = cmbStorageMode.getSelectionModel().getSelectedIndex();
+                StorageMode newMode = (idx == 1) ? StorageMode.DISK_MEMORY : StorageMode.JVM_RAM;
+                client.setStorageMode(currentDatabase, newMode);
+                updateStorageModeBadge(newMode);
+                logStatus("Modo de almacenamiento para '" + currentDatabase + "' conmutado a: " + newMode.getCode());
+            }
+        });
+
+        topContext.getChildren().addAll(lblContext, currentDbBadge, currentBucketBadge, recordCountBadge, policeBadge, memoryBadge, storageModeBadge, cmbStorageMode);
         layout.setTop(topContext);
 
         // Tres Columnas: 1) Bases de Datos, 2) Buckets/Unidades, 3) Registros & Detalle
@@ -508,8 +552,7 @@ public class JettraStoreFXApp extends Application {
             if (newVal != null && !newVal.equals(currentDatabase)) {
                 this.currentDatabase = newVal;
                 if (client != null && isConnected) {
-                    var db = client.getDatabase(currentDatabase);
-                    if (db.isDistributedRingActive() || client.getRingEngine().isRingActive()) {
+                    if (client.getRingEngine().isRingActive()) {
                         currentDbBadge.setText("BD: " + currentDatabase + " [ANILLO]");
                         currentDbBadge.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: black; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
                         logStatus("[CLUSTER] Base de datos '" + currentDatabase + "': Transición Dinámica a Motor de Anillo Distribuido ACTIVA.");
@@ -517,6 +560,8 @@ public class JettraStoreFXApp extends Application {
                         currentDbBadge.setText("BD: " + currentDatabase);
                         currentDbBadge.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
                     }
+                    StorageMode sm = client.getStorageMode(currentDatabase);
+                    updateStorageModeBadge(sm);
                 } else {
                     currentDbBadge.setText("BD: " + currentDatabase);
                 }
@@ -537,7 +582,28 @@ public class JettraStoreFXApp extends Application {
         btnRefreshDb.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 10px;");
         btnRefreshDb.setOnAction(e -> refreshDataExplorerDatabases());
 
-        dbActions.getChildren().addAll(btnNewDb, btnDropDb, btnRefreshDb);
+        Button btnInstallSamples = new Button("📦 3M Factura");
+        btnInstallSamples.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
+        btnInstallSamples.setOnAction(e -> {
+            new Thread(() -> {
+                Platform.runLater(() -> logStatus("Iniciando carga de muestra 3M 'example_factura_db'..."));
+                try {
+                    client.sql(currentDatabase, "INSTALL SAMPLES FACTURA");
+                    Platform.runLater(() -> {
+                        refreshDataExplorerDatabases();
+                        logStatus("Muestra 'example_factura_db' cargada exitosamente.");
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> logStatus("Error: " + ex.getMessage()));
+                }
+            }).start();
+        });
+
+        Button btnPoliceAudit = new Button("🛡️ Police");
+        btnPoliceAudit.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
+        btnPoliceAudit.setOnAction(e -> showPoliceAuditDialog());
+
+        dbActions.getChildren().addAll(btnNewDb, btnDropDb, btnRefreshDb, btnInstallSamples, btnPoliceAudit);
         col1.getChildren().addAll(lblCol1, dbListView, dbActions);
 
         // COLUMNA 2: BUCKETS / COLECCIONES MULTIMODELO
@@ -554,6 +620,7 @@ public class JettraStoreFXApp extends Application {
         bucketListView.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null) {
                 currentBucketBadge.setText("Bucket: " + newVal);
+                currentExplorerPage = 1;
                 loadRecordsForBucket(newVal);
             }
         });
@@ -582,7 +649,9 @@ public class JettraStoreFXApp extends Application {
         Label lblCol3 = new Label("REGISTROS EN BUCKET");
         lblCol3.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #FACC15;");
 
-        // Barra de Herramientas de Registros
+        // Barra de Herramientas de Registros y Consulta Directa
+        VBox recordToolsBox = new VBox(6);
+
         HBox recordTools = new HBox(8);
         Button btnNewRecord = new Button("+ Nuevo Registro");
         btnNewRecord.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px;");
@@ -600,6 +669,35 @@ public class JettraStoreFXApp extends Application {
         });
 
         recordTools.getChildren().addAll(btnNewRecord, btnDeleteRecord, btnReloadRecords);
+
+        // Barra de Consulta SQL / JQL Rápida en el explorador
+        HBox queryBar = new HBox(6);
+        queryBar.setAlignment(Pos.CENTER_LEFT);
+        TextField txtQuickQuery = new TextField();
+        txtQuickQuery.setPromptText("Consulta SQL o JQL (ej. SELECT * FROM clientes LIMIT 25)...");
+        txtQuickQuery.setStyle("-fx-background-color: #020617; -fx-text-fill: #38BDF8; -fx-border-color: #0284C7; -fx-border-radius: 4; -fx-font-size: 11px;");
+        HBox.setHgrow(txtQuickQuery, Priority.ALWAYS);
+
+        Button btnRunQuickQuery = new Button("▶ Ejecutar");
+        btnRunQuickQuery.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px;");
+        btnRunQuickQuery.setOnAction(e -> {
+            String q = txtQuickQuery.getText().trim();
+            if (!q.isEmpty()) {
+                executeQuickExplorerQuery(q);
+            }
+        });
+        txtQuickQuery.setOnAction(e -> btnRunQuickQuery.fire());
+
+        Button btnClearQuery = new Button("✖");
+        btnClearQuery.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px;");
+        btnClearQuery.setOnAction(e -> {
+            txtQuickQuery.clear();
+            String b = bucketListView.getSelectionModel().getSelectedItem();
+            if (b != null) loadRecordsForBucket(b);
+        });
+
+        queryBar.getChildren().addAll(txtQuickQuery, btnRunQuickQuery, btnClearQuery);
+        recordToolsBox.getChildren().addAll(recordTools, queryBar);
 
         // Tabla de Registros
         this.recordsTable = new TableView<>();
@@ -634,7 +732,95 @@ public class JettraStoreFXApp extends Application {
             }
         });
 
-        col3.getChildren().addAll(lblCol3, recordTools, recordsTable, lblDetail, recordDetailJsonArea);
+        // Barra de Paginación de Registros
+        HBox paginationBar = new HBox(8);
+        paginationBar.setAlignment(Pos.CENTER_LEFT);
+        paginationBar.setPadding(new Insets(4, 0, 4, 0));
+
+        Button btnFirst = new Button("|<<");
+        btnFirst.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnFirst.setOnAction(e -> {
+            if (currentExplorerPage > 1) {
+                currentExplorerPage = 1;
+                String b = bucketListView.getSelectionModel().getSelectedItem();
+                if (b != null) loadRecordsForBucket(b);
+            }
+        });
+
+        Button btnPrev = new Button("<");
+        btnPrev.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnPrev.setOnAction(e -> {
+            if (currentExplorerPage > 1) {
+                currentExplorerPage--;
+                String b = bucketListView.getSelectionModel().getSelectedItem();
+                if (b != null) loadRecordsForBucket(b);
+            }
+        });
+
+        this.lblExplorerPageStatus = new Label("Pág. 1 de 1 (0 reg.)");
+        lblExplorerPageStatus.setStyle("-fx-text-fill: #38BDF8; -fx-font-weight: bold; -fx-font-size: 11px;");
+
+        Button btnNext = new Button(">");
+        btnNext.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnNext.setOnAction(e -> {
+            if (currentExplorerPage < totalExplorerPages) {
+                currentExplorerPage++;
+                String b = bucketListView.getSelectionModel().getSelectedItem();
+                if (b != null) loadRecordsForBucket(b);
+            }
+        });
+
+        Button btnLast = new Button(">>|");
+        btnLast.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnLast.setOnAction(e -> {
+            if (currentExplorerPage < totalExplorerPages) {
+                currentExplorerPage = totalExplorerPages;
+                String b = bucketListView.getSelectionModel().getSelectedItem();
+                if (b != null) loadRecordsForBucket(b);
+            }
+        });
+
+        Label lblSize = new Label("Por pág:");
+        lblSize.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 10px;");
+
+        ComboBox<Integer> cmbPageSize = new ComboBox<>(FXCollections.observableArrayList(10, 25, 50, 100, 250));
+        cmbPageSize.setValue(25);
+        cmbPageSize.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white;");
+        cmbPageSize.setOnAction(e -> {
+            Integer val = cmbPageSize.getValue();
+            if (val != null) {
+                this.explorerPageSize = val;
+                this.currentExplorerPage = 1;
+                String b = bucketListView.getSelectionModel().getSelectedItem();
+                if (b != null) loadRecordsForBucket(b);
+            }
+        });
+
+        Label lblJump = new Label("Ir a:");
+        lblJump.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 10px; -fx-padding: 0 0 0 6;");
+
+        TextField txtJumpPage = new TextField();
+        txtJumpPage.setPrefWidth(45);
+        txtJumpPage.setPromptText("1");
+        txtJumpPage.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-size: 10px;");
+        txtJumpPage.setOnAction(e -> {
+            try {
+                int p = Integer.parseInt(txtJumpPage.getText().trim());
+                if (p >= 1 && p <= totalExplorerPages) {
+                    currentExplorerPage = p;
+                    String b = bucketListView.getSelectionModel().getSelectedItem();
+                    if (b != null) loadRecordsForBucket(b);
+                }
+            } catch (Exception ignored) {}
+        });
+
+        Button btnGo = new Button("Ir");
+        btnGo.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-size: 10px;");
+        btnGo.setOnAction(e -> txtJumpPage.fireEvent(new javafx.event.ActionEvent()));
+
+        paginationBar.getChildren().addAll(btnFirst, btnPrev, lblExplorerPageStatus, btnNext, btnLast, lblSize, cmbPageSize, lblJump, txtJumpPage, btnGo);
+
+        col3.getChildren().addAll(lblCol3, recordToolsBox, recordsTable, paginationBar, lblDetail, recordDetailJsonArea);
 
         split3.getItems().addAll(col1, col2, col3);
         split3.setDividerPositions(0.20, 0.44);
@@ -670,6 +856,20 @@ public class JettraStoreFXApp extends Application {
         }
     }
 
+    private void updateStorageModeBadge(StorageMode sm) {
+        if (storageModeBadge == null) return;
+        if (sm == null) sm = StorageMode.JVM_RAM;
+        if (sm.isDiskMemory()) {
+            storageModeBadge.setText("MODO: DISK-MEMORY (JettraMemory LSM)");
+            storageModeBadge.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+            if (cmbStorageMode != null) cmbStorageMode.getSelectionModel().select(1);
+        } else {
+            storageModeBadge.setText("MODO: JVM-RAM (Stack & Heap)");
+            storageModeBadge.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+            if (cmbStorageMode != null) cmbStorageMode.getSelectionModel().select(0);
+        }
+    }
+
     private void loadBucketsForCurrentDatabase() {
         if (client == null || !isConnected || currentDatabase == null) {
             bucketListView.setItems(FXCollections.observableArrayList());
@@ -678,8 +878,7 @@ public class JettraStoreFXApp extends Application {
             return;
         }
         try {
-            JettraDatabase db = client.getDatabase(currentDatabase);
-            Set<String> allCols = db.getAllCollectionNames();
+            Set<String> allCols = client.getCollectionNames(currentDatabase);
             List<String> list = new ArrayList<>(allCols);
             bucketListView.setItems(FXCollections.observableArrayList(list));
             if (!list.isEmpty()) {
@@ -697,79 +896,22 @@ public class JettraStoreFXApp extends Application {
     private void loadRecordsForBucket(String bucketName) {
         if (client == null || !isConnected || currentDatabase == null || bucketName == null) return;
         try {
-            JettraDatabase db = client.getDatabase(currentDatabase);
             ObservableList<RecordItem> items = FXCollections.observableArrayList();
-            long count = 0;
+            long count = client.getBucketCount(currentDatabase, bucketName);
+            totalExplorerRecords = count;
+            totalExplorerPages = (int) Math.max(1, Math.ceil((double) totalExplorerRecords / explorerPageSize));
+            int offset = (currentExplorerPage - 1) * explorerPageSize;
 
-            if (db.getDocumentEngineNames().contains(bucketName)) {
-                DocumentEngine engine = db.getDocumentEngine(bucketName);
-                count = engine.count();
-                int previewLimit = 500;
-                int added = 0;
-                for (Map<String, Object> doc : engine) {
-                    if (added++ >= previewLimit) break;
-                    String id = String.valueOf(doc.getOrDefault("_id", ""));
-                    String refs = doc.keySet().stream().filter(k -> k.startsWith("_ref")).map(k -> k + "->" + doc.get(k)).reduce("", (a, b) -> a + " " + b);
-                    items.add(new RecordItem(id, doc.toString(), refs.isBlank() ? "(Sin Ref)" : refs.trim()));
-                }
-            } else if (db.getVectorEngineNames().contains(bucketName)) {
-                var vecEngine = db.getVectorEngine(bucketName, 3);
-                var vecs = vecEngine.getAllVectors();
-                count = vecs.size();
-                for (var entry : vecs.entrySet()) {
-                    items.add(new RecordItem(entry.getKey(), Arrays.toString(entry.getValue()), "Vector [" + vecEngine.getDimensions() + "D]"));
-                }
-            } else if (db.getGraphEngineNames().contains(bucketName)) {
-                var graphEngine = db.getGraphEngine(bucketName);
-                var edgesMap = graphEngine.getAllEdges();
-                count = graphEngine.size();
-                for (String v : graphEngine.getVertices()) {
-                    var out = edgesMap.getOrDefault(v, List.of());
-                    String edgeDesc = out.isEmpty() ? "(Vértice aislado)" : out.stream().map(e -> e.label() + " -> " + e.targetVertex()).reduce("", (a, b) -> a + "; " + b);
-                    items.add(new RecordItem(v, edgeDesc.startsWith("; ") ? edgeDesc.substring(2) : edgeDesc, "Graph (" + out.size() + " aristas)"));
-                }
-            } else if (db.getKeyValueEngineNames().contains(bucketName)) {
-                var kvEngine = db.getKeyValueEngine(bucketName);
-                var map = kvEngine.getAll();
-                count = kvEngine.size();
-                for (var entry : map.entrySet()) {
-                    String valStr = new String(entry.getValue(), java.nio.charset.StandardCharsets.UTF_8);
-                    items.add(new RecordItem(entry.getKey(), valStr, "KeyValue"));
-                }
-            } else if (db.getTimeSeriesEngineNames().contains(bucketName)) {
-                var tsEngine = db.getTimeSeriesEngine(bucketName);
-                var series = tsEngine.getAll();
-                count = tsEngine.size();
-                for (var entry : series.entrySet()) {
-                    String timeStr = java.time.Instant.ofEpochMilli(entry.getKey()).toString();
-                    items.add(new RecordItem(String.valueOf(entry.getKey()), "Valor: " + entry.getValue() + " (" + timeStr + ")", "TimeSeries"));
-                }
-            } else if (db.getGeospatialEngineNames().contains(bucketName)) {
-                var geoEngine = db.getGeospatialEngine(bucketName);
-                var pts = geoEngine.getAllPoints();
-                count = geoEngine.size();
-                for (var entry : pts.entrySet()) {
-                    items.add(new RecordItem(entry.getKey(), "Lat: " + entry.getValue().latitude() + ", Lon: " + entry.getValue().longitude(), "Geospatial"));
-                }
-            } else if (db.getColumnarEngineNames().contains(bucketName)) {
-                var colEngine = db.getColumnarEngine(bucketName);
-                count = colEngine.size();
-                var numCols = colEngine.getNumericColumns();
-                var txtCols = colEngine.getTextColumns();
-                for (int i = 0; i < count; i++) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (var e : numCols.entrySet()) {
-                        if (i < e.getValue().size()) row.put(e.getKey(), e.getValue().get(i));
-                    }
-                    for (var e : txtCols.entrySet()) {
-                        if (i < e.getValue().size()) row.put(e.getKey(), e.getValue().get(i));
-                    }
-                    items.add(new RecordItem("row_" + (i + 1), row.toString(), "Columnar"));
-                }
+            List<JettraClient.BucketRecord> records = client.getBucketRecords(currentDatabase, bucketName, offset, explorerPageSize);
+            for (JettraClient.BucketRecord rec : records) {
+                items.add(new RecordItem(rec.id(), rec.summary(), rec.references()));
             }
 
             recordCountBadge.setText("Registros: " + count);
             recordsTable.setItems(items);
+            if (lblExplorerPageStatus != null) {
+                lblExplorerPageStatus.setText(String.format("Pág. %d de %d (%d total)", currentExplorerPage, totalExplorerPages, totalExplorerRecords));
+            }
             if (!items.isEmpty()) {
                 recordsTable.getSelectionModel().select(0);
             }
@@ -786,7 +928,7 @@ public class JettraStoreFXApp extends Application {
         dialog.showAndWait().ifPresent(name -> {
             if (!name.isBlank()) {
                 try {
-                    client.getDatabase(name.trim());
+                    client.createDatabase(name.trim());
                     refreshDataExplorerDatabases();
                     logStatus("Base de datos creada: " + name.trim());
                 } catch (Exception e) {
@@ -834,14 +976,7 @@ public class JettraStoreFXApp extends Application {
             String name = parts[0].trim();
             String engine = parts[1];
             try {
-                JettraDatabase db = client.getDatabase(currentDatabase);
-                switch (engine) {
-                    case "VECTOR" -> db.getVectorEngine(name, 3);
-                    case "GRAPH" -> db.getGraphEngine(name);
-                    case "TIMESERIES" -> db.getTimeSeriesEngine(name);
-                    case "KEYVALUE" -> db.getKeyValueEngine(name);
-                    default -> db.getDocumentEngine(name);
-                }
+                client.createBucket(currentDatabase, name, engine);
                 loadBucketsForCurrentDatabase();
                 logStatus("Bucket '" + name + "' (" + engine + ") creado en " + currentDatabase);
             } catch (Exception e) {
@@ -857,7 +992,7 @@ public class JettraStoreFXApp extends Application {
         alert.showAndWait().ifPresent(ans -> {
             if (ans == ButtonType.YES) {
                 try {
-                    client.getDatabase(currentDatabase).dropCollection(sel);
+                    client.dropBucket(currentDatabase, sel);
                     loadBucketsForCurrentDatabase();
                     logStatus("Bucket '" + sel + "' eliminado.");
                 } catch (Exception e) {
@@ -871,7 +1006,7 @@ public class JettraStoreFXApp extends Application {
         String sel = bucketListView.getSelectionModel().getSelectedItem();
         if (sel == null) return;
         try {
-            long c = client.getDatabase(currentDatabase).getDocumentEngine(sel).count();
+            long c = client.getBucketCount(currentDatabase, sel);
             recordCountBadge.setText("Registros: " + c);
             logStatus(String.format("Conteo para bucket '%s': %d registro(s).", sel, c));
         } catch (Exception e) {
@@ -900,31 +1035,7 @@ public class JettraStoreFXApp extends Application {
 
         dialog.showAndWait().ifPresent(entry -> {
             try {
-                Map<String, Object> map = new HashMap<>();
-                map.put("_id", entry.getKey());
-                map.put("raw_data", entry.getValue());
-                JettraDatabase db = client.getDatabase(currentDatabase);
-                String id = entry.getKey();
-                String val = entry.getValue();
-                if (db.getDocumentEngineNames().contains(bucket)) {
-                    db.getDocumentEngine(bucket).insert(id, map);
-                } else if (db.getKeyValueEngineNames().contains(bucket)) {
-                    db.getKeyValueEngine(bucket).put(id, val.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                } else if (db.getVectorEngineNames().contains(bucket)) {
-                    String[] parts = val.replace("[", "").replace("]", "").split(",");
-                    float[] floats = new float[parts.length];
-                    for (int i = 0; i < parts.length; i++) floats[i] = Float.parseFloat(parts[i].trim());
-                    db.getVectorEngine(bucket, floats.length).index(id, floats);
-                } else if (db.getGraphEngineNames().contains(bucket)) {
-                    db.getGraphEngine(bucket).addVertex(id);
-                } else if (db.getTimeSeriesEngineNames().contains(bucket)) {
-                    db.getTimeSeriesEngine(bucket).record(System.currentTimeMillis(), Double.parseDouble(val.trim()));
-                } else if (db.getGeospatialEngineNames().contains(bucket)) {
-                    String[] parts = val.split(",");
-                    db.getGeospatialEngine(bucket).insertPoint(id, Double.parseDouble(parts[0].trim()), Double.parseDouble(parts[1].trim()));
-                } else {
-                    db.getDocumentEngine(bucket).insert(id, map);
-                }
+                client.insertRecord(currentDatabase, bucket, entry.getKey(), entry.getValue());
                 loadRecordsForBucket(bucket);
                 logStatus("Registro '" + entry.getKey() + "' insertado con éxito.");
             } catch (Exception e) {
@@ -939,12 +1050,7 @@ public class JettraStoreFXApp extends Application {
         if (sel == null || bucket == null) return;
 
         try {
-            JettraDatabase db = client.getDatabase(currentDatabase);
-            if (db.getDocumentEngineNames().contains(bucket)) {
-                db.getDocumentEngine(bucket).delete(sel.id());
-            } else if (db.getKeyValueEngineNames().contains(bucket)) {
-                db.getKeyValueEngine(bucket).remove(sel.id());
-            }
+            client.deleteDocument(currentDatabase, bucket, sel.id());
             loadRecordsForBucket(bucket);
             logStatus("Registro '" + sel.id() + "' eliminado de '" + bucket + "'.");
         } catch (Exception e) {
@@ -1229,7 +1335,21 @@ public class JettraStoreFXApp extends Application {
             logStatus("ZGC invocado. Memoria compactada.");
         });
 
-        controlBar.getChildren().addAll(lblSection, spacer, chkAuto, btnRefreshNow, btnRunGc);
+        Button btnCompactMemory = new Button("⚡ Compactar JettraMemory (Off-Heap)");
+        btnCompactMemory.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnCompactMemory.setOnAction(e -> {
+            try {
+                if (client != null && currentDatabase != null) {
+                    client.compactMemory(currentDatabase);
+                    refreshResourceMetrics();
+                    logStatus("JettraMemory compactado con éxito para '" + currentDatabase + "'.");
+                }
+            } catch (Exception ex) {
+                logStatus("Error al compactar JettraMemory: " + ex.getMessage());
+            }
+        });
+
+        controlBar.getChildren().addAll(lblSection, spacer, chkAuto, btnRefreshNow, btnRunGc, btnCompactMemory);
 
         // Dos Paneles Principales en Grid: 1) Disco, 2) Recursos JVM/Off-Heap
         GridPane metricsGrid = new GridPane();
@@ -1445,7 +1565,89 @@ public class JettraStoreFXApp extends Application {
         return tab;
     }
 
+
+    private void executeQuickExplorerQuery(String query) {
+        if (client == null || !isConnected) {
+            logStatus("[ERROR] Debe conectarse a un nodo antes de consultar.");
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                long start = System.currentTimeMillis();
+                var res = client.sql(currentDatabase, query);
+                long elapsed = System.currentTimeMillis() - start;
+
+                ObservableList<RecordItem> items = FXCollections.observableArrayList();
+                int idx = 1;
+                for (var row : res.rows()) {
+                    String id = (row.size() > 0 && row.get(0) != null) ? row.get(0).toString() : "row_" + idx;
+                    String summary = row.toString();
+                    items.add(new RecordItem(id, summary, "Query Match"));
+                    idx++;
+                }
+
+                Platform.runLater(() -> {
+                    recordsTable.setItems(items);
+                    recordCountBadge.setText("Resultados: " + items.size());
+                    lblExplorerPageStatus.setText(String.format("Consulta: %d filas (%d ms)", items.size(), elapsed));
+                    logStatus(String.format("Consulta ejecutada: '%s' -> %d filas en %d ms", query, items.size(), elapsed));
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> logStatus("[ERROR Consulta] " + ex.getMessage()));
+            }
+        }).start();
+    }
+
     public static void main(String[] args) {
         launch(args);
     }
+
+    private void showPoliceAuditDialog() {
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("Auditoría de Seguridad de Memoria - JettraPolice Sentinel");
+        dialog.setHeaderText("Telemetría de Estabilidad JVM y Prevención Anti-OOM");
+
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(16));
+        content.setPrefWidth(550);
+
+        long maxMem = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        long totMem = Runtime.getRuntime().totalMemory() / (1024 * 1024);
+        long freeMem = Runtime.getRuntime().freeMemory() / (1024 * 1024);
+        long usedMem = totMem - freeMem;
+        double sat = (double) usedMem / maxMem * 100.0;
+
+        Label lblMem = new Label(String.format("Heap JVM: %d MB Usados de %d MB Máx (Saturación: %.1f%%)", usedMem, maxMem, sat));
+        lblMem.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+
+        ProgressBar pbar = new ProgressBar(sat / 100.0);
+        pbar.setPrefWidth(500);
+        pbar.setStyle(sat > 80 ? "-fx-accent: #EF4444;" : sat > 60 ? "-fx-accent: #F59E0B;" : "-fx-accent: #10B981;");
+
+        Label lblAlerts = new Label("Registro de Intervenciones y Alertas Preventivas:");
+        lblAlerts.setStyle("-fx-font-weight: bold; -fx-padding: 8 0 0 0;");
+
+        TextArea txtAlerts = new TextArea();
+        txtAlerts.setPrefRowCount(10);
+        txtAlerts.setEditable(false);
+        txtAlerts.setStyle("-fx-font-family: monospace; -fx-font-size: 11px;");
+
+        var alerts = io.jettra.store.police.JettraPolice.getInstance().getAlerts();
+        StringBuilder sb = new StringBuilder();
+        if (alerts.isEmpty()) {
+            sb.append("[INFO] JettraPolice: 0 incidentes de memoria. Sistema en estado óptimo (NORMAL).\n");
+        } else {
+            for (var a : alerts) {
+                sb.append(String.format("[%s] %s: %s\n", a.timestamp(), a.code(), a.message()));
+            }
+        }
+        txtAlerts.setText(sb.toString());
+
+        content.getChildren().addAll(lblMem, pbar, lblAlerts, txtAlerts);
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.showAndWait();
+    }
+
 }

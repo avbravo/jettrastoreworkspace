@@ -130,3 +130,29 @@ Cuando se detecta una contingencia crítica, `JettraStorePoliceFX` proyecta pane
 * **Fallo de Nodo (Node Crash / Disconnection):** El nodo caído pierde su iluminación, se fragmenta en mallas oscuras y un prisma rojo parpadeante proyecta: `[CRITICAL: NODE-02 UNREACHABLE - RAFT QUORUM PRESERVED]`.
 * **Saturación Inminente de Disco Físico:** Si la ruta `/var/jettra/data` alcanza el $90\%$, los cilindros de disco emiten chispas visuales y `JettraPolice` ejecuta una animación de rayo láser sobre el nodo, simbolizando la compactación en caliente de SSTables.
 * **Ataque de Seguridad o Intrusión:** Si se registran violaciones de permisos sobre el usuario `admin`, un campo de advertencia estroboscópico cubre la escena con el texto: `[SECURITY BREACH: SUPERUSER TAMPERING PREVENTED]`.
+
+---
+
+## 9. Plano Cartesiano Cybernetic 3D y Referencias Espaciales Mejoradas
+
+El entorno 3D implementa un sistema de coordenadas espaciales de precisión cibernética para facilitar la orientación tridimensional de los operadores:
+
+* **Ejes Cartesianos Tridimensionales:**
+  * **Eje X (Rojo Neón):** 720 unidades a lo largo del eje este-oeste con punteros cónicos en $\pm 360$.
+  * **Eje Y (Verde Neón Cenital):** 200 unidades verticales con anillos holográficos de altitud cada 40 unidades.
+  * **Eje Z (Azul Eléctrico / Cian):** 720 unidades en profundidad norte-sur con flechas directrices.
+* **Anillos de Alcance Radar:** Cuatro círculos concéntricos a radios de 100, 200, 300 y 360 unidades con resplandor neón en el plano del suelo.
+* **Balizas de Límites Perimetrales:** 4 torres en las esquinas $(\pm 360, 0, \pm 360)$ con haces de luz ascendentes y orbes de energía dorada.
+
+---
+
+## 10. Panel de Control: Pestaña de Eventos y Estado en Tiempo Real
+
+El panel lateral derecho incorpora la pestaña **`Eventos & Estado`**, permitiendo la supervisión reactiva del centinela `JettraPolice`:
+* **Estado del Centinela:** Indicador de estado del agente (`NORMAL`, `WARNING_RAM`, `CRITICAL_SECURITY`) y confirmación del hilo daemon virtual.
+* **Telemetría de Memoria Heap:** Medidor visual animado de saturación de Heap en tiempo real, indicando MB en uso, libres y límites máximos.
+* **Feed de Eventos en Tiempo Real:** Lista cronológica de intervenciones del sistema:
+  * `HEAP_EXHAUSTION_PREVENTED`: Intervenciones donde se forzó paginación lazy preventiva.
+  * `CRITICAL_RAM_PRESSURE`: Advertencias críticas de memoria.
+  * `POLICE_STARTED`: Estado de arranque del supervisor.
+* **Botonera Interactiva:** Permite simular consultas masivas para probar el mecanismo de auto-paginación y verificar la respuesta reactiva del agente 3D sin detener el clúster.

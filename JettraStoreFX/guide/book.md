@@ -97,3 +97,46 @@ El componente estrella de `JettraStoreFX` es su lienzo tridimensional impulsado 
 * Autocompletado de colecciones, campos y funciones especializadas (`VECTOR_COSINE_SIMILARITY`, `TIME_BUCKET`).
 * Tabla interactiva de resultados con exportación inmediata a JSON, CSV o formato plano `.jettra`.
 * Visor del plan de ejecución (Explain Plan) que reporta el uso de índices secundarios dispersos y filtros de Bloom en nanosegundos.
+
+---
+
+## 9. Paginación Inteligente y Control de Carga en el Explorador de Datos
+
+Para manejar colecciones masivas de datos (como los 200,000 clientes o 1,000,000 facturas de `example_factura_db`), `JettraStoreFX` incorpora una barra de paginación interactiva situada directamente bajo la tabla de registros:
+
+* **Controles de Desplazamiento:**
+  * `|<< Primero`: Salta a la página inicial (offset 0).
+  * `< Anterior`: Retrocede una página de registros.
+  * `Pág. X de Y (Z reg.)`: Indicador dinámico de estado en tiempo real.
+  * `Siguiente >`: Avanza a la siguiente página.
+  * `Último >>|`: Salta a la última página de la colección.
+* **Selector Dinámico de Tamaño de Página:** Menú desplegable con opciones de 10, 25, 50, 100 y 250 registros por lote.
+* **Carga Perezosa O(1):** El motor no vuelca la colección completa en el Heap de JavaFX, sino que recupera únicamente el lote activo mediante streaming delimitado, manteniendo la memoria de la interfaz en niveles mínimos y fluidos.
+
+---
+
+## 10. Auditoría de Seguridad y Prevención Anti-OOM con JettraPolice
+
+Desde la barra de acciones de bases de datos, el botón **`🛡️ Police`** despliega el Centro de Auditoría de Estabilidad:
+* **Indicador en Tiempo Real de Saturación de Heap:** Barra visual con código de colores (Verde < 60%, Ámbar 60-80%, Rojo > 80%).
+* **Historial de Intervenciones:** Listado cronológico de alertas preventivas (ej. `HEAP_EXHAUSTION_PREVENTED`, `CRITICAL_RAM_PRESSURE`).
+* **Botón de Inserción Masiva 3M:** Carga en segundo plano la base de datos de ejemplo `example_factura_db` con 3,000,000 de objetos multimodelo conectados mediante JettraRef sin bloquear la interfaz.
+
+---
+
+## 8. Arquitectura Desacoplada con `JettraStoreDriver` y Selector de Modo de Almacenamiento
+
+### 8.1 Comunicación Exclusiva a través de `JettraStoreDriver`
+A partir de la versión 1.0+, `JettraStoreFX` opera como un cliente 100% desacoplado que se comunica exclusivamente mediante el conector oficial **`JettraStoreDriver` (`JettraClient`)**:
+* **Cero Acoplamiento:** La consola gráfica no accede a clases internas del motor ni a estructuras de bajo nivel en disco.
+* **APIs de Alto Rendimiento:** Todas las operaciones de listado, conteo, paginación, inserción y borrado invocan métodos remotos o multiplexados de `JettraClient`.
+
+### 8.2 Selector de Modo de Almacenamiento: `JVM-RAM` vs `DISK-MEMORY (JettraMemory)`
+`JettraStoreFX` incorpora un conmutador visual dinámico en la barra superior y en el explorador de datos:
+1. **Modo `JVM-RAM` (Memoria RAM Stack & Heap):**
+   * Manipulación en memoria de alto rendimiento mediante `UnifiedMap` y `JettraCollections`.
+   * Máxima velocidad de consulta y acceso para conjuntos de datos operacionales en caliente.
+2. **Modo `DISK-MEMORY` (JettraMemory Off-Heap LSM):**
+   * Persistencia y lectura directa en disco fuera del Heap de la JVM mediante Project Panama (FFM API).
+   * Elimina la presión del Garbage Collector (*zero GC pressure*) y previene desbordamientos de Heap ante volúmenes masivos.
+   * Botón dedicado para ejecutar compactación en caliente de `JettraMemory` desde la pestaña de recursos.

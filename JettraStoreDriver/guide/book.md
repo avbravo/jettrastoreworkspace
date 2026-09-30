@@ -201,3 +201,125 @@ client.getDatabase("store").getRecordsEngine("devices", DeviceTelemetry.class)
 client.getDatabase("store").getColumnarEngine("financial_olap")
     .appendRow(Map.of("revenue", 125000.0, "quarter", "Q3"));
 ```
+
+---
+
+## 7. Paginación Segura y Streaming Lazy (`sqlPaged` y `LazyPagedCursor`)
+
+Para prevenir de forma absoluta el desbordamiento de memoria (`OutOfMemoryError: Java heap space`) ante consultas sobre colecciones con cientos de miles o millones de registros, `JettraStoreDriver` incorpora soporte nativo para **paginación acotada** y **cursores perezosos distribuidos**:
+
+### 7.1 Consultas Paginadas con `sqlPaged`
+El método `sqlPaged` reescribe y acota dinámicamente cualquier consulta SQL, aplicando `LIMIT` y `OFFSET` calculados para procesar la página solicitada:
+
+```java
+// Recuperar la página 2 con 50 registros por lote
+JettraSQLProcessor.QueryResult page2 = client.sqlPaged(
+    "example_factura_db", 
+    "SELECT * FROM clientes", 
+    2,  // page (1-based)
+    50  // pageSize
+);
+
+System.out.printf("Filas recuperadas en página: %d. Resumen: %s%n", 
+    page2.rows().size(), page2.message());
+```
+
+### 7.2 Procesamiento en Lotes con `LazyPagedCursor`
+Cuando una aplicación por lotes (*batch*) o un microservicio de exportación necesita recorrer una colección masiva (como 200,000 clientes o 1,000,000 facturas) sin acumular los datos en memoria:
+
+```java
+var cursor = client.cursor("example_factura_db", "clientes", 100);
+
+int totalProcesados = 0;
+while (cursor.hasNextPage()) {
+    List<Map<String, Object>> pagina = cursor.fetchNextPage();
+    if (pagina.isEmpty()) break;
+    
+    for (Map<String, Object> doc : pagina) {
+        // Procesar documento de forma streaming O(1) de memoria
+        totalProcesados++;
+    }
+    // Al salir del bucle, la página anterior queda disponible para el Garbage Collector (ZGC)
+}
+System.out.println("Total procesado con 0% impacto en Heap: " + totalProcesados);
+```
+
+---
+
+## 8. Integración con el Centinela Autónomo `JettraPolice`
+
+El driver expone métodos directos para comunicarse con el subsistema de telemetría y prevención de saturación de memoria **`JettraPolice`**:
+
+```java
+// 1. Evaluar si una consulta masiva agotaría el Heap antes de ejecutarla
+JettraPolice.PoliceDecision decision = client.evaluateQuerySafety(
+    "example_factura_db", 
+    "clientes", 
+    0 // 0 = sin límite explícito (SELECT * completo)
+);
+
+if (decision.interventionRequired()) {
+    System.out.printf("[AVISO POLICE] %s%n", decision.rationale());
+    System.out.printf("Límite forzado de seguridad: %d registros por lote.%n", 
+        decision.enforcedLimit());
+}
+
+// 2. Consultar el historial de alertas preventivas registradas en el clúster
+List<JettraPolice.PoliceAlert> alerts = client.getPolice().getAlerts();
+for (var alert : alerts) {
+    System.out.printf("[%s] %s: %s%n", alert.timestamp(), alert.code(), alert.message());
+}
+```
+
+---
+
+## 9. Integración de Almacenamiento Off-Heap de Ultra-Baja Latencia con `JettraMemory`
+
+`JettraStoreDriver` integra de forma nativa el motor off-heap `JettraMemory`, permitiendo almacenar y recuperar buffers binarios nativos fuera del Garbage Collector mediante Project Panama (FFM API):
+
+### 9.1 Almacenamiento y Recuperación Binaria Off-Heap
+```java
+// 1. Obtener acceso al motor JettraMemoryEngine para una base de datos
+JettraMemoryEngine memEngine = client.getMemoryEngine("example_factura_db");
+
+// 2. Almacenar payload binario directamente sin serialización en Heap
+byte[] binaryPayload = Files.readAllBytes(Path.of("reporte_fiscal.pdf"));
+client.putBinary("example_factura_db", "factura:pdf:F-100245", binaryPayload);
+
+// 3. Recuperar payload binario de forma instantánea
+Optional<byte[]> data = client.getBinary("example_factura_db", "factura:pdf:F-100245");
+if (data.isPresent()) {
+    System.out.printf("Payload binario recuperado (%d bytes) sin presión en Heap.%n", data.get().length);
+}
+
+// 4. Métricas de memoria nativa y compactación en caliente
+Map<String, Object> memMetrics = client.getMemoryMetrics("example_factura_db");
+System.out.printf("Off-Heap en uso: %s bytes | Segmentos activos: %s%n", 
+    memMetrics.get("offHeapBytesUsed"), memMetrics.get("activeSegments"));
+
+// Ejecutar compactación fuera de banda
+client.compactMemory("example_factura_db");
+```
+
+### 9.2 Gestión Programática de Modos: `JVM-RAM` vs `DISK-MEMORY`
+El driver permite configurar el modo de almacenamiento por base de datos o de manera global:
+```java
+// Consultar el modo actual
+StorageMode mode = client.getStorageMode("example_factura_db");
+
+// Conmutar a modo DISK-MEMORY (JettraMemory Off-Heap LSM)
+client.setStorageMode("example_factura_db", StorageMode.DISK_MEMORY);
+
+// O conmutar a modo JVM-RAM
+client.setStorageMode("example_factura_db", StorageMode.JVM_RAM);
+```
+
+
+---
+
+## 10. Directrices de Arquitectura y Buenas Prácticas
+
+1. **Evitar Consultas Abiertas sin Límite:** Siempre use `sqlPaged` o configure un `LIMIT` razonable al consultar colecciones de alta cardinalidad.
+2. **Uso de Virtual Threads:** Ejecute las llamadas al driver en hilos virtuales creados con `Thread.ofVirtual().start(...)` para maximizar el throughput concurrente.
+3. **Liberación de Recursos:** Siempre utilice bloques `try-with-resources` sobre `JettraClient` para garantizar la liberación de arenas nativas Off-Heap de Project Panama.
+4. **Almacenamiento Híbrido Document + Off-Heap:** Use `JettraDocument` para esquemas de consulta y metadatos, y almacene adjuntos masivos (PDFs, firmas criptográficas, imágenes) a través de `client.putBinary(...)` delegando en `JettraMemory`.

@@ -26,7 +26,12 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-        </dependencies>
+            <dependency>
+            <groupId>io.jettra</groupId>
+            <artifactId>JettraMemory</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+    </dependencies>
     </dependencyManagement>
 
     <dependencies>
@@ -53,6 +58,11 @@
             <groupId>io.jettra</groupId>
             <artifactId>JettraTest</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jettra</groupId>
+            <artifactId>JettraMemory</artifactId>
+            <version>1.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
 

@@ -19,6 +19,8 @@ public final class ImmersiveWorld3D extends Group {
     private final Group knowledgeBaseGroup = new Group();
     private final Group beaconsGroup = new Group();
     private double worldTime = 0;
+    private final Cylinder dynamicRadarPulse;
+    private final Group quadrantNodesGroup = new Group();
 
     // Posiciones de Nodos y Bases de Datos (Disposición en Anfiteatro frente a Cámara)
     public static final double[][] NODE_POSITIONS = {
@@ -51,6 +53,17 @@ public final class ImmersiveWorld3D extends Group {
 
         // 4. Rejilla Reticular de Doble Nivel (Líneas Primarias y Secundarias)
         buildCartesianGrid();
+
+        // 4.1 Anillos de Alcance Radar Cartesiano y Balizas Perimetrales
+        buildCartesianRadarRings();
+        buildPerimeterBeacons();
+        buildQuadrantWaypoints();
+        getChildren().add(quadrantNodesGroup);
+
+        this.dynamicRadarPulse = new Cylinder(50, 1.0);
+        dynamicRadarPulse.setMaterial(new PhongMaterial(Color.rgb(0, 240, 255, 0.4)));
+        dynamicRadarPulse.setTranslateY(0.9);
+        getChildren().add(dynamicRadarPulse);
 
         // 5. Monolitos de Almacenamiento (Disposición en Anfiteatro Visible)
         buildClusterMonoliths();
@@ -242,6 +255,62 @@ public final class ImmersiveWorld3D extends Group {
         getChildren().add(gridGroup);
     }
 
+    private void buildCartesianRadarRings() {
+        Group rings = new Group();
+        int[] radii = {100, 200, 300, 360};
+        Color[] colors = {
+            Color.rgb(56, 189, 248, 0.50),
+            Color.rgb(16, 185, 129, 0.45),
+            Color.rgb(250, 204, 21, 0.40),
+            Color.rgb(2, 132, 199, 0.65)
+        };
+
+        for (int i = 0; i < radii.length; i++) {
+            Cylinder ring = new Cylinder(radii[i], 1.2);
+            ring.setMaterial(new PhongMaterial(colors[i]));
+            ring.setTranslateY(0.7);
+            rings.getChildren().add(ring);
+        }
+        getChildren().add(rings);
+    }
+
+    private void buildPerimeterBeacons() {
+        Group beacons = new Group();
+        double[][] corners = {
+            {360, 360}, {-360, 360}, {360, -360}, {-360, -360}
+        };
+
+        for (double[] c : corners) {
+            // Poste base
+            Box base = new Box(12, 24, 12);
+            base.setMaterial(new PhongMaterial(Color.rgb(15, 23, 42)));
+            base.setTranslateX(c[0]);
+            base.setTranslateY(4);
+            base.setTranslateZ(c[1]);
+
+            // Haz de luz vertical
+            Cylinder beam = new Cylinder(2.5, 90);
+            PhongMaterial beamMat = new PhongMaterial(Color.rgb(0, 242, 254, 0.75));
+            beamMat.setSpecularColor(Color.WHITE);
+            beam.setMaterial(beamMat);
+            beam.setTranslateX(c[0]);
+            beam.setTranslateY(-45);
+            beam.setTranslateZ(c[1]);
+
+            // Esfera de energía superior
+            Sphere orb = new Sphere(6);
+            PhongMaterial orbMat = new PhongMaterial(Color.rgb(250, 204, 21));
+            orbMat.setSpecularColor(Color.WHITE);
+            orb.setMaterial(orbMat);
+            orb.setTranslateX(c[0]);
+            orb.setTranslateY(-90);
+            orb.setTranslateZ(c[1]);
+
+            beacons.getChildren().addAll(base, beam, orb);
+        }
+        getChildren().add(beacons);
+    }
+
     private void buildClusterMonoliths() {
         Group monolithsGroup = new Group();
 
@@ -381,6 +450,31 @@ public final class ImmersiveWorld3D extends Group {
             node.setScaleX(1.0 + pulse * 0.8);
             node.setScaleY(1.0 + pulse * 0.8);
             node.setScaleZ(1.0 + pulse * 0.8);
+        }
+    }
+
+
+    private void buildQuadrantWaypoints() {
+        double[][] quadCoords = {
+            {180, 180, 1}, {-180, 180, 2}, {-180, -180, 3}, {180, -180, 4}
+        };
+
+        for (double[] q : quadCoords) {
+            Sphere nodeOrb = new Sphere(5);
+            PhongMaterial orbMat = new PhongMaterial(Color.rgb(56, 189, 248));
+            orbMat.setSpecularColor(Color.WHITE);
+            nodeOrb.setMaterial(orbMat);
+            nodeOrb.setTranslateX(q[0]);
+            nodeOrb.setTranslateY(-4);
+            nodeOrb.setTranslateZ(q[1]);
+
+            Cylinder nodeRing = new Cylinder(14, 1.2);
+            nodeRing.setMaterial(new PhongMaterial(Color.rgb(14, 165, 233, 0.6)));
+            nodeRing.setTranslateX(q[0]);
+            nodeRing.setTranslateY(-2);
+            nodeRing.setTranslateZ(q[1]);
+
+            quadrantNodesGroup.getChildren().addAll(nodeOrb, nodeRing);
         }
     }
 

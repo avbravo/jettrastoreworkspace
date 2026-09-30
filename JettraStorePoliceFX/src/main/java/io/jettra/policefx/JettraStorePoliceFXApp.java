@@ -12,6 +12,7 @@ import javafx.scene.Scene;
 import javafx.scene.SceneAntialiasing;
 import javafx.scene.SubScene;
 import javafx.scene.control.*;
+import javafx.collections.FXCollections;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -25,6 +26,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class JettraStorePoliceFXApp extends Application {
+    private Runnable liveAlertsRefresher;
+    private long lastAlertsTick = 0;
     private JettraClient client;
     private ImmersiveWorld3D world3D;
     private AnimationTimer timer;
@@ -128,6 +131,12 @@ public class JettraStorePoliceFXApp extends Application {
                 }
 
                 // Sincronización continua de supervisión reactiva de JettraPolice
+                if (now - lastAlertsTick > 1_000_000_000L) {
+                    lastAlertsTick = now;
+                    if (liveAlertsRefresher != null) {
+                        liveAlertsRefresher.run();
+                    }
+                }
                 var alerts = io.jettra.store.police.JettraPolice.getInstance().getAlerts();
                 if (!alerts.isEmpty()) {
                     var lastAlert = alerts.getLast();
@@ -204,7 +213,10 @@ public class JettraStorePoliceFXApp extends Application {
         // TAB 3: CHAT CON EL AGENTE
         Tab tabChat = new Tab("Chat Sentinel", buildChatPanel());
 
-        tabPane.getTabs().addAll(tabDatabases, tabAgent, tabChat);
+        // TAB 4: EVENTOS & ESTADO (Supervisión Reactiva y Prevención Heap Anti-OOM)
+        Tab tabEvents = new Tab("Eventos & Estado", buildEventsAndStatePanel());
+
+        tabPane.getTabs().addAll(tabDatabases, tabAgent, tabEvents, tabChat);
         VBox.setVgrow(tabPane, Priority.ALWAYS);
 
         sidebarContainer.getChildren().addAll(sidebarTitle, tabPane);
@@ -765,4 +777,102 @@ public class JettraStorePoliceFXApp extends Application {
     public static void main(String[] args) {
         launch(args);
     }
+
+    private ScrollPane buildEventsAndStatePanel() {
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(10));
+        content.setStyle("-fx-background-color: transparent;");
+
+        // 1. Cabecera de Estado del Agente y Centinela
+        Label lblHeader = new Label("ESTADO DEL CENTINELA JETTRAPOLICE");
+        lblHeader.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 11px; -fx-font-weight: bold;");
+
+        HBox agentStateBox = new HBox(8);
+        agentStateBox.setAlignment(Pos.CENTER_LEFT);
+        agentStateBox.setPadding(new Insets(8));
+        agentStateBox.setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-radius: 6; -fx-background-radius: 6;");
+
+        Label lblAgentStatus = new Label("ESTADO: NORMAL");
+        lblAgentStatus.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-size: 10px;");
+
+        Label lblDaemon = new Label("Daemon: VirtualThread Activo");
+        lblDaemon.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 10px;");
+
+        agentStateBox.getChildren().addAll(lblAgentStatus, lblDaemon);
+
+        // 2. Telemetría de Memoria Heap
+        VBox heapBox = new VBox(4);
+        heapBox.setPadding(new Insets(8));
+        heapBox.setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-radius: 6; -fx-background-radius: 6;");
+
+        long maxMem = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        long totMem = Runtime.getRuntime().totalMemory() / (1024 * 1024);
+        long freeMem = Runtime.getRuntime().freeMemory() / (1024 * 1024);
+        long usedMem = totMem - freeMem;
+        double sat = (double) usedMem / maxMem * 100.0;
+
+        Label lblHeapTitle = new Label(String.format("Heap JVM: %d MB / %d MB (%.1f%%)", usedMem, maxMem, sat));
+        lblHeapTitle.setStyle("-fx-text-fill: #FACC15; -fx-font-size: 10px; -fx-font-weight: bold;");
+
+        ProgressBar heapProg = new ProgressBar(sat / 100.0);
+        heapProg.setPrefWidth(310);
+        heapProg.setStyle(sat > 80 ? "-fx-accent: #EF4444;" : sat > 60 ? "-fx-accent: #F59E0B;" : "-fx-accent: #10B981;");
+
+        Label lblThresholds = new Label("Umbral Alerta: 75% | Umbral Crítico: 85%");
+        lblThresholds.setStyle("-fx-text-fill: #64748B; -fx-font-size: 9px;");
+
+        heapBox.getChildren().addAll(lblHeapTitle, heapProg, lblThresholds);
+
+        // 3. Lista de Eventos y Alertas
+        Label lblEvents = new Label("HISTORIAL DE EVENTOS Y ALERTAS (Tiempo Real)");
+        lblEvents.setStyle("-fx-text-fill: #EA580C; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 4 0 0 0;");
+
+        ListView<String> eventsList = new ListView<>();
+        eventsList.setPrefHeight(230);
+        eventsList.setStyle("-fx-background-color: #020617; -fx-control-inner-background: #020617; -fx-text-fill: #E2E8F0; -fx-font-family: monospace; -fx-font-size: 10px;");
+
+        // Cargar alertas existentes
+        Runnable refreshAlerts = () -> {
+            var alerts = io.jettra.store.police.JettraPolice.getInstance().getAlerts();
+            List<String> items = new ArrayList<>();
+            if (alerts.isEmpty()) {
+                items.add("🟢 [INFO] Centinela activo. Sin alertas preventivas.");
+            } else {
+                for (var a : alerts.reversed()) {
+                    String prefix = a.code().contains("CRITICAL") ? "🚨" : a.code().contains("EXHAUSTION") ? "🛡️" : "⚡";
+                    items.add(String.format("%s [%s] %s\n   ↳ %s", prefix, a.code(), a.timestamp().toString().substring(11, 19), a.message()));
+                }
+            }
+            eventsList.setItems(FXCollections.observableArrayList(items));
+        };
+        this.liveAlertsRefresher = refreshAlerts;
+        refreshAlerts.run();
+
+        // 4. Botonera de Acción
+        HBox actions = new HBox(6);
+        Button btnSimulate = new Button("⚡ Simular Anti-OOM");
+        btnSimulate.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
+        btnSimulate.setOnAction(e -> {
+            var dec = io.jettra.store.police.JettraPolice.getInstance().evaluateHeapSafety("TEST_SIMULATE", "clientes", 200000, 0, 512);
+            world3D.getAgentMesh().setStatus(JettraPoliceAgentMesh.AgentStatus.WARNING_RAM);
+            world3D.getAgentMesh().setThought("Intervención Anti-OOM activada: forzada paginación lazy a " + dec.enforcedLimit() + " filas.");
+            lblAgentStatus.setText("ESTADO: WARNING_RAM");
+            lblAgentStatus.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 3 8 3 8; -fx-background-radius: 4; -fx-font-size: 10px;");
+            refreshAlerts.run();
+        });
+
+        Button btnRefresh = new Button("🔄 Refrescar");
+        btnRefresh.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 10px;");
+        btnRefresh.setOnAction(e -> refreshAlerts.run());
+
+        actions.getChildren().addAll(btnSimulate, btnRefresh);
+
+        content.getChildren().addAll(lblHeader, agentStateBox, heapBox, lblEvents, eventsList, actions);
+
+        ScrollPane sp = new ScrollPane(content);
+        sp.setFitToWidth(true);
+        sp.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        return sp;
+    }
+
 }

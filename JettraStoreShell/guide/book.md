@@ -801,3 +801,30 @@ logout
   kv get <tabla> <clave>                Recupera el valor asociado a la clave.
 ==============================================================================================
 ```
+
+---
+
+## 7. Gestión del Modo de Almacenamiento: `JVM-RAM` vs `DISK-MEMORY (JettraMemory)`
+
+`JettraStoreShell` permite consultar y conmutar en caliente el modo de almacenamiento entre la memoria RAM de la JVM y el motor de disco off-heap `JettraMemory`:
+
+### 7.1 Comandos de Consola
+* **Consultar Modo Activo:**
+  ```text
+  jettra-shell> STORAGE_MODE
+  jettra-shell> SHOW STORAGE_MODE
+  ```
+* **Conmutar a Memoria RAM (JVM Heap/Stack):**
+  ```text
+  jettra-shell> STORAGE_MODE JVM_RAM
+  jettra-shell> SET STORAGE_MODE = JVM-RAM
+  ```
+* **Conmutar a Disco Directo Off-Heap (JettraMemory LSM):**
+  ```text
+  jettra-shell> STORAGE_MODE DISK_MEMORY
+  jettra-shell> SET STORAGE_MODE = DISK-MEMORY
+  ```
+
+### 7.2 Comportamiento de los Modos
+* **`JVM-RAM`:** Las colecciones se cargan y consultan en las áreas de memoria Stack y Heap de Java con estructuras `UnifiedMap`, aprovechando ZGC y Compact Object Headers.
+* **`DISK-MEMORY`:** Los registros se escriben y leen directamente en disco mediante `JettraMemory` utilizando punteros nativos Panama `MemorySegment`, asegurando 0% de impacto en el montículo.

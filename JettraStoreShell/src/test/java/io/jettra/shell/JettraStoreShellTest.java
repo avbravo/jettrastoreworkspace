@@ -107,6 +107,16 @@ public class JettraStoreShellTest {
         String lazyOn = shell.executeCommand("lazy reference on");
         assertTrue(lazyOn.contains("ACTIVADO (ON)"));
         assertTrue(shell.isLazyLoad());
+
+        // 5. Configuración de STORAGE_MODE (JVM_RAM vs DISK_MEMORY / JettraMemory)
+        String smStatus = shell.executeCommand("STORAGE_MODE");
+        assertTrue(smStatus.contains("MODO DE ALMACENAMIENTO"));
+
+        String smDisk = shell.executeCommand("STORAGE_MODE DISK_MEMORY");
+        assertTrue(smDisk.contains("DISK-MEMORY"));
+
+        String smRam = shell.executeCommand("STORAGE_MODE JVM_RAM");
+        assertTrue(smRam.contains("JVM-RAM"));
     }
 
     @Test
@@ -425,6 +435,44 @@ public class JettraStoreShellTest {
             // 3. select con WHERE usando índice
             String resWhere = shell.executeCommand("select * from clientes where _id = cli_100");
             assertTrue(resWhere.contains("JETTRASQL RESULTADO"));
+        }
+    }
+
+    @Test
+    @DisplayName("Debe gestionar paginación interactiva con FIRST, PREV, NEXT, LAST y PAGE_SIZE")
+    public void testInteractivePaginationCommands() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+            shell.executeCommand("use example_factura_db");
+
+            // 1. Configurar tamaño de página
+            String sizeRes = shell.executeCommand("PAGE_SIZE 15");
+            assertTrue(sizeRes.contains("15 registros"));
+
+            // 2. Ejecutar consulta base que activa paginación
+            String p1 = shell.executeCommand("select * from clientes");
+            assertTrue(p1.contains("PÁGINA [ 1 /"));
+            assertTrue(p1.contains("Tamaño de página: 15"));
+
+            // 3. Desplazarse a la siguiente página (NEXT o SIGUIENTE)
+            String p2 = shell.executeCommand("NEXT");
+            assertTrue(p2.contains("PÁGINA [ 2 /"));
+
+            // 4. Desplazarse a la página anterior (PREV o ANTERIOR)
+            String prev = shell.executeCommand("PREV");
+            assertTrue(prev.contains("PÁGINA [ 1 /"));
+
+            // 5. Ir a la última página (LAST o ULTIMO)
+            String pLast = shell.executeCommand("LAST");
+            assertTrue(pLast.contains("PÁGINA ["));
+
+            // 6. Ir a la primera página (FIRST o PRIMERO)
+            String pFirst = shell.executeCommand("FIRST");
+            assertTrue(pFirst.contains("PÁGINA [ 1 /"));
+
+            // 7. Salto directo a página específica (PAGE 3)
+            String p3 = shell.executeCommand("PAGE 3");
+            assertTrue(p3.contains("PÁGINA [ 3 /"));
         }
     }
 }

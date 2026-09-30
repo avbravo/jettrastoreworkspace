@@ -16,13 +16,19 @@ import java.util.stream.StreamSupport;
  */
 public final class DocumentEngine implements Iterable<Map<String, Object>> {
     private final String collectionName;
+    private final io.jettra.store.core.JettraDatabase database;
     private final UnifiedMap<String, Map<String, Object>> documents = UnifiedMap.newMap(64);
     private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
     private final ReentrantReadWriteLock.ReadLock rLock = rwLock.readLock();
     private final ReentrantReadWriteLock.WriteLock wLock = rwLock.writeLock();
 
     public DocumentEngine(String collectionName) {
+        this(collectionName, null);
+    }
+
+    public DocumentEngine(String collectionName, io.jettra.store.core.JettraDatabase database) {
         this.collectionName = collectionName;
+        this.database = database;
     }
 
     public void insert(String id, Map<String, Object> document) {
@@ -32,6 +38,9 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
             copy.putAll(document);
             copy.put("_id", id);
             documents.put(id, copy);
+            if (database != null && database.getStorageMode().isDiskMemory()) {
+                persistToDiskMemory(id, copy);
+            }
         } finally {
             wLock.unlock();
         }
@@ -40,10 +49,38 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
     public Map<String, Object> findById(String id) {
         rLock.lock();
         try {
-            return documents.get(id);
+            Map<String, Object> doc = documents.get(id);
+            if (doc == null && database != null && database.getStorageMode().isDiskMemory()) {
+                doc = loadFromDiskMemory(id);
+            }
+            return doc;
         } finally {
             rLock.unlock();
         }
+    }
+
+    private void persistToDiskMemory(String id, Map<String, Object> doc) {
+        try {
+            String jsonStr = new io.jettra.json.JettraJson().toJson(doc);
+            database.putRecordDiskMemory((byte) 1, collectionName + ":" + id, jsonStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception ignored) {}
+    }
+
+    private void removeFromDiskMemory(String id) {
+        try {
+            database.deleteRecordDiskMemory((byte) 1, collectionName + ":" + id);
+        } catch (Exception ignored) {}
+    }
+
+    private Map<String, Object> loadFromDiskMemory(String id) {
+        try {
+            byte[] bytes = database.getRecordDiskMemory((byte) 1, collectionName + ":" + id);
+            if (bytes != null) {
+                String jsonStr = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                return new io.jettra.json.JettraJson().fromJson(jsonStr, Map.class);
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     /**
@@ -118,6 +155,9 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
             Map<String, Object> existing = documents.get(id);
             if (existing != null) {
                 existing.putAll(updates);
+                if (database != null && database.getStorageMode().isDiskMemory()) {
+                    persistToDiskMemory(id, existing);
+                }
             }
         } finally {
             wLock.unlock();
@@ -127,7 +167,11 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
     public boolean delete(String id) {
         wLock.lock();
         try {
-            return documents.remove(id) != null;
+            boolean removed = documents.remove(id) != null;
+            if (database != null && database.getStorageMode().isDiskMemory()) {
+                removeFromDiskMemory(id);
+            }
+            return removed;
         } finally {
             wLock.unlock();
         }
@@ -174,6 +218,9 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
                 copy.putAll(doc);
                 copy.put("_id", id);
                 documents.put(id, copy);
+                if (database != null && database.getStorageMode().isDiskMemory()) {
+                    persistToDiskMemory(id, copy);
+                }
             }
         } finally {
             wLock.unlock();

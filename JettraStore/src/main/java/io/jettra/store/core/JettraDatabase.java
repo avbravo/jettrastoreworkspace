@@ -10,6 +10,9 @@ import io.jettra.store.engine.models.*;
 import io.jettra.store.engine.panama.NativeMemTable;
 import io.jettra.store.police.JettraPolice;
 import io.jettra.store.sample.JettraStoreSamples;
+import com.jettra.memory.api.JettraMemoryConfig;
+import com.jettra.memory.api.JettraMemoryEngine;
+import com.jettra.memory.engine.StorageMetrics;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -34,6 +37,8 @@ public final class JettraDatabase {
     private final JettraIndexManager indexManager;
     private final DynamicRingEngine ringEngine;
     private final AtomicBoolean distributedRingActive = new AtomicBoolean(false);
+    private final JettraMemoryEngine memoryEngine;
+    private volatile StorageMode storageMode;
 
     private final Map<String, DocumentEngine> documentEngines = new ConcurrentHashMap<>();
     private final Map<String, VectorEngine> vectorEngines = new ConcurrentHashMap<>();
@@ -56,6 +61,23 @@ public final class JettraDatabase {
         this.ringEngine = (ringEngine != null) ? ringEngine : new DynamicRingEngine("node-01", 
             this.config.getRingSaturationThresholdPercent() / 100.0, 
             this.config.getRingReleaseTargetPercent() / 100.0);
+
+        // Inicialización de JettraMemory (Almacenamiento Off-Heap de ultra-alta velocidad)
+        JettraMemoryEngine memEngine = null;
+        try {
+            Path memDir = Path.of(this.config.getStoragePath(), databaseName, "jettra_memory");
+            JettraMemoryConfig memConfig = JettraMemoryConfig.builder()
+                .storageDirectory(memDir)
+                .storeName(databaseName)
+                .autoGcEnabled(true)
+                .compactionThreshold(0.25)
+                .build();
+            memEngine = new JettraMemoryEngine(memConfig);
+        } catch (Exception ex) {
+            System.err.printf("[JettraDatabase] Aviso: JettraMemory off-heap fallback: %s%n", ex.getMessage());
+        }
+        this.memoryEngine = memEngine;
+        this.storageMode = (this.config != null && this.config.getStorageMode() != null) ? this.config.getStorageMode() : StorageMode.JVM_RAM;
 
         if (this.ringEngine.getPeers().isEmpty()) {
             this.ringEngine.registerPeer(new ClusterNode("node-02", "192.168.1.102", 9091, ClusterNode.Role.SECONDARY));
@@ -116,7 +138,7 @@ public final class JettraDatabase {
     }
 
     public DocumentEngine getDocumentEngine(String name) {
-        return documentEngines.computeIfAbsent(name, DocumentEngine::new);
+        return documentEngines.computeIfAbsent(name, n -> new DocumentEngine(n, this));
     }
 
     public VectorEngine getVectorEngine(String name, int dimensions) {
@@ -1001,4 +1023,71 @@ public final class JettraDatabase {
     public NativeMemTable getMemTable() { return memTable; }
     public JettraStoreConfig getConfig() { return config; }
     public JettraIndexManager getIndexManager() { return indexManager; }
+
+    public StorageMode getStorageMode() {
+        return storageMode != null ? storageMode : StorageMode.JVM_RAM;
+    }
+
+    public void setStorageMode(StorageMode storageMode) {
+        this.storageMode = (storageMode != null) ? storageMode : StorageMode.JVM_RAM;
+        System.out.printf("[JettraDatabase:%s] Modo de almacenamiento conmutado a: %s (%s)%n",
+            databaseName, this.storageMode.getCode(), this.storageMode.getDescription());
+        if (this.storageMode.isDiskMemory() && memoryEngine != null) {
+            // Sincronizar documentos existentes hacia JettraMemory (LSM Direct Off-Heap)
+            io.jettra.json.JettraJson jsonHelper = new io.jettra.json.JettraJson();
+            for (var entry : documentEngines.entrySet()) {
+                String col = entry.getKey();
+                for (var doc : entry.getValue()) {
+                    String id = String.valueOf(doc.getOrDefault("_id", java.util.UUID.randomUUID().toString()));
+                    try {
+                        putRecordDiskMemory((byte) 1, col + ":" + id, jsonHelper.toJson(doc).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+    }
+
+    public JettraMemoryEngine getMemoryEngine() {
+        return memoryEngine;
+    }
+
+    public void putRecordDiskMemory(byte engineId, String key, byte[] payload) throws IOException {
+        if (memoryEngine != null && memoryEngine.getStoreConnector() != null) {
+            memoryEngine.getStoreConnector().putRecord(engineId, key, payload);
+        }
+    }
+
+    public byte[] getRecordDiskMemory(byte engineId, String key) throws IOException {
+        if (memoryEngine != null && memoryEngine.getStoreConnector() != null) {
+            var rec = memoryEngine.getStoreConnector().getRecord(engineId, key);
+            return rec != null ? rec.payload() : null;
+        }
+        return null;
+    }
+
+    public boolean deleteRecordDiskMemory(byte engineId, String key) throws IOException {
+        if (memoryEngine != null && memoryEngine.getStoreConnector() != null) {
+            return memoryEngine.getStoreConnector().deleteRecord(engineId, key);
+        }
+        return false;
+    }
+
+    public StorageMetrics getMemoryMetrics() {
+        return memoryEngine != null ? memoryEngine.getMetrics() : null;
+    }
+
+    public void putOffHeapBinary(String key, byte[] data) throws IOException {
+        if (memoryEngine != null) {
+            memoryEngine.put(key, data);
+        }
+    }
+
+    public byte[] getOffHeapBinary(String key) throws IOException {
+        return memoryEngine != null ? memoryEngine.get(key) : null;
+    }
+
+    public boolean deleteOffHeapBinary(String key) throws IOException {
+        return memoryEngine != null && memoryEngine.delete(key);
+    }
+
 }

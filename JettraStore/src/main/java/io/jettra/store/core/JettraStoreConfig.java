@@ -13,6 +13,7 @@ public final class JettraStoreConfig {
     private final int ramGlobalLimitMb;
     private final boolean offHeapDirect;
     private final String fileExtension;
+    private final StorageMode storageMode;
     private final int ringSaturationThresholdPercent;
     private final int ringReleaseTargetPercent;
     private final boolean jettraPoliceActive;
@@ -75,6 +76,7 @@ public final class JettraStoreConfig {
         this.ramGlobalLimitMb = Integer.parseInt(props.getProperty("jettra.storage.ram.global.limit.mb", "2048"));
         this.offHeapDirect = Boolean.parseBoolean(props.getProperty("jettra.storage.offheap.direct", "true"));
         this.fileExtension = props.getProperty("jettra.storage.file.extension", ".jettra");
+        this.storageMode = StorageMode.fromString(props.getProperty("jettra.storage.mode", "JVM_RAM"));
         this.ringSaturationThresholdPercent = Integer.parseInt(props.getProperty("jettra.ring.saturation.threshold.percent", "85"));
         this.ringReleaseTargetPercent = Integer.parseInt(props.getProperty("jettra.ring.release.target.percent", "45"));
         this.jettraPoliceActive = Boolean.parseBoolean(props.getProperty("jettrapolice.active", "true"));
@@ -143,6 +145,7 @@ public final class JettraStoreConfig {
     public int getRamGlobalLimitMb() { return ramGlobalLimitMb; }
     public boolean isOffHeapDirect() { return offHeapDirect; }
     public String getFileExtension() { return fileExtension; }
+    public StorageMode getStorageMode() { return storageMode; }
     public int getRingSaturationThresholdPercent() { return ringSaturationThresholdPercent; }
     public int getRingReleaseTargetPercent() { return ringReleaseTargetPercent; }
     public boolean isJettraPoliceActive() { return jettraPoliceActive; }

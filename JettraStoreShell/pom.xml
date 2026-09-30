@@ -41,6 +41,11 @@
         </dependency>
         <dependency>
             <groupId>io.jettra</groupId>
+            <artifactId>JettraMemory</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jettra</groupId>
             <artifactId>JettraStoreDriver</artifactId>
             <version>1.0-SNAPSHOT</version>
         </dependency>
@@ -95,11 +100,57 @@
             </plugin>
 
             <!-- Ejecución del Test Runner de JettraTest -->
-            <plugin>
+<!--            <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <executions>
+                    <execution>
+                        <id>jettra-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>io.jettra.test.runner.JettraTestRunner</mainClass>
+                            <classpathScope>test</classpathScope>
+                            <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                            <arguments>
+                                <argument>${project.build.testOutputDirectory}</argument>
+                                <argument>${project.build.outputDirectory}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>-->
+            
+            <!-- Configuración de Ejecución Exec Maven Plugin (JVM 25 ZGC + Compact Object Headers + JettraTestRunner) -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.6.4</version>
+                <executions>
+                    <execution>
+                        <id>default-cli</id>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>${mainClass}</mainClass>
+                            <executable>java</executable>
+                            <arguments>
+                                <!--<argument>-Xms512m</argument>-->
+                                <argument>-Xms2g</argument>
+                                <argument>-Xmx4g</argument>
+                                <argument>-XX:+UseZGC</argument>
+                                <argument>-XX:+UseCompactObjectHeaders</argument>
+                                <argument>--enable-preview</argument>
+                                <argument>-classpath</argument>
+                                <classpath/>
+                                <argument>${mainClass}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>jettra-test</id>
                         <phase>test</phase>

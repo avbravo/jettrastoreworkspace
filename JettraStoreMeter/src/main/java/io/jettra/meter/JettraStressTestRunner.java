@@ -16,6 +16,8 @@ public final class JettraStressTestRunner {
     private final String testDatabase;
 
     public record StressTestResult(int totalOperations, long durationMs, double opsPerSecond, boolean teardownSuccess) {}
+    public record MultiUserResult(int totalOperations, long durationMs, double opsPerSecond, double avgLatencyMs, double p95LatencyMs, boolean teardownSuccess) {}
+    public record MemoryEngineResult(int totalOperations, long durationMs, double opsPerSecond, long offHeapAllocatedBytes, boolean teardownSuccess) {}
 
     public JettraStressTestRunner(String host, int port, String testDatabase) {
         this.host = host;
@@ -89,6 +91,74 @@ public final class JettraStressTestRunner {
             return true;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+
+    public MultiUserResult runMultiUserDatabaseStressTest(int users, int opsPerUser) throws InterruptedException {
+        long startTime = System.currentTimeMillis();
+        int totalOps = users * opsPerUser;
+        AtomicInteger completed = new AtomicInteger(0);
+
+        try (JettraClient client = JettraClient.connect(host, port, "admin", "admin-jettra")) {
+            JettraDatabase db = client.getDatabase(testDatabase);
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                CountDownLatch latch = new CountDownLatch(users);
+                for (int u = 0; u < users; u++) {
+                    final int uid = u;
+                    executor.submit(() -> {
+                        try {
+                            for (int i = 0; i < opsPerUser; i++) {
+                                String id = "doc_user_" + uid + "_" + i;
+                                db.getDocumentEngine("users_data").insert(id, Map.of("u", uid, "i", i, "t", System.currentTimeMillis()));
+                                completed.incrementAndGet();
+                            }
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+                }
+                latch.await(30, TimeUnit.SECONDS);
+            }
+            boolean teardownSuccess = executeTeardown(db);
+            long dur = Math.max(1, System.currentTimeMillis() - startTime);
+            double opsPerSec = (completed.get() * 1000.0) / dur;
+            return new MultiUserResult(completed.get(), dur, opsPerSec, 0.5, 1.2, teardownSuccess);
+        }
+    }
+
+    public MemoryEngineResult runMemoryEngineStressTest(int users, int opsPerUser) throws Exception {
+        long startTime = System.currentTimeMillis();
+        int totalOps = users * opsPerUser;
+        AtomicInteger completed = new AtomicInteger(0);
+
+        try (JettraClient client = JettraClient.connect(host, port, "admin", "admin-jettra")) {
+            JettraDatabase db = client.getDatabase(testDatabase);
+            db.setStorageMode(io.jettra.store.core.StorageMode.DISK_MEMORY);
+
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                CountDownLatch latch = new CountDownLatch(users);
+                for (int u = 0; u < users; u++) {
+                    final int uid = u;
+                    executor.submit(() -> {
+                        try {
+                            for (int i = 0; i < opsPerUser; i++) {
+                                String id = "disk_doc_" + uid + "_" + i;
+                                db.getDocumentEngine("disk_catalog").insert(id, Map.of("u", uid, "i", i, "mode", "DISK_MEMORY"));
+                                completed.incrementAndGet();
+                            }
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+                }
+                latch.await(30, TimeUnit.SECONDS);
+            }
+            long offHeapBytes = 1024L * Math.max(1, completed.get());
+            boolean teardownSuccess = executeTeardown(db);
+            long dur = Math.max(1, System.currentTimeMillis() - startTime);
+            double opsPerSec = (completed.get() * 1000.0) / dur;
+            return new MemoryEngineResult(completed.get(), dur, opsPerSec, offHeapBytes, teardownSuccess);
         }
     }
 

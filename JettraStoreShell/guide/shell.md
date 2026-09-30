@@ -252,3 +252,43 @@ CLÚSTER Y TELEMETRÍA:
   SHOW MEMORY                     Muestra uso de Heap JVM y memoria nativa Panama.
 ================================================================================
 ```
+
+---
+
+## 10. Sistema de Paginación Interactiva de Consultas en Consola
+
+Para consultar colecciones con alta densidad de registros (como los 200,000 clientes o 1,000,000 facturas de `example_factura_db`), `JettraStoreShell` incorpora una barra de paginación interactiva y un conjunto completo de comandos de desplazamiento:
+
+### 10.1 Comandos de Navegación Paginada
+| Comando | Atajo | Función |
+| :--- | :---: | :--- |
+| `PAGE_SIZE <n>` | `SIZE <n>` | Configura el tamaño del lote por página (ej. `PAGE_SIZE 25`, `PAGE_SIZE 50`). |
+| `FIRST` / `PRIMERO` | `P` / `|<<` | Salta inmediatamente a la primera página de la consulta activa. |
+| `PREV` / `ANTERIOR` | `A` / `<` | Retrocede a la página anterior de resultados. |
+| `NEXT` / `SIGUIENTE` | `S` / `>` | Avanza a la siguiente página de resultados. |
+| `LAST` / `ULTIMO` | `U` / `>>|` | Salta a la última página de la consulta. |
+| `PAGE <n>` / `PAGINA <n>` | - | Salta directamente al número de página indicado. |
+
+### 10.2 Ejemplo Visual de Paginación en Consola
+```text
+jettra-shell [admin@127.0.0.1:9091/example_factura_db]> select * from clientes
+=== JETTRASQL RESULTADO (0 ms) ===
+🛡️  [JETTRAPOLICE SENTINEL: INTERVENCIÓN PREVENTIVA DE MEMORIA HEAP]
+   Estrategia: Streaming perezoso (Lazy Load) con distribución por lotes seguros.
+   Diagnóstico: [JettraPolice SENTINEL: Paginación Lazy Anti-OOM Activada] 25 fila(s) retornada(s)
++--------------+----------------+----------------------------------+------------------+-----------------+
+| _id          | limite_credito | razon_social                     | ciudad           | rfc_tax_id      |
++--------------+----------------+----------------------------------+------------------+-----------------+
+| cli_1        | 100000.0       | Corporación Comercial 1 S.A.     | Ciudad de Panamá | RFC-PAN-1000001 |
+| cli_2        | 85000.0        | Industrias del Pacífico 2 S.A.   | David, Chiriquí  | RFC-PAN-1000002 |
+...
++------------------------------------------------------------------------------------------------------+
+|  PÁGINA [ 1 / 8000 ]  •  Mostrando filas 1 - 25 de 200,000 total  •  Tamaño de página: 25            |
+|  Navegación: [P]RIMERO (|<<)  •  [A]NTERIOR (<)  •  [S]IGUIENTE (>)  •  [U]LTIMO (>>|)                 |
+|  Comandos: 'SIGUIENTE' | 'ANTERIOR' | 'PRIMERO' | 'ULTIMO' | 'PAGE <n>' | 'PAGE_SIZE <n>'           |
++------------------------------------------------------------------------------------------------------+
+
+jettra-shell [admin@127.0.0.1:9091/example_factura_db]> S
+=== JETTRASQL RESULTADO (0 ms) ===
+... (Mostrando filas 26 a 50 de forma instantánea sin impacto en Heap)
+```
