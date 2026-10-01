@@ -21,6 +21,8 @@ public final class ImmersiveWorld3D extends Group {
     private double worldTime = 0;
     private final Cylinder dynamicRadarPulse;
     private final Group quadrantNodesGroup = new Group();
+    private final java.util.List<AutonomousEntityMesh> autonomousEntities = new java.util.ArrayList<>();
+    private final Group radarSweepGroup = new Group();
 
     // Posiciones de Nodos y Bases de Datos (Disposición en Anfiteatro frente a Cámara)
     public static final double[][] NODE_POSITIONS = {
@@ -64,6 +66,16 @@ public final class ImmersiveWorld3D extends Group {
         dynamicRadarPulse.setMaterial(new PhongMaterial(Color.rgb(0, 240, 255, 0.4)));
         dynamicRadarPulse.setTranslateY(0.9);
         getChildren().add(dynamicRadarPulse);
+
+        // Haz rotatorio de escaneo radar sobre el plano cartesiano
+        buildRadarSweepBeam();
+        getChildren().add(radarSweepGroup);
+
+        // Objetos autónomos con movimiento dinámico independiente
+        buildAutonomousEntities();
+        for (var e : autonomousEntities) {
+            getChildren().add(e);
+        }
 
         // 5. Monolitos de Almacenamiento (Disposición en Anfiteatro Visible)
         buildClusterMonoliths();
@@ -433,6 +445,14 @@ public final class ImmersiveWorld3D extends Group {
         particles.updatePositions(0.006);
         agentMesh.tickAnimation(0.008);
 
+        // Movimiento autónomo dinámico de todos los objetos en pantalla
+        for (var e : autonomousEntities) {
+            e.tickAnimation(0.016);
+        }
+
+        // Rotación continua del radar cartesiano en primer plano
+        radarSweepGroup.setRotate((radarSweepGroup.getRotate() + 1.2) % 360);
+
         // Rotación lenta y elegante de anillos holográficos
         for (int i = 0; i < rotatingRingsGroup.getChildren().size(); i++) {
             var node = rotatingRingsGroup.getChildren().get(i);
@@ -476,6 +496,60 @@ public final class ImmersiveWorld3D extends Group {
 
             quadrantNodesGroup.getChildren().addAll(nodeOrb, nodeRing);
         }
+    }
+
+
+    private void buildRadarSweepBeam() {
+        // Haz de escaneo del radar cartesiano de 340 unidades de radio
+        Box sweepLine = new Box(340, 1.2, 3.0);
+        PhongMaterial sweepMat = new PhongMaterial(Color.rgb(0, 242, 254, 0.65));
+        sweepMat.setSpecularColor(Color.WHITE);
+        sweepLine.setMaterial(sweepMat);
+        sweepLine.setTranslateX(170); // Centrado en origen (0,0,0) hacia +X
+        sweepLine.setTranslateY(0.5);
+
+        // Cuña o abanico de barrido
+        Cylinder hub = new Cylinder(12, 2.0);
+        hub.setMaterial(new PhongMaterial(Color.rgb(56, 189, 248, 0.8)));
+        hub.setTranslateY(0.6);
+
+        radarSweepGroup.getChildren().addAll(sweepLine, hub);
+    }
+
+    private void buildAutonomousEntities() {
+        // 1. Drone Centinela Alfa (Lissajous 3D en cuadrantes I y IV)
+        autonomousEntities.add(new AutonomousEntityMesh(
+            "Drone-Alpha", AutonomousEntityMesh.MovementPattern.LISSAJOUS_3D,
+            Color.CYAN, Color.AQUAMARINE, 1.1, 190, 140, -32, 0.0
+        ));
+
+        // 2. Sonda Exploradora Beta (Patrulla Orbital sobre example_factura_db)
+        autonomousEntities.add(new AutonomousEntityMesh(
+            "Probe-Beta", AutonomousEntityMesh.MovementPattern.ORBITAL_PATROL,
+            Color.GOLD, Color.YELLOW, 1.3, 160, 120, -38, Math.PI / 3
+        ));
+
+        // 3. Barredor Cartesiano Eje X (Cruza todo el plano cartesiano de -X a +X)
+        autonomousEntities.add(new AutonomousEntityMesh(
+            "Sweeper-X", AutonomousEntityMesh.MovementPattern.AXIS_SWEEPER_X,
+            Color.rgb(255, 42, 109), Color.rgb(255, 120, 160), 0.95, 260, 25, -22, 0.0
+        ));
+
+        // 4. Barredor Cartesiano Eje Z (Cruza el plano de -Z a +Z)
+        autonomousEntities.add(new AutonomousEntityMesh(
+            "Sweeper-Z", AutonomousEntityMesh.MovementPattern.AXIS_SWEEPER_Z,
+            Color.rgb(0, 255, 170), Color.rgb(100, 255, 210), 1.0, 25, 260, -22, Math.PI / 2
+        ));
+
+        // 5. Portador Cuántico Gamma (Trayectoria en infinito / lemniscata entre nodos)
+        autonomousEntities.add(new AutonomousEntityMesh(
+            "Carrier-Gamma", AutonomousEntityMesh.MovementPattern.NODE_CARRIER_INTERCEPT,
+            Color.rgb(168, 85, 247), Color.rgb(216, 180, 254), 1.25, 170, 110, -42, Math.PI / 4
+        ));
+    }
+
+    public java.util.List<AutonomousEntityMesh> getAutonomousEntities() {
+        return autonomousEntities;
     }
 
     public JettraPoliceAgentMesh getAgentMesh() {

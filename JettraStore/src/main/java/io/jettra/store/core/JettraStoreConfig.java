@@ -1,5 +1,9 @@
 package io.jettra.store.core;
 
+import io.jettra.store.cluster.ClusterNode;
+import java.util.ArrayList;
+import java.util.List;
+
 import java.io.InputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -7,6 +11,9 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 public final class JettraStoreConfig {
+    private final String nodeId;
+    private final ClusterNode.Role nodeRole;
+    private final String clusterPeers;
     private final String rawConfiguredPath;
     private final String storagePath;
     private final int memTableSizeMb;
@@ -36,8 +43,22 @@ public final class JettraStoreConfig {
     private final int queryMaxLimit;
     private final int queryPageSize;
 
+
+    private static String getPropOrEnv(Properties props, String sysProp, String envVar, String defaultVal) {
+        String sys = System.getProperty(sysProp);
+        if (sys != null && !sys.isBlank()) return sys;
+        String env = System.getenv(envVar);
+        if (env != null && !env.isBlank()) return env;
+        return props.getProperty(sysProp, defaultVal);
+    }
+
     public JettraStoreConfig(Properties props) {
-        String configuredPath = System.getProperty("jettra.storage.path", 
+        this.nodeId = getPropOrEnv(props, "jettra.cluster.node.id", "JETTRA_NODE_ID", "node-01");
+        String roleStr = getPropOrEnv(props, "jettra.cluster.node.role", "JETTRA_NODE_ROLE", "PRIMARY");
+        this.nodeRole = "PRIMARY".equalsIgnoreCase(roleStr) ? ClusterNode.Role.PRIMARY : ClusterNode.Role.SECONDARY;
+        this.clusterPeers = getPropOrEnv(props, "jettra.cluster.peers", "JETTRA_CLUSTER_PEERS", "");
+
+        String configuredPath = getPropOrEnv(props, "jettra.storage.path", "JETTRA_STORAGE_PATH", 
             props.getProperty("jettra.storage.path", "/jettra/data"));
         this.rawConfiguredPath = configuredPath;
         
@@ -92,10 +113,10 @@ public final class JettraStoreConfig {
         this.jmhMetricsActive = Boolean.parseBoolean(props.getProperty("jmh.metrics.active", "false"));
         this.jwtAlgorithm = props.getProperty("jettra.security.jwt.algorithm", "Ed25519");
         this.jwtExpirationSeconds = Long.parseLong(props.getProperty("jettra.security.jwt.expiration.seconds", "86400"));
-        this.defaultAdminUsername = props.getProperty("jettra.security.default.admin.username", "admin");
-        this.defaultAdminPassword = props.getProperty("jettra.security.default.admin.password", "admin-jettra");
-        this.grpcPort = Integer.parseInt(props.getProperty("jettra.network.grpc.port", "9091"));
-        this.restPort = Integer.parseInt(props.getProperty("jettra.network.rest.port", "8080"));
+        this.defaultAdminUsername = getPropOrEnv(props, "jettra.security.default.admin.username", "JETTRA_ADMIN_USERNAME", "admin");
+        this.defaultAdminPassword = getPropOrEnv(props, "jettra.security.default.admin.password", "JETTRA_ADMIN_PASSWORD", "admin-jettra");
+        this.grpcPort = Integer.parseInt(getPropOrEnv(props, "jettra.network.grpc.port", "JETTRA_GRPC_PORT", "9091"));
+        this.restPort = Integer.parseInt(getPropOrEnv(props, "jettra.network.rest.port", "JETTRA_REST_PORT", "8080"));
 
         this.indexInitialCapacity = Integer.parseInt(props.getProperty("jettra.index.initial.capacity", "65536"));
         this.indexMaxInMemoryKeys = Integer.parseInt(props.getProperty("jettra.index.max.inmemory.keys", "100000"));
@@ -166,4 +187,38 @@ public final class JettraStoreConfig {
     public int getQueryDefaultLimit() { return queryDefaultLimit; }
     public int getQueryMaxLimit() { return queryMaxLimit; }
     public int getQueryPageSize() { return queryPageSize; }
+
+    public String getNodeId() { return nodeId; }
+    public ClusterNode.Role getNodeRole() { return nodeRole; }
+    public String getClusterPeers() { return clusterPeers; }
+
+    public List<ClusterNode> getParsedPeers() {
+        List<ClusterNode> list = new ArrayList<>();
+        if (clusterPeers != null && !clusterPeers.isBlank()) {
+            for (String entry : clusterPeers.split(",")) {
+                String[] p = entry.trim().split(":");
+                if (p.length >= 3) {
+                    String id = p[0].trim();
+                    String host = p[1].trim();
+                    int port = Integer.parseInt(p[2].trim());
+                    ClusterNode.Role role = (p.length >= 4 && "PRIMARY".equalsIgnoreCase(p[3].trim())) 
+                        ? ClusterNode.Role.PRIMARY : ClusterNode.Role.SECONDARY;
+                    list.add(new ClusterNode(id, host, port, role));
+                }
+            }
+        }
+        if (list.isEmpty()) {
+            if ("node-01".equalsIgnoreCase(nodeId)) {
+                list.add(new ClusterNode("node-02", "jettra-node-02", 9091, ClusterNode.Role.SECONDARY));
+                list.add(new ClusterNode("node-03", "jettra-node-03", 9091, ClusterNode.Role.SECONDARY));
+            } else if ("node-02".equalsIgnoreCase(nodeId)) {
+                list.add(new ClusterNode("node-01", "jettra-node-01", 9091, ClusterNode.Role.PRIMARY));
+                list.add(new ClusterNode("node-03", "jettra-node-03", 9091, ClusterNode.Role.SECONDARY));
+            } else if ("node-03".equalsIgnoreCase(nodeId)) {
+                list.add(new ClusterNode("node-01", "jettra-node-01", 9091, ClusterNode.Role.PRIMARY));
+                list.add(new ClusterNode("node-02", "jettra-node-02", 9091, ClusterNode.Role.SECONDARY));
+            }
+        }
+        return list;
+    }
 }

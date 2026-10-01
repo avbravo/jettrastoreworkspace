@@ -268,6 +268,11 @@ public final class JettraClient implements AutoCloseable {
 
     @Override
     public void close() {
+        for (JettraDatabase db : databases.values()) {
+            try {
+                db.close();
+            } catch (Exception ignored) {}
+        }
         databases.clear();
     }
 

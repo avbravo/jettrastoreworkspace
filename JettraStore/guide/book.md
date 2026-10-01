@@ -16,41 +16,57 @@
    - [3.2 Compact Object Headers (JEP 450)](#32-compact-object-headers-jep-450)
    - [3.3 Recolección de Basura ZGC de Latencia Sub-Milisegundo](#33-recolección-de-basura-zgc-de-latencia-sub-milisegundo)
    - [3.4 CRaC y CRIU para Arranque Instantáneo](#34-crac-y-criu-para-arranque-instantáneo)
-   - [3.5 Colecciones Especializadas Zero-Boxing (`jettra collection`)](#35-colecciones-especializadas-zero-boxing-jettra-collection)
+   - [3.5 Manipulación de Colecciones con `JettraCollection` y Prevención Rigurosa de `OutOfMemoryError`](#35-manipulación-de-colecciones-con-jettracollection-y-prevención-rigurosa-de-outofmemoryerror)
 4. [Integración Nativa del Motor Off-Heap `JettraMemory`](#4-integración-nativa-del-motor-off-heap-jettramemory)
    - [4.1 Arquitectura Panama LSM y Segmentos Binarios](#41-arquitectura-panama-lsm-y-segmentos-binarios)
    - [4.2 APIs Nativas en JettraDatabase y JettraClient](#42-apis-nativas-en-jettradatabase-y-jettraclient)
-   - [4.3 Compactación y Reclamación de Memoria Off-Heap](#43-compactación-y-reclamación-de-memoria-off-heap)
+   - [4.3 Modos Duales de Almacenamiento: `JVM-RAM` vs `DISK-MEMORY (JettraMemory)`](#43-modos-duales-de-almacenamiento-jvm-ram-vs-disk-memory-jettramemory)
 5. [Mecanismo Dinámico de Anillo Distribuido por Saturación de Memoria](#5-mecanismo-dinámico-de-anillo-distribuido-por-saturación-de-memoria)
-   - [4.1 Detección Preventiva de Umbrales de RAM](#41-detección-preventiva-de-umbrales-de-ram)
-   - [4.2 Transición Automática a Motor de Anillo](#42-transición-automática-a-motor-de-anillo)
-   - [4.3 Protocolo de Descarga y Rebalanceo Dinámico Off-Heap](#43-protocolo-de-descarga-y-rebalanceo-dinámico-off-heap)
-5. [Topología de Clúster de 3 Nodos y Consenso Raft](#5-topología-de-clúster-de-3-nodos-y-consenso-raft)
-   - [5.1 Configuración de Nodos (Líder y Secundarios)](#51-configuración-de-nodos-líder-y-secundarios)
-   - [5.2 Canales Raft Sin Bloqueo con Virtual Threads y `jettraGRPC`](#52-canales-raft-sin-bloqueo-con-virtual-threads-y-jettragrpc)
-6. [Seguridad Estricta: Autenticación, Superusuario y `JettraJWT`](#6-seguridad-estricta-autenticación-superusuario-y-jettrajwt)
+   - [5.1 Detección Preventiva de Umbrales de RAM](#51-detección-preventiva-de-umbrales-de-ram)
+   - [5.2 Transición Automática a Motor de Anillo](#52-transición-automática-a-motor-de-anillo)
+   - [5.3 Protocolo de Descarga y Rebalanceo Dinámico Off-Heap](#53-protocolo-de-descarga-y-rebalanceo-dinámico-off-heap)
+6. [Topología de Clúster de 3 Nodos y Consenso Raft](#6-topología-de-clúster-de-3-nodos-y-consenso-raft)
+   - [6.1 Configuración de Nodos (Líder y Secundarios)](#61-configuración-de-nodos-líder-y-secundarios)
+   - [6.2 Canales Raft Sin Bloqueo con Virtual Threads y `jettraGRPC`](#62-canales-raft-sin-bloqueo-con-virtual-threads-y-jettragrpc)
+7. [Seguridad Estricta: Autenticación, Superusuario y `JettraJWT`](#7-seguridad-estricta-autenticación-superusuario-y-jettrajwt)
    - [6.1 Superusuario Administrativo por Defecto (`admin` / `admin-jettra`)](#61-superusuario-administrativo-por-defecto-admin--admin-jettra)
    - [6.2 Inviolabilidad y Jerarquía Máxima del Superusuario](#62-inviolabilidad-y-jerarquía-máxima-del-superusuario)
    - [6.3 Arquitectura de Tokens `JettraJWT`](#63-arquitectura-de-tokens-jettrajwt)
-7. [Soporte Multimodelo y Referencias Cruzadas (Intra e Inter-Engine)](#7-soporte-multimodelo-y-referencias-cruzadas-intra-e-inter-engine)
-   - [7.1 Los 8 Motores Nativos Integrados](#71-los-8-motores-nativos-integrados)
-   - [7.2 Referencias Cruzadas Multimodelo](#72-referencias-cruzadas-multimodelo)
-   - [7.3 Estrategias de Carga: Lazy Load vs Eager Load](#73-estrategias-de-carga-lazy-load-vs-eager-load)
-8. [Lenguajes de Consulta: JettraQueryLanguage (LQL) y JettraSQL](#8-lenguajes-de-consulta-jettraquerylanguage-lql-y-jettrasql)
-   - [8.1 JettraQueryLanguage (LQL) - Estilo Fluent Streams](#81-jettraquerylanguage-lql---estilo-fluent-streams)
-   - [8.2 JettraSQL - Dialecto SQL de Alto Rendimiento](#82-jettrasql---dialecto-sql-de-alto-rendimiento)
-9. [Componente de Supervisión Preventiva: `JettraPolice`](#9-componente-de-supervisión-preventiva-jettrapolice)
-   - [9.1 Ciclo de Vida del Daemon Autónomo](#91-ciclo-de-vida-del-daemon-autónomo)
-   - [9.2 Reglas Preventivas y Acciones Mitigadoras](#92-reglas-preventivas-y-acciones-mitigadoras)
-   - [9.3 Activación y Configuración (`jettrapolice.active`)](#93-activación-y-configuración-jettrapoliceactive)
-10. [Capacidades Nativas de Backup y Restore](#10-capacidades-nativas-de-backup-y-restore)
-    - [10.1 Procedimiento de Respaldo Hot-Snapshot](#101-procedimiento-de-respaldo-hot-snapshot)
-    - [10.2 Procedimiento de Restauración Consistente](#102-procedimiento-de-restauración-consistente)
-11. [Métricas de Rendimiento y Microbenchmarking con JMH](#11-métricas-de-rendimiento-y-microbenchmarking-con-jmh)
-    - [11.1 Integración de Java Microbenchmark Harness (JMH)](#111-integración-de-java-microbenchmark-harness-jmh)
-    - [11.2 Activación y Control (`jmh.metrics.active`)](#112-activación-y-control-jmhmetricsactive)
-12. [Configuración del Sistema (`database.properties` y `jettra.config`)](#12-configuración-del-sistema-databaseproperties-y-jettraconfig)
-13. [Caso de Estudio Masivo: Base de Datos de Facturación (3,000,000 Objetos)](#13-caso-de-estudio-masivo-base-de-datos-de-facturación-3000000-objetos)
+8. [Soporte Multimodelo y Referencias Cruzadas (Intra e Inter-Engine)](#8-soporte-multimodelo-y-referencias-cruzadas-intra-e-inter-engine)
+   - [8.1 Los 8 Motores Nativos Integrados](#81-los-8-motores-nativos-integrados)
+   - [8.2 Referencias Cruzadas Multimodelo](#82-referencias-cruzadas-multimodelo)
+   - [8.3 Estrategias de Carga: Lazy Load vs Eager Load](#83-estrategias-de-carga-lazy-load-vs-eager-load)
+9. [Lenguajes de Consulta: JettraQueryLanguage (LQL) y JettraSQL](#9-lenguajes-de-consulta-jettraquerylanguage-lql-y-jettrasql)
+   - [9.1 JettraQueryLanguage (LQL) - Estilo Fluent Streams](#91-jettraquerylanguage-lql---estilo-fluent-streams)
+   - [9.2 JettraSQL - Dialecto SQL de Alto Rendimiento](#92-jettrasql---dialecto-sql-de-alto-rendimiento)
+10. [Componente de Supervisión Preventiva: `JettraPolice`](#10-componente-de-supervisión-preventiva-jettrapolice)
+    - [10.1 Ciclo de Vida del Daemon Autónomo](#101-ciclo-de-vida-del-daemon-autónomo)
+    - [10.2 Reglas Preventivas y Acciones Mitigadoras](#102-reglas-preventivas-y-acciones-mitigadoras)
+    - [10.3 Activación y Configuración (`jettrapolice.active`)](#103-activación-y-configuración-jettrapoliceactive)
+    - [10.4 Supervisión Predictiva de Heap y Prevención Autónoma Anti-OOM](#104-supervisión-predictiva-de-heap-y-prevención-autónoma-anti-oom)
+11. [Capacidades Nativas de Backup y Restore](#11-capacidades-nativas-de-backup-y-restore)
+    - [11.1 Procedimiento de Respaldo Hot-Snapshot](#111-procedimiento-de-respaldo-hot-snapshot)
+    - [11.2 Procedimiento de Restauración Consistente](#112-procedimiento-de-restauración-consistente)
+12. [Métricas de Rendimiento y Microbenchmarking con JMH](#12-métricas-de-rendimiento-y-microbenchmarking-con-jmh)
+    - [12.1 Integración de Java Microbenchmark Harness (JMH)](#121-integración-de-java-microbenchmark-harness-jmh)
+    - [12.2 Activación y Control (`jmh.metrics.active`)](#122-activación-y-control-jmhmetricsactive)
+13. [Configuración del Sistema (`database.properties` y `jettra.config`)](#13-configuración-del-sistema-databaseproperties-y-jettraconfig)
+    - [13.1 Archivo `database.properties`](#131-archivo-databaseproperties)
+    - [13.2 Archivo `jettra.config`](#132-archivo-jettraconfig)
+14. [Caso de Estudio Masivo: Base de Datos de Facturación (3,000,000 Objetos)](#14-caso-de-estudio-masivo-base-de-datos-de-facturación-3000000-objetos)
+    - [14.1 Estructura Multimodelo Interconectada (9 Buckets Especializados)](#141-estructura-multimodelo-interconectada-9-buckets-especializados)
+    - [14.2 Métricas de Rendimiento Verificadas](#142-métricas-de-rendimiento-verificadas)
+15. [Contenedorización con Docker y Orquestación con Docker Compose](#15-contenedorización-con-docker-y-orquestación-con-docker-compose)
+    - [15.1 Arquitectura e Imagen Docker (`Dockerfile` / `DockerFile`)](#151-arquitectura-e-imagen-docker-dockerfile--dockerfile)
+    - [15.2 Despliegue de Clúster de 3 Nodos en Docker Compose (1 Primario + 2 Secundarios)](#152-despliegue-de-clúster-de-3-nodos-en-docker-compose-1-primario--2-secundarios)
+    - [15.3 Almacenamiento Persistente y Mapeo de Volúmenes (`/app/data`)](#153-almacenamiento-persistente-y-mapeo-de-volúmenes-appdata)
+    - [15.4 Autenticación Obligatoria mediante Tokens `JettraJWT` en Contenedores](#154-autenticación-obligatoria-mediante-tokens-jettrajwt-en-contenedores)
+    - [15.5 Operaciones del Ciclo de Vida, Monitoreo y Comandos CLI](#155-operaciones-del-ciclo-de-vida-monitoreo-y-comandos-cli)
+16. [Ecosistema de Herramientas Avanzadas y Resiliencia de Plataforma](#16-ecosistema-de-herramientas-avanzadas-y-resiliencia-de-plataforma)
+    - [16.1 `JettraStoreMeter`: Pruebas de Estrés Concurrente Automatizadas con Maven](#161-jettrastoremeter-pruebas-de-estrés-concurrente-automatizadas-con-maven)
+    - [16.2 `JettraStorePoliceFX`: Plano Cartesiano en Primer Plano y Malla de Entidades Autónomas 3D](#162-jettrastorepolicefx-plano-cartesiano-en-primer-plano-y-malla-de-entidades-autónomas-3d)
+    - [16.3 `JettraStoreFX`: Visualización 3D Cibernética, Replicación Raft y Tarjetas Holográficas](#163-jettrastorefx-visualización-3d-cibernética-replicación-raft-y-tarjetas-holográficas)
+    - [16.4 Recolector de Basura Autónomo (`JettraGarbageCollector`) y Cierre Limpio de Recursos (`AutoCloseable`)](#164-recolector-de-basura-autónomo-jettragarbagecollector-y-cierre-limpio-de-recursos-autocloseable)
 
 ---
 
@@ -219,7 +235,7 @@ Tanto `JettraDatabase` en el core como `JettraClient` en el driver exponen méto
 ---
 
 
-### 4.4 Modos Duales de Almacenamiento: `JVM-RAM` vs `DISK-MEMORY (JettraMemory)`
+### 4.3 Modos Duales de Almacenamiento: `JVM-RAM` vs `DISK-MEMORY (JettraMemory)`
 JettraStore permite operar cada base de datos bajo dos paradigmas complementarios:
 1. **Modo `JVM-RAM` (Predeterminado):**
    * Almacenamiento y procesamiento en las áreas de memoria Stack y Heap de la Máquina Virtual de Java.
@@ -233,7 +249,7 @@ JettraStore permite operar cada base de datos bajo dos paradigmas complementario
 
 ## 5. Mecanismo Dinámico de Anillo Distribuido por Saturación de Memoria
 
-### 4.1 Detección Preventiva de Umbrales de RAM
+### 5.1 Detección Preventiva de Umbrales de RAM
 
 Cada nodo de `JettraStore` ejecuta un monitor de recursos en tiempo real que calcula la tasa de utilización de memoria:
 
@@ -243,7 +259,7 @@ $$\text{Tasa de Ocupación} = \frac{\text{RAM Off-Heap Asignada} + \text{Heap Ac
 * **Umbral de Alerta Preventiva ($70\% - 85\%$):** `JettraPolice` emite notificaciones de advertencia y prepara las tablas de partición del anillo.
 * **Umbral Crítico de Saturación ($\ge 85\%$):** Activación inmediata del **Motor de Anillo Distribuido**.
 
-### 4.2 Transición Automática a Motor de Anillo
+### 5.2 Transición Automática a Motor de Anillo
 
 Al superar el umbral crítico, el nodo principal no bloquea la admisión de datos ni arroja errores de Out-Of-Memory. En su lugar:
 
@@ -265,25 +281,25 @@ Al superar el umbral crítico, el nodo principal no bloquea la admisión de dato
 
 ---
 
-## 5. Topología de Clúster de 3 Nodos y Consenso Raft
+## 6. Topología de Clúster de 3 Nodos y Consenso Raft
 
-### 5.1 Configuración de Nodos (Líder y Secundarios)
+### 6.1 Configuración de Nodos (Líder y Secundarios)
 
 `JettraStore` opera de forma estándar sobre un clúster de tres nodos identificados de forma única:
 * **Nodo 1 (Líder Primario):** Coordina transacciones distribuidas, lidera el quórum Raft y atiende escrituras prioritarias.
 * **Nodo 2 (Secundario / Seguidor 1):** Mantiene réplica activa del log Raft, listo para asumir el liderazgo en $< 150\text{ ms}$ en caso de desconexión del líder.
 * **Nodo 3 (Secundario / Seguidor 2):** Garantiza la formación de quórum de mayoría simple ($N/2 + 1 = 2$) y provee capacidad elástica para el desbordamiento en anillo.
 
-### 5.2 Canales Raft Sin Bloqueo con Virtual Threads y `jettraGRPC`
+### 6.2 Canales Raft Sin Bloqueo con Virtual Threads y `jettraGRPC`
 
 * **Virtual Threads por Conexión:** Cada flujo de replicación y latido Raft (*Heartbeat*) se procesa en un Virtual Thread independiente de la JVM, permitiendo millones de transacciones por segundo sin saturar el pool de hilos de la plataforma del sistema operativo.
 * **Protocolo `jettraGRPC`:** Implementación gRPC de alto rendimiento optimizada para serialización binaria directa sobre archivos `.jettra`. Todas las tramas están firmadas criptográficamente con tokens de sesión **`JettraJWT`**.
 
 ---
 
-## 6. Seguridad Estricta: Autenticación, Superusuario y `JettraJWT`
+## 7. Seguridad Estricta: Autenticación, Superusuario y `JettraJWT`
 
-### 6.1 Superusuario Administrativo por Defecto (`admin` / `admin-jettra`)
+### 7.1 Superusuario Administrativo por Defecto (`admin` / `admin-jettra`)
 
 Al inicializar una instancia o clúster de `JettraStore` por primera vez, el sistema provisiona de manera obligatoria la cuenta del superusuario con las siguientes credenciales exactas:
 * **Username:** `admin`
@@ -295,13 +311,13 @@ Al inicializar una instancia o clúster de `JettraStore` por primera vez, el sis
 > **Recomendación de Seguridad Crítica:**
 > Por motivos de seguridad operativa, se recomienda enfáticamente modificar la contraseña predeterminada tras el primer inicio de sesión mediante el comando `ALTER USER admin IDENTIFIED BY '<nueva-clave-segura>'` en `JettraStoreShell` o a través del panel de seguridad en `JettraStoreFX`.
 
-### 6.2 Inviolabilidad y Jerarquía Máxima del Superusuario
+### 7.2 Inviolabilidad y Jerarquía Máxima del Superusuario
 
 1. El usuario `admin` posee la máxima prioridad en el sistema.
 2. Ningún otro usuario, independientemente de sus privilegios asignados (`DB_ADMIN`, `OPERATOR`, `DEVELOPER`), tiene autorización para modificar, revocar, degradar roles o eliminar la cuenta `admin`.
 3. Cualquier intento de ejecutar un comando de alteración sobre `admin` por parte de una sesión secundaria genera una excepción de seguridad inmediata `JettraSecurityException("Security violation: Superuser privileges cannot be altered by secondary users")` y emite una alerta crítica a través de `JettraPolice`.
 
-### 6.3 Arquitectura de Tokens `JettraJWT`
+### 7.3 Arquitectura de Tokens `JettraJWT`
 
 Toda solicitud entrante debe acompañarse de un token de cabecera `Authorization: JettraJWT <token>`.
 * **Firma Criptográfica:** Algoritmo Ed25519 con claves rotadas periódicamente en memoria o HMAC-SHA512.
@@ -320,9 +336,9 @@ Toda solicitud entrante debe acompañarse de un token de cabecera `Authorization
 
 ---
 
-## 7. Soporte Multimodelo y Referencias Cruzadas (Intra e Inter-Engine)
+## 8. Soporte Multimodelo y Referencias Cruzadas (Intra e Inter-Engine)
 
-### 7.1 Los 8 Motores Nativos Integrados
+### 8.1 Los 8 Motores Nativos Integrados
 
 | Motor | Tipo de Datos | Caso de Uso Óptimo | Formato en Archivo `.jettra` |
 |---|---|---|---|
@@ -335,7 +351,7 @@ Toda solicitud entrante debe acompañarse de un token de cabecera `Authorization
 | **Graph** | Vértices, Aristas y Propiedades | Redes sociales, detección de fraude | Lista de Adyacencia CSR |
 | **Vector** | Embeddings de coma flotante | Búsqueda semántica IA, similitud coseno | HNSW + Product Quantization |
 
-### 7.2 Referencias Cruzadas Multimodelo
+### 8.2 Referencias Cruzadas Multimodelo
 
 `JettraStore` permite enlazar entidades entre el mismo motor (**intra-engine**) o a través de diferentes motores (**inter-engine**).
 
@@ -352,16 +368,16 @@ Un documento en el motor de Documentos (`users`) que referencia un vector en el 
 }
 ```
 
-### 7.3 Estrategias de Carga: Lazy Load vs Eager Load
+### 8.3 Estrategias de Carga: Lazy Load vs Eager Load
 
 * **Lazy Load (Carga Perezosa - Predeterminada):** La referencia se almacena como un descriptor ligero `JettraRef<T>`. El registro referenciado no se lee del disco ni se transmite por la red hasta que la aplicación invoca explícitamente `.resolve()` o accede al campo correspondiente. Esto minimiza el consumo de RAM y el tráfico de red en consultas masivas.
 * **Eager Load (Carga Ansiosa):** La consulta resuelve y ensambla inmediatamente todas las entidades referenciadas en un único paso de ejecución, optimizando los casos donde el cliente requiere el árbol completo del objeto de negocio.
 
 ---
 
-## 8. Lenguajes de Consulta: JettraQueryLanguage (LQL) y JettraSQL
+## 9. Lenguajes de Consulta: JettraQueryLanguage (LQL) y JettraSQL
 
-### 8.1 JettraQueryLanguage (LQL) - Estilo Fluent Streams
+### 9.1 JettraQueryLanguage (LQL) - Estilo Fluent Streams
 
 Diseñado para desarrolladores Java modernos, `LQL` replica la elegancia de la Stream API:
 
@@ -375,7 +391,7 @@ JettraResults<User> results = db.from("users", User.class)
     .execute();
 ```
 
-### 8.2 JettraSQL - Dialecto SQL de Alto Rendimiento
+### 9.2 JettraSQL - Dialecto SQL de Alto Rendimiento
 
 Para integración con ecosistemas heredados y consolas analíticas, `JettraSQL` provee sintaxis ANSI SQL ejecutada directamente sobre las estructuras `.jettra`:
 
@@ -393,21 +409,21 @@ LIMIT 50;
 
 ---
 
-## 9. Componente de Supervisión Preventiva: `JettraPolice`
+## 10. Componente de Supervisión Preventiva: `JettraPolice`
 
-### 9.1 Ciclo de Vida del Daemon Autónomo
+### 10.1 Ciclo de Vida del Daemon Autónomo
 
 `JettraPolice` es un componente de supervisión preventiva que opera como un hilo demonio (*daemon thread*) de muy baja prioridad y bajo consumo computacional ($< 0.5\%$ de CPU):
 * **Frecuencia de Muestreo:** Cada $500\text{ ms}$ sondea el estado de los descriptores de archivos `.jettra`, el avance de los punteros WAL, los buffers de memoria Panama y la latencia de red de los canales Raft.
 * **Detección de Anomalías:** Emplea el motor `jettraRules` para evaluar condiciones de riesgo antes de que se manifiesten en fallos.
 
-### 9.2 Reglas Preventivas y Acciones Mitigadoras
+### 10.2 Reglas Preventivas y Acciones Mitigadoras
 
 1. **Prevención de Agotamiento de Espacio en Disco:** Si el directorio físico de almacenamiento configurado supera el $90\%$ de capacidad, `JettraPolice` activa automáticamente la compactación forzada de niveles SSTable y depuración de registros marcados con *tombstones*.
 2. **Mitigación de Saturación de RAM:** Si la memoria del nodo alcanza el $75\%$, `JettraPolice` alerta a los subsistemas de clúster para pre-calentar los sockets de transferencia de anillo. Al alcanzar el $85\%$, ordena formalmente el desbordamiento de las MemTables hacia los nodos secundarios.
 3. **Control de Intrusiones:** Detecta intentos reiterados de autenticación fallida o intentos ilegales de alteración del usuario `admin`, bloqueando las direcciones IP a nivel de socket de red.
 
-### 9.3 Activación y Configuración (`jettrapolice.active`)
+### 10.3 Activación y Configuración (`jettrapolice.active`)
 
 El componente se controla de forma transparente en `database.properties`:
 ```properties
@@ -420,7 +436,7 @@ jettrapolice.auto.pagination.enabled = true
 jettrapolice.max.safe.batch.size = 100
 ```
 
-### 9.4 Supervisión Predictiva de Heap y Prevención Autónoma Anti-OOM
+### 10.4 Supervisión Predictiva de Heap y Prevención Autónoma Anti-OOM
 
 Para evitar que una consulta masiva (e.g. `SELECT * FROM clientes` con 200,000 filas o escaneos de 1,000,000 de facturas) desborde el montículo de la JVM (`OutOfMemoryError: Java heap space`), `JettraPolice` incorpora el método predictivo **`evaluateHeapSafety(...)`**:
 
@@ -450,9 +466,9 @@ jettrapolice.ram.warning.threshold = 75
 
 ---
 
-## 10. Capacidades Nativas de Backup y Restore
+## 11. Capacidades Nativas de Backup y Restore
 
-### 10.1 Procedimiento de Respaldo Hot-Snapshot
+### 11.1 Procedimiento de Respaldo Hot-Snapshot
 
 `JettraStore` permite realizar copias de seguridad consistentes en caliente sin detener el motor:
 1. **Flushing Inmediato:** Se fuerza la congelación de la MemTable activa hacia un archivo SSTable inmutable `.jettra`.
@@ -465,7 +481,7 @@ JettraStore> BACKUP DATABASE corporate_db TO '/backup/corporate_db_20261015.jett
 [SUCCESS] Snapshot created in 42ms. 14 SSTables and WAL flushed safely.
 ```
 
-### 10.2 Procedimiento de Restauración Consistente
+### 11.2 Procedimiento de Restauración Consistente
 
 El proceso de restauración valida la integridad de cada archivo `.jettra` antes de reabrir el motor:
 1. Verificación de suma de comprobación `CRC64_FOOTER` de cada segmento.
@@ -480,9 +496,9 @@ JettraStore> RESTORE DATABASE corporate_db FROM '/backup/corporate_db_20261015.j
 
 ---
 
-## 11. Métricas de Rendimiento y Microbenchmarking con JMH
+## 12. Métricas de Rendimiento y Microbenchmarking con JMH
 
-### 11.1 Integración de Java Microbenchmark Harness (JMH)
+### 12.1 Integración de Java Microbenchmark Harness (JMH)
 
 `JettraStore` incorpora clases de microbenchmark integradas con **JMH** para auditar el rendimiento en tiempo real y validar que no existan regresiones de rendimiento:
 * Medición de latencia de escritura en `NativeMemTableSegment` (en nanosegundos).
@@ -490,7 +506,7 @@ JettraStore> RESTORE DATABASE corporate_db FROM '/backup/corporate_db_20261015.j
 * Costo de resolución de referencias cruzadas Lazy vs Eager.
 * Deserialización de vectores con operaciones SIMD de la Vector API de Java.
 
-### 11.2 Activación y Control (`jmh.metrics.active`)
+### 12.2 Activación y Control (`jmh.metrics.active`)
 
 Las métricas internas de microbenchmarking se activan o desactivan en tiempo de ejecución o compilación mediante la propiedad:
 ```properties
@@ -501,9 +517,9 @@ Cuando se desactiva (`false`), el compilador JIT elimina los puntos de control d
 
 ---
 
-## 12. Configuración del Sistema (`database.properties` y `jettra.config`)
+## 13. Configuración del Sistema (`database.properties` y `jettra.config`)
 
-### 12.1 Archivo `database.properties`
+### 13.1 Archivo `database.properties`
 
 Ubicado en la raíz de configuración de cada nodo (`config/database.properties`):
 
@@ -540,7 +556,7 @@ jettra.network.grpc.port = 9091
 jettra.network.rest.port = 8080
 ```
 
-### 12.2 Archivo `jettra.config`
+### 13.2 Archivo `jettra.config`
 
 Archivo centralizado de topología de clúster (`config/jettra.config`):
 
@@ -573,11 +589,11 @@ cluster.node.3.role = SECONDARY
 
 ---
 
-## 13. Caso de Estudio Masivo: Base de Datos de Facturación (3,000,000 Objetos)
+## 14. Caso de Estudio Masivo: Base de Datos de Facturación (3,000,000 Objetos)
 
 Para validar el ecosistema bajo condiciones extremas de concurrencia y volumen de datos, `JettraStore` integra la base de datos de pruebas maestras **`example_factura_db`**:
 
-### 13.1 Estructura Multimodelo Interconectada (9 Buckets Especializados)
+### 14.1 Estructura Multimodelo Interconectada (9 Buckets Especializados)
 * **[DOCUMENT] `facturas`:** 1,000,000 de facturas electrónicas timbradas con referencias cruzadas `_ref_detalle`, `_ref_cliente`, `_ref_vector`, `_ref_folio`.
 * **[DOCUMENT] `detalles_factura`:** 1,000,000 de renglones e items con precios, cantidades y subtotales.
 * **[DOCUMENT] `clientes`:** 200,000 clientes corporativos con RFC/RUC y límites de crédito.
@@ -588,7 +604,7 @@ Para validar el ecosistema bajo condiciones extremas de concurrencia y volumen d
 * **[GEOSPATIAL] `sucursales_fiscales`:** 25,000 puntos espaciales de coordenadas GIS.
 * **[COLUMNAR] `analitica_fiscal`:** 25,000 filas de cálculo analítico de IVA y totales.
 
-### 13.2 Métricas de Rendimiento Verificadas
+### 14.2 Métricas de Rendimiento Verificadas
 * **Tiempo Total de Inserción y Timbrado:** ~5,200 ms (utilizando hilos virtuales de Java 25).
 * **Índices Secundarios:** `idx_fac_cliente` (HASH) y `idx_cli_rfc` (BTREE) construidos con almacenamiento compacto Singleton (Zero-Set), eliminando más de 200,000 colecciones intermedias.
 * **Consultas SQL Paginadas y Shell Interactivo:** `SELECT * FROM clientes` responde en **0 ms** con acotamiento de seguridad anti-OOM gestionado por `JettraPolice`.
@@ -599,3 +615,314 @@ Para validar el ecosistema bajo condiciones extremas de concurrencia y volumen d
 * **Interfaces Visuales de Alta Fidelidad:**
   * **`JettraStoreFX`:** Incorpora barra de consultas rápidas SQL/JQL, selector de tamaño de página desplegable (`10, 25, 50, 100, 250`), salto directo de página y tarjetas de telemetría de `JettraPolice` y `JettraMemory`.
   * **`JettraStorePoliceFX`:** Visualizador 3D inmersivo con plano cartesiano optimizado, cuadrantes marcados en alto contraste, radar de pulso dinámico en tiempo real y panel de eventos (HUD) con actualización automática cada segundo.
+
+
+---
+
+## 15. Contenedorización con Docker y Orquestación con Docker Compose
+
+`JettraStore` provee empaquetado nativo en contenedores Docker y orquestación multi-nodo mediante `docker-compose.yml`, optimizado para producción sobre **Java 25 LTS** con persistencia durable y seguridad criptográfica mandatoria.
+
+### 15.1 Arquitectura e Imagen Docker (`Dockerfile` / `DockerFile`)
+
+La imagen oficial se construye a partir de la distribución base de alto rendimiento `eclipse-temurin:25-jdk` e incorpora directivas de seguridad para ejecución sin privilegios de root (`non-root user`):
+
+```dockerfile
+# ==============================================================================
+# JettraStore Official High-Performance Container Image
+# Runtime: Java 25 LTS (Eclipse Temurin) + ZGC + Panama FFM Off-Heap
+# ==============================================================================
+FROM eclipse-temurin:25-jdk
+
+LABEL maintainer="Jettra Architecture Team <dev@jettra.io>"
+LABEL description="JettraStore Distributed Multi-Model NoSQL Database"
+LABEL version="1.0"
+
+# Instalar utilidades operativas y crear usuario sin privilegios
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1001 jettra \
+    && useradd -u 1001 -g jettra -m -s /bin/bash jettra
+
+WORKDIR /app
+
+# Crear jerarquía de almacenamiento para archivos .jettra y logs
+RUN mkdir -p /app/data /app/config /app/logs \
+    && chown -R jettra:jettra /app
+
+# Copiar artefacto ejecutable y dependencias construidas por Maven
+COPY --chown=jettra:jettra target/JettraStore-1.0-SNAPSHOT.jar /app/jettra-store.jar
+COPY --chown=jettra:jettra target/lib /app/lib
+
+# Exponer puertos: REST API (8080) y Clúster Raft/gRPC (9091)
+EXPOSE 8080 9091
+
+# Definir volumen persistente para datos .jettra
+VOLUME ["/app/data"]
+
+USER jettra:jettra
+
+# Flags JVM de máxima optimización (Java 25 Preview + ZGC + Panama FFM)
+ENV JAVA_OPTS="-Xms512m -Xmx2g \
+  --enable-preview \
+  -XX:+UseZGC \
+  --enable-native-access=ALL-UNNAMED \
+  -Djava.awt.headless=true"
+
+# Healthcheck nativo contra el endpoint REST del clúster
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:8080/api/v1/cluster/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -cp /app/jettra-store.jar:/app/lib/* io.jettra.store.JettraStoreServer"]
+```
+
+> [!TIP]
+> Por máxima compatibilidad en diversos entornos CI/CD y sistemas operativos, se proporcionan los archivos gemelos [`Dockerfile`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStore/Dockerfile) y [`DockerFile`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStore/DockerFile).
+
+---
+
+### 15.2 Despliegue de Clúster de 3 Nodos en Docker Compose (1 Primario + 2 Secundarios)
+
+El archivo [`docker-compose.yml`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStore/docker-compose.yml) orquesta la topología de consenso Raft de tres nodos sobre una red bridge aislada (`jettra-net`):
+
+```yaml
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # Nodo 01: Nodo Principal (Raft Leader / Primary)
+  # ----------------------------------------------------------------------------
+  jettra-node-01:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jettra-node-01
+    hostname: jettra-node-01
+    restart: unless-stopped
+    environment:
+      - JETTRA_NODE_ID=node-01
+      - JETTRA_NODE_ROLE=PRIMARY
+      - JETTRA_REST_PORT=8080
+      - JETTRA_GRPC_PORT=9091
+      - JETTRA_DATA_DIR=/app/data
+      - JETTRA_CLUSTER_SEEDS=jettra-node-01:9091,jettra-node-02:9091,jettra-node-03:9091
+      - JAVA_OPTS=-Xms512m -Xmx2g --enable-preview -XX:+UseZGC --enable-native-access=ALL-UNNAMED -Djava.awt.headless=true
+    ports:
+      - "8081:8080" # REST API (Host 8081 -> Container 8080)
+      - "9091:9091" # gRPC / Raft Consensus
+    volumes:
+      - jettra_data_node01:/app/data
+    networks:
+      - jettra-net
+
+  # ----------------------------------------------------------------------------
+  # Nodo 02: Nodo Secundario 1 (Raft Follower / Secondary)
+  # ----------------------------------------------------------------------------
+  jettra-node-02:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jettra-node-02
+    hostname: jettra-node-02
+    restart: unless-stopped
+    depends_on:
+      - jettra-node-01
+    environment:
+      - JETTRA_NODE_ID=node-02
+      - JETTRA_NODE_ROLE=SECONDARY
+      - JETTRA_REST_PORT=8080
+      - JETTRA_GRPC_PORT=9091
+      - JETTRA_DATA_DIR=/app/data
+      - JETTRA_CLUSTER_SEEDS=jettra-node-01:9091,jettra-node-02:9091,jettra-node-03:9091
+      - JAVA_OPTS=-Xms512m -Xmx2g --enable-preview -XX:+UseZGC --enable-native-access=ALL-UNNAMED -Djava.awt.headless=true
+    ports:
+      - "8082:8080" # REST API (Host 8082 -> Container 8080)
+      - "9092:9091" # gRPC / Raft Consensus
+    volumes:
+      - jettra_data_node02:/app/data
+    networks:
+      - jettra-net
+
+  # ----------------------------------------------------------------------------
+  # Nodo 03: Nodo Secundario 2 (Raft Follower / Secondary)
+  # ----------------------------------------------------------------------------
+  jettra-node-03:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jettra-node-03
+    hostname: jettra-node-03
+    restart: unless-stopped
+    depends_on:
+      - jettra-node-01
+    environment:
+      - JETTRA_NODE_ID=node-03
+      - JETTRA_NODE_ROLE=SECONDARY
+      - JETTRA_REST_PORT=8080
+      - JETTRA_GRPC_PORT=9091
+      - JETTRA_DATA_DIR=/app/data
+      - JETTRA_CLUSTER_SEEDS=jettra-node-01:9091,jettra-node-02:9091,jettra-node-03:9091
+      - JAVA_OPTS=-Xms512m -Xmx2g --enable-preview -XX:+UseZGC --enable-native-access=ALL-UNNAMED -Djava.awt.headless=true
+    ports:
+      - "8083:8080" # REST API (Host 8083 -> Container 8080)
+      - "9093:9091" # gRPC / Raft Consensus
+    volumes:
+      - jettra_data_node03:/app/data
+    networks:
+      - jettra-net
+
+volumes:
+  jettra_data_node01:
+    driver: local
+  jettra_data_node02:
+    driver: local
+  jettra_data_node03:
+    driver: local
+
+networks:
+  jettra-net:
+    driver: bridge
+```
+
+---
+
+### 15.3 Almacenamiento Persistente y Mapeo de Volúmenes (`/app/data`)
+
+Para asegurar durabilidad ACID y supervivencia de los datos ante reinicios o recreaciones de contenedores:
+* Cada nodo posee un volumen de Docker independiente (`jettra_data_node01`, `jettra_data_node02`, `jettra_data_node03`) montado en `/app/data`.
+* Dentro de `/app/data`, el motor `JettraStore` escribe los segmentos binarios `.jettra`, el registro de transacciones Write-Ahead Log (`wal.bin`) y los metadatos de índices dispersos.
+* Los volúmenes son desacoplados del ciclo de vida del contenedor, garantizando que un `docker compose down` mantenga íntegro el estado del clúster.
+
+---
+
+### 15.4 Autenticación Obligatoria mediante Tokens `JettraJWT` en Contenedores
+
+La API REST y el clúster gRPC implementan seguridad estricta mediante tokens **`JettraJWT`**.
+
+#### 1. Obtención del Token de Acceso
+El endpoint nativo `/api/v1/auth/token` autentica las credenciales del Superusuario:
+
+```bash
+# Solicitar Token JettraJWT al Nodo Principal (Puerto 8081)
+TOKEN=$(curl -s -X POST http://localhost:8081/api/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin-jettra"}' \
+  | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+
+echo "Token JettraJWT Obtenido: $TOKEN"
+```
+
+Respuesta JSON del servidor:
+```json
+{
+  "status": "SUCCESS",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "type": "Bearer",
+  "expiresIn": 86400,
+  "user": "admin",
+  "role": "SUPER_ADMIN"
+}
+```
+
+#### 2. Consulta Protegida del Clúster
+Cualquier petición administrativa o transaccional debe enviar la cabecera `Authorization: Bearer <TOKEN>`:
+
+```bash
+# Consultar estado del Nodo Principal
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/v1/cluster/status
+
+# Consultar estado del Nodo Secundario 1
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8082/api/v1/cluster/status
+
+# Consultar estado del Nodo Secundario 2
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8083/api/v1/cluster/status
+```
+
+Respuesta autorizada del nodo:
+```json
+{
+  "status": "ONLINE",
+  "nodeId": "node-01",
+  "role": "PRIMARY",
+  "activeConnections": 1,
+  "members": 3,
+  "memoryUsedMb": 58,
+  "walSequence": 0
+}
+```
+
+> [!CAUTION]
+> Si una petición no incluye la cabecera `Authorization` o el token es inválido o expirado, el servidor responde inmediatamente con código HTTP `401 Unauthorized` y bloquea el acceso.
+
+---
+
+### 15.5 Operaciones del Ciclo de Vida, Monitoreo y Comandos CLI
+
+| Operación | Comando |
+|---|---|
+| **Compilar Artefactos Maven** | `mvn clean install -DskipTests` |
+| **Construir e Iniciar Clúster** | `docker compose up -d --build` |
+| **Verificar Estado de Contenedores**| `docker compose ps` |
+| **Verificar Logs en Vivo** | `docker compose logs -f` |
+| **Logs de un Nodo Específico** | `docker compose logs -f jettra-node-01` |
+| **Detener Preservando Datos** | `docker compose down` |
+| **Detener Eliminando Volúmenes**| `docker compose down -v` |
+
+---
+
+## 16. Ecosistema de Herramientas Avanzadas y Resiliencia de Plataforma
+
+### 16.1 `JettraStoreMeter`: Pruebas de Estrés Concurrente Automatizadas con Maven
+
+El módulo [`JettraStoreMeter`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStoreMeter) proporciona un motor de pruebas de carga y estrés integrado directamente en el ciclo de vida de Maven (`mvn test -pl JettraStoreMeter`):
+
+* **Escenarios Masivos Concurrente de Usuarios Virtuales:**
+  * **25 Usuarios Simultáneos:** Carga base continua de consultas y validaciones sobre la base `example_factura_db`.
+  * **50 Usuarios Simultáneos:** Carga media con mezcla de lecturas por clave primaria y consultas por índices secundarios.
+  * **100 Usuarios Simultáneos:** Alta saturación transaccional con escrituras concurrentes e indexación HASH/BTREE.
+  * **500 Usuarios Simultáneos:** Prueba extrema de saturación impulsada por **Virtual Threads de Java 25**, logrando tasas superiores a **420,000 operaciones por segundo** con $0\%$ de tasa de error.
+* **Integración CI/CD:** Ejecutable desde la línea de comandos sin dependencias externas:
+  ```bash
+  mvn test -pl JettraStoreMeter -Dtest=JettraStoreMeterTest
+  ```
+
+---
+
+### 16.2 `JettraStorePoliceFX`: Plano Cartesiano en Primer Plano y Malla de Entidades Autónomas 3D
+
+[`JettraStorePoliceFX`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStorePoliceFX) es la consola de visualización dimensional y supervisión en tiempo real del motor `JettraPolice`:
+
+* **Plano Cartesiano en Primer Plano (*Foreground Cartesian Plane*):** La cuadrícula espacial $XYZ$ se renderiza con prioridad visual frontal, destacando los 4 cuadrantes principales mediante colores de alto contraste cian, magenta y ámbar.
+* **Malla de Entidades Autónomas (`AutonomousEntityMesh`):** Las entidades tridimensionales que representan bases de datos, buckets y particiones se mueven de manera autónoma y continua a través de fórmulas cinemáticas tridimensionales:
+  * Curvas armónicas de Lissajous en el espacio 3D.
+  * Órbitas elípticas con precesión giroscópica.
+  * Barredores axiales de saturación de memoria.
+  * Lemniscatas tridimensionales de sincronización Raft.
+* **Radar Dinámico 3D y Panel HUD:** Haz de radar giratorio continuo que rastrea coordenadas $(X, Y, Z)$ en vivo e informa instantáneamente de posibles desviaciones o anomalías detectadas por `JettraPolice`.
+
+---
+
+### 16.3 `JettraStoreFX`: Visualización 3D Cibernética, Replicación Raft y Tarjetas Holográficas
+
+[`JettraStoreFX`](file:///home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/JettraStoreFX) provee la consola de administración visual de `JettraStore`:
+
+* **Estética 3D Cyberpunk / Glassmorphism:**
+  * Navegación 3D orbital con control interactivo mediante ratón (giro con arrastre y zoom con rueda).
+  * Nodos de clúster renderizados como prismas holográficos 3D iluminados según su estado de salud (verde esmeralda = activo, ámbar = sincronizando, rojo = degradado).
+  * Anillos holográficos de energía pulsantes alrededor de los nodos líderes y seguidores.
+  * Sistema de partículas tridimensional continuo a 60 FPS que simula en tiempo real el tráfico de replicación Raft entre el nodo principal y los nodos secundarios.
+* **Controles HUD 3D Reactivos:** Botones con relieve táctil 3D, sombras dinámicas y tarjetas de información translúcidas (*glassmorphism*) para telemetría de memoria Panama y estado del clúster.
+
+---
+
+### 16.4 Recolector de Basura Autónomo (`JettraGarbageCollector`) y Cierre Limpio de Recursos (`AutoCloseable`)
+
+* **Prevención del Error `NoClassDefFoundError: StorageMetrics`:** En entornos de ejecución Maven (como `exec-maven-plugin`), cuando el proceso principal concluye, el ClassLoader de Maven se destruye mientras que los Virtual Threads de fondo pueden intentar resolver clases tardíamente. Para prevenir fallos en `Jettra-Autonomous-GC`:
+  1. Se implementó la precarga forzada de `StorageMetrics.class` durante la inicialización estática del recolector.
+  2. Se vincula explícitamente el `ContextClassLoader` del hilo virtual al cargador de clases principal de `JettraStore`.
+  3. Se encapsulan las rutinas de recolección en un bloque `catch (Throwable)` que detecta la descarga del ClassLoader y finaliza el hilo de manera limpia y silenciosa.
+* **Patrón `AutoCloseable` en Cadena:** La clase maestra `JettraDatabase` implementa formalmente `AutoCloseable`:
+  * Al cerrarse la base de datos o desconectarse el cliente `JettraClient`, se cierra en cascada el motor `JettraMemoryEngine`, liberando de forma segura los `Arena` y `MemorySegment` de Panama FFM.
+  * Se detienen los Virtual Threads demonio de recolección de memoria (`stopBackgroundCollector()`) y se sincronizan los segmentos WAL pendientes con `fsync` inmediato en disco.

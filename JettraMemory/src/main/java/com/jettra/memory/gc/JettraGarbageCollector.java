@@ -25,6 +25,12 @@ public final class JettraGarbageCollector implements AutoCloseable {
     private volatile boolean running = true;
     private Thread autoGcThread;
 
+    static {
+        try {
+            Class.forName(StorageMetrics.class.getName());
+        } catch (Throwable ignored) {}
+    }
+
     public JettraGarbageCollector(DiskStorageEngine storageEngine, double fragmentationThreshold, boolean autoGcEnabled) {
         this.storageEngine = storageEngine;
         this.fragmentationThreshold = fragmentationThreshold;
@@ -35,23 +41,28 @@ public final class JettraGarbageCollector implements AutoCloseable {
     }
 
     private void startBackgroundCollector() {
-        this.autoGcThread = Thread.ofVirtual().name("Jettra-Autonomous-GC").start(() -> {
-            while (running) {
+        Thread thread = Thread.ofVirtual().name("Jettra-Autonomous-GC").unstarted(() -> {
+            while (running && !Thread.currentThread().isInterrupted()) {
                 try {
                     Thread.sleep(5000); // Evaluar cada 5 segundos
                     if (!running) break;
 
                     StorageMetrics metrics = storageEngine.getMetrics();
-                    if (metrics.fragmentationRatio() >= fragmentationThreshold && metrics.deadBytes() > 0) {
+                    if (metrics != null && metrics.fragmentationRatio() >= fragmentationThreshold && metrics.deadBytes() > 0) {
                         compact();
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
-                } catch (Exception ignored) {
+                } catch (Throwable t) {
+                    // Detener el bucle limpiamente si el ClassLoader ha sido cerrado o se presenta un Error de enlace
+                    break;
                 }
             }
         });
+        thread.setContextClassLoader(JettraGarbageCollector.class.getClassLoader());
+        this.autoGcThread = thread;
+        thread.start();
     }
 
     /**

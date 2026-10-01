@@ -104,17 +104,18 @@ public class JettraStoreEngineTest {
     @DisplayName("Debe ejecutar Hot Backup y Restauración de base de datos .jettra")
     public void testBackupAndRestore() throws IOException {
         JettraStoreConfig cfg = JettraStoreConfig.load();
-        JettraDatabase db = new JettraDatabase("test_backup_db", cfg);
-        db.getDocumentEngine("users").insert("u1", Map.of("name", "Alice"));
+        try (JettraDatabase db = new JettraDatabase("test_backup_db", cfg)) {
+            db.getDocumentEngine("users").insert("u1", Map.of("name", "Alice"));
 
-        Path backupPath = Files.createTempFile("snapshot", ".jettra_bak");
-        var meta = BackupManager.backupDatabase(db, backupPath);
-        assertNotNull(meta);
-        assertEquals("test_backup_db", meta.databaseName());
+            Path backupPath = Files.createTempFile("snapshot", ".jettra_bak");
+            var meta = BackupManager.backupDatabase(db, backupPath);
+            assertNotNull(meta);
+            assertEquals("test_backup_db", meta.databaseName());
 
-        boolean restored = BackupManager.restoreDatabase(backupPath, db);
-        assertTrue(restored);
-        Files.deleteIfExists(backupPath);
+            boolean restored = BackupManager.restoreDatabase(backupPath, db);
+            assertTrue(restored);
+            Files.deleteIfExists(backupPath);
+        }
     }
 
     @Test
@@ -126,13 +127,14 @@ public class JettraStoreEngineTest {
         assertTrue(Files.isDirectory(Path.of(cfg.getStoragePath())));
         assertTrue(Files.isWritable(Path.of(cfg.getStoragePath())));
 
-        JettraDatabase db = new JettraDatabase("verify_storage_db", cfg);
-        db.getDocumentEngine("items").insert("i1", Map.of("title", "Product"));
-        db.flushMemTable();
+        try (JettraDatabase db = new JettraDatabase("verify_storage_db", cfg)) {
+            db.getDocumentEngine("items").insert("i1", Map.of("title", "Product"));
+            db.flushMemTable();
 
-        Path expectedFile = Path.of(cfg.getStoragePath(), "verify_storage_db_sstable" + cfg.getFileExtension());
-        assertTrue(Files.exists(expectedFile));
-        assertTrue(Files.size(expectedFile) > 0);
-        Files.deleteIfExists(expectedFile);
+            Path expectedFile = Path.of(cfg.getStoragePath(), "verify_storage_db_sstable" + cfg.getFileExtension());
+            assertTrue(Files.exists(expectedFile));
+            assertTrue(Files.size(expectedFile) > 0);
+            Files.deleteIfExists(expectedFile);
+        }
     }
 }

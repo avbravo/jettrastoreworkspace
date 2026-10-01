@@ -35,9 +35,10 @@ public class JettraStorePoliceFXApp extends Application {
     // 3D Camera Controls
     private PerspectiveCamera camera;
     // Configuración Inicial Óptima: Plano Cartesiano en Primer Plano
-    private final Rotate cameraRotateX = new Rotate(-34, Rotate.X_AXIS);
+    private final Rotate cameraRotateX = new Rotate(-24, Rotate.X_AXIS);
     private final Rotate cameraRotateY = new Rotate(0, Rotate.Y_AXIS);
-    private final Translate cameraTranslate = new Translate(0, -180, -400);
+    private final Translate cameraTranslate = new Translate(0, -95, -290);
+    private Label lblCoordsFeed;
     private double mouseAnchorX, mouseAnchorY;
     private boolean followMode = false;
 
@@ -124,6 +125,13 @@ public class JettraStorePoliceFXApp extends Application {
             @Override
             public void handle(long now) {
                 world3D.tickAnimation();
+                if (lblCoordsFeed != null) {
+                    StringBuilder sb = new StringBuilder();
+                    for (var entity : world3D.getAutonomousEntities()) {
+                        sb.append(entity.getCoordinatesFormatted()).append("\n");
+                    }
+                    lblCoordsFeed.setText(sb.toString().trim());
+                }
                 if (followMode) {
                     var agent = world3D.getAgentMesh();
                     cameraTranslate.setX(agent.getTranslateX());
@@ -590,6 +598,13 @@ public class JettraStorePoliceFXApp extends Application {
 
         h6.setStyle(itemStyle);
         overlay.getChildren().addAll(helpTitle, h1, h2, h3, h4, h5, h6);
+
+        Label coordsTitle = new Label("OBJETOS AUTÓNOMOS EN MOVIMIENTO:");
+        coordsTitle.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 9px; -fx-font-weight: bold; -fx-padding: 6 0 2 0;");
+        this.lblCoordsFeed = new Label("Inicializando telemetría cartesiana...");
+        lblCoordsFeed.setStyle("-fx-text-fill: #4ADE80; -fx-font-family: monospace; -fx-font-size: 8.5px; -fx-line-spacing: 2;");
+        overlay.getChildren().addAll(new Separator(), coordsTitle, lblCoordsFeed);
+
         return overlay;
     }
 
@@ -702,11 +717,11 @@ public class JettraStorePoliceFXApp extends Application {
 
     public void focusOnCartesianPlane() {
         followMode = false;
-        cameraRotateX.setAngle(-34);
+        cameraRotateX.setAngle(-24);
         cameraRotateY.setAngle(0);
         cameraTranslate.setX(0);
-        cameraTranslate.setY(-180);
-        cameraTranslate.setZ(-400);
+        cameraTranslate.setY(-95);
+        cameraTranslate.setZ(-290);
         updateAgentThought("Inspeccionando coordenadas en Plano Cartesiano tridimensional...", "Análisis Espacial en Primer Plano", "[Plano Cartesiano]", "#06B6D4");
         addLiveFeedEvent("[3D] Plano cartesiano enfocado en primer plano (Ejes X, Y, Z y retícula activa).");
     }

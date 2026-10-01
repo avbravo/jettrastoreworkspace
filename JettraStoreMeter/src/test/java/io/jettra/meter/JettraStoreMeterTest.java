@@ -50,4 +50,52 @@ public class JettraStoreMeterTest {
         assertTrue(result.offHeapAllocatedBytes() > 0, "Debe registrar bytes asignados off-heap en el archivo .jettra");
         assertTrue(result.teardownSuccess(), "El almacenamiento físico .jettra debe ser purgado en el teardown");
     }
+
+    @Test
+    @DisplayName("Debe validar estrés con 25 usuarios concurrentes contra example_factura_db durante período sostenido")
+    public void testFacturaWorkload25ConcurrentUsers() throws InterruptedException {
+        JettraStressTestRunner runner = new JettraStressTestRunner("127.0.0.1", 9091, "example_factura_db");
+        var result = runner.runFacturaDurationWorkload(25, 1200);
+
+        System.out.println("DEBUG [25 Users]: " + result.summary());
+        assertEquals(0, result.failedOperations());
+        assertTrue(result.totalOperations() > 100, "Debe procesar operaciones masivas con 25 usuarios");
+        assertTrue(result.opsPerSecond() > 50.0);
+    }
+
+    @Test
+    @DisplayName("Debe validar estrés con 50 usuarios concurrentes contra example_factura_db durante período sostenido")
+    public void testFacturaWorkload50ConcurrentUsers() throws InterruptedException {
+        JettraStressTestRunner runner = new JettraStressTestRunner("127.0.0.1", 9091, "example_factura_db");
+        var result = runner.runFacturaDurationWorkload(50, 1200);
+
+        System.out.println("DEBUG [50 Users]: " + result.summary());
+        assertEquals(0, result.failedOperations());
+        assertTrue(result.totalOperations() > 200, "Debe procesar operaciones masivas con 50 usuarios");
+        assertTrue(result.opsPerSecond() > 100.0);
+    }
+
+    @Test
+    @DisplayName("Debe validar estrés con 100 usuarios concurrentes contra example_factura_db durante período sostenido")
+    public void testFacturaWorkload100ConcurrentUsers() throws InterruptedException {
+        JettraStressTestRunner runner = new JettraStressTestRunner("127.0.0.1", 9091, "example_factura_db");
+        var result = runner.runFacturaDurationWorkload(100, 1200);
+
+        System.out.println("DEBUG [100 Users]: " + result.summary());
+        assertEquals(0, result.failedOperations());
+        assertTrue(result.totalOperations() > 300, "Debe procesar operaciones masivas con 100 usuarios");
+        assertTrue(result.opsPerSecond() > 150.0);
+    }
+
+    @Test
+    @DisplayName("Debe validar estrés con 500 usuarios concurrentes en Virtual Threads contra example_factura_db")
+    public void testFacturaWorkload500ConcurrentUsers() throws InterruptedException {
+        JettraStressTestRunner runner = new JettraStressTestRunner("127.0.0.1", 9091, "example_factura_db");
+        var result = runner.runFacturaDurationWorkload(500, 1200);
+
+        System.out.println("DEBUG [500 Users]: " + result.summary());
+        assertEquals(0, result.failedOperations());
+        assertTrue(result.totalOperations() > 500, "Debe procesar operaciones masivas con 500 usuarios concurrentes");
+        assertTrue(result.opsPerSecond() > 200.0);
+    }
 }

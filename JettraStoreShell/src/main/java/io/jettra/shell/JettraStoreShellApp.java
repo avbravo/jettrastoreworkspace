@@ -21,7 +21,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
-public final class JettraStoreShellApp {
+public final class JettraStoreShellApp implements AutoCloseable {
     private JettraClient client;
     private String currentDatabase = "default_db";
     private boolean authenticated = false;
@@ -2672,6 +2672,15 @@ Ejecute el comando 'connect <host> <puerto>' (o presione Enter para [127.0.0.1 9
             if (!result.isBlank()) {
                 System.out.println(result);
             }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (this.client != null) {
+            try {
+                this.client.close();
+            } catch (Exception ignored) {}
         }
     }
 }

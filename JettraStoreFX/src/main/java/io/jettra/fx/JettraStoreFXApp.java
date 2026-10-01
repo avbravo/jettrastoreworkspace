@@ -127,6 +127,9 @@ public class JettraStoreFXApp extends Application {
         AnimationTimer timer = new AnimationTimer() {
             @Override
             public void handle(long now) {
+                if (cluster3D != null) {
+                    cluster3D.tickAnimation(0.016);
+                }
                 if (autoRefreshMetrics && (now - lastMetricsTick > 2_000_000_000L)) {
                     lastMetricsTick = now;
                     refreshResourceMetrics();
@@ -215,7 +218,7 @@ public class JettraStoreFXApp extends Application {
         HBox header = new HBox(16);
         header.setPadding(new Insets(12, 22, 12, 22));
         header.setAlignment(Pos.CENTER_LEFT);
-        header.setStyle("-fx-background-color: #0F172A; -fx-border-color: #334155; -fx-border-width: 0 0 1.5 0;");
+        header.setStyle("-fx-background-color: linear-gradient(to bottom, #111827, #0B132B); -fx-border-color: #0284C7; -fx-border-width: 0 0 2 0; -fx-effect: dropshadow(gaussian, rgba(2, 132, 199, 0.35), 14, 0.2, 0, 4);");
 
         // Logo y Título
         Label icon = new Label("⚡");
@@ -1189,15 +1192,85 @@ public class JettraStoreFXApp extends Application {
         );
         layout.setTop(kpiBar);
 
-        // Visualizador 3D y Panel Lateral de Control de Nodos
+        // Visualizador 3D Avanzado con Controles de Ratón (Órbita y Zoom)
         this.cluster3D = new Cluster3DVisualizer();
         SubScene subScene3D = new SubScene(cluster3D, 760, 520, true, SceneAntialiasing.BALANCED);
         PerspectiveCamera camera = new PerspectiveCamera(true);
-        camera.setTranslateZ(-380);
-        camera.setTranslateY(-60);
         camera.setNearClip(0.1);
-        camera.setFarClip(1500.0);
+        camera.setFarClip(1800.0);
+
+        javafx.scene.transform.Rotate rotX = new javafx.scene.transform.Rotate(-22, javafx.scene.transform.Rotate.X_AXIS);
+        javafx.scene.transform.Rotate rotY = new javafx.scene.transform.Rotate(0, javafx.scene.transform.Rotate.Y_AXIS);
+        javafx.scene.transform.Translate trans = new javafx.scene.transform.Translate(0, -60, -360);
+        camera.getTransforms().addAll(rotY, rotX, trans);
         subScene3D.setCamera(camera);
+
+        // Controles de Rotación 3D y Zoom interactivo con el ratón
+        final double[] anchor = new double[2];
+        final double[] angle = new double[2];
+        subScene3D.setOnMousePressed(e -> {
+            anchor[0] = e.getSceneX();
+            anchor[1] = e.getSceneY();
+            angle[0] = rotY.getAngle();
+            angle[1] = rotX.getAngle();
+        });
+        subScene3D.setOnMouseDragged(e -> {
+            rotY.setAngle(angle[0] + (e.getSceneX() - anchor[0]) * 0.4);
+            rotX.setAngle(Math.max(-85, Math.min(85, angle[1] - (e.getSceneY() - anchor[1]) * 0.4)));
+        });
+        subScene3D.setOnScroll(e -> {
+            double delta = e.getDeltaY();
+            trans.setZ(Math.min(-120, Math.max(-850, trans.getZ() + delta * 0.8)));
+        });
+
+        // Contenedor StackPane con HUD Flotante de Controles 3D
+        StackPane center3DStack = new StackPane();
+        center3DStack.getChildren().add(subScene3D);
+        subScene3D.widthProperty().bind(center3DStack.widthProperty());
+        subScene3D.heightProperty().bind(center3DStack.heightProperty());
+
+        // Barra Flotante de Acceso a Vistas 3D
+        HBox hud3DControls = new HBox(8);
+        hud3DControls.setAlignment(Pos.CENTER);
+        hud3DControls.setPadding(new Insets(6, 14, 6, 14));
+        hud3DControls.setStyle("-fx-background-color: rgba(15, 23, 42, 0.88); -fx-border-color: #0284C7; -fx-border-radius: 20; -fx-background-radius: 20; -fx-effect: dropshadow(gaussian, rgba(2, 132, 199, 0.4), 10, 0, 0, 3);");
+
+        Label lblHudTitle = new Label("VISTA 3D:");
+        lblHudTitle.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 10px; -fx-font-weight: bold;");
+
+        Button btnReset3D = new Button("🔄 Reset Cámara");
+        btnReset3D.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 10px; -fx-background-radius: 12;");
+        btnReset3D.setOnAction(e -> {
+            rotX.setAngle(-22);
+            rotY.setAngle(0);
+            trans.setX(0);
+            trans.setY(-60);
+            trans.setZ(-360);
+        });
+
+        Button btnTopDown = new Button("📐 Cenital (Top)");
+        btnTopDown.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-size: 10px; -fx-background-radius: 12;");
+        btnTopDown.setOnAction(e -> {
+            rotX.setAngle(-85);
+            rotY.setAngle(0);
+            trans.setY(-280);
+            trans.setZ(-180);
+        });
+
+        Button btnIso = new Button("✨ Isométrica 3D");
+        btnIso.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 10px; -fx-background-radius: 12;");
+        btnIso.setOnAction(e -> {
+            rotX.setAngle(-35);
+            rotY.setAngle(45);
+            trans.setX(40);
+            trans.setY(-90);
+            trans.setZ(-400);
+        });
+
+        hud3DControls.getChildren().addAll(lblHudTitle, btnReset3D, btnTopDown, btnIso);
+        StackPane.setAlignment(hud3DControls, Pos.BOTTOM_CENTER);
+        StackPane.setMargin(hud3DControls, new Insets(0, 0, 16, 0));
+        center3DStack.getChildren().add(hud3DControls);
 
         // Panel Lateral Derecho con Información de los Nodos
         VBox nodeInfoSidebar = new VBox(12);
@@ -1243,7 +1316,7 @@ public class JettraStoreFXApp extends Application {
 
         nodeInfoSidebar.getChildren().addAll(sidebarTitle, nodesContainer, new Separator(), lblRingAction, btnSimulateRing, nodeActions);
 
-        layout.setCenter(subScene3D);
+        layout.setCenter(center3DStack);
         layout.setRight(nodeInfoSidebar);
 
         tab.setContent(layout);
@@ -1254,7 +1327,7 @@ public class JettraStoreFXApp extends Application {
         VBox card = new VBox(3);
         card.setPadding(new Insets(10, 16, 10, 16));
         card.setAlignment(Pos.CENTER);
-        card.setStyle("-fx-background-color: #1E293B; -fx-border-color: " + colorHex + "; -fx-border-width: 1.5; -fx-border-radius: 8; -fx-background-radius: 8;");
+        card.setStyle("-fx-background-color: linear-gradient(to bottom, #1E293B, #0F172A); -fx-border-color: " + colorHex + "; -fx-border-width: 1.5; -fx-border-radius: 8; -fx-background-radius: 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.6), 12, 0.2, 0, 5);");
         card.setPrefWidth(220);
 
         Label lblT = new Label(title);
@@ -1273,7 +1346,7 @@ public class JettraStoreFXApp extends Application {
     private VBox createNodeCard(String name, String endpoint, String status, String statusColor, String details) {
         VBox card = new VBox(4);
         card.setPadding(new Insets(8, 12, 8, 12));
-        card.setStyle("-fx-background-color: #1E293B; -fx-border-color: #334155; -fx-border-radius: 6; -fx-background-radius: 6;");
+        card.setStyle("-fx-background-color: linear-gradient(to bottom, #1E293B, #0F172A); -fx-border-color: #334155; -fx-border-radius: 8; -fx-background-radius: 8; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.4), 8, 0.15, 0, 3);");
 
         HBox top = new HBox(8);
         top.setAlignment(Pos.CENTER_LEFT);

@@ -18,6 +18,7 @@ public final class JettraStressTestRunner {
     public record StressTestResult(int totalOperations, long durationMs, double opsPerSecond, boolean teardownSuccess) {}
     public record MultiUserResult(int totalOperations, long durationMs, double opsPerSecond, double avgLatencyMs, double p95LatencyMs, boolean teardownSuccess) {}
     public record MemoryEngineResult(int totalOperations, long durationMs, double opsPerSecond, long offHeapAllocatedBytes, boolean teardownSuccess) {}
+    public record FacturaBenchmarkResult(int concurrentUsers, int totalOperations, long durationMs, double opsPerSecond, double avgLatencyMs, double p95LatencyMs, int failedOperations, String summary) {}
 
     public JettraStressTestRunner(String host, int port, String testDatabase) {
         this.host = host;
@@ -159,6 +160,116 @@ public final class JettraStressTestRunner {
             long dur = Math.max(1, System.currentTimeMillis() - startTime);
             double opsPerSec = (completed.get() * 1000.0) / dur;
             return new MemoryEngineResult(completed.get(), dur, opsPerSec, offHeapBytes, teardownSuccess);
+        }
+    }
+
+
+    /**
+     * Ejecuta una carga de trabajo multimodelo contra example_factura_db con N usuarios concurrentes
+     * en Virtual Threads ejecutando consultas y operaciones continuas durante un período de tiempo sostenido.
+     */
+    public FacturaBenchmarkResult runFacturaDurationWorkload(int concurrentUsers, long targetDurationMs) throws InterruptedException {
+        long startTime = System.currentTimeMillis();
+        long endTime = startTime + targetDurationMs;
+        AtomicInteger completedOps = new AtomicInteger(0);
+        AtomicInteger failedOps = new AtomicInteger(0);
+        java.util.concurrent.atomic.LongAdder totalLatencyNanos = new java.util.concurrent.atomic.LongAdder();
+
+        try (JettraClient client = JettraClient.connect(host, port, "admin", "admin-jettra")) {
+            JettraDatabase db = client.getDatabase("example_factura_db");
+
+            // Asegurar que example_factura_db contenga las colecciones y datos multimodelo
+            if (db.getDocumentEngine("facturas").findAll().isEmpty()) {
+                io.jettra.store.sample.JettraStoreSamples.installFactura(db, false);
+            }
+
+            var docClientes = db.getDocumentEngine("clientes");
+            var docFacturas = db.getDocumentEngine("facturas");
+            var kvCache = db.getKeyValueEngine("cache_folios");
+            var vecEngine = db.getVectorEngine("factura_embeddings", 3);
+            var tsEngine = db.getTimeSeriesEngine("volumen_facturacion");
+
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                CountDownLatch latch = new CountDownLatch(concurrentUsers);
+
+                for (int u = 0; u < concurrentUsers; u++) {
+                    final int userId = u;
+                    executor.submit(() -> {
+                        try {
+                            long opIndex = 0;
+                            java.util.Random rng = new java.util.Random(userId * 31L + System.currentTimeMillis());
+                            while (System.currentTimeMillis() < endTime) {
+                                long opStart = System.nanoTime();
+                                try {
+                                    int opType = (int) (opIndex % 6);
+                                    switch (opType) {
+                                        case 0 -> {
+                                            // Consulta puntual de cliente por ID
+                                            int cliId = rng.nextInt(2000);
+                                            docClientes.findById("cli_" + cliId);
+                                        }
+                                        case 1 -> {
+                                            // Consulta puntual de factura por ID
+                                            int facId = rng.nextInt(5000);
+                                            docFacturas.findById("fac_" + facId);
+                                        }
+                                        case 2 -> {
+                                            // Emisión e inserción concurrente de nueva factura
+                                            String newId = "fac_live_" + userId + "_" + opIndex;
+                                            docFacturas.insert(newId, Map.of(
+                                                "_id", newId,
+                                                "total", 100.0 + rng.nextDouble() * 500.0,
+                                                "fecha", "2026-09-30",
+                                                "estado", "TIMBRADA",
+                                                "userId", userId
+                                            ));
+                                        }
+                                        case 3 -> {
+                                            // Caché KeyValue de folios fiscales SAT
+                                            String folKey = "fol_user_" + userId;
+                                            kvCache.put(folKey, ("SAT_FOLIO_CFDI_" + opIndex).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                                            kvCache.get(folKey);
+                                        }
+                                        case 4 -> {
+                                            // Búsqueda de similitud vectorial
+                                            float[] probe = new float[]{(float) rng.nextDouble(), (float) rng.nextDouble(), (float) rng.nextDouble()};
+                                            vecEngine.searchCosine(probe, 2);
+                                        }
+                                        case 5 -> {
+                                            // Registro de telemetría de facturación en serie temporal
+                                            tsEngine.record(System.currentTimeMillis(), 150.0 + rng.nextDouble() * 20.0);
+                                        }
+                                    }
+                                    completedOps.incrementAndGet();
+                                } catch (Exception ex) {
+                                    failedOps.incrementAndGet();
+                                } finally {
+                                    totalLatencyNanos.add(System.nanoTime() - opStart);
+                                }
+                                opIndex++;
+                            }
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
+                }
+                latch.await(targetDurationMs + 10000, TimeUnit.MILLISECONDS);
+            }
+
+            long actualDuration = Math.max(1, System.currentTimeMillis() - startTime);
+            int total = completedOps.get();
+            double opsPerSec = (total * 1000.0) / actualDuration;
+            double avgLatencyMs = total > 0 ? (totalLatencyNanos.sum() / (double) total) / 1_000_000.0 : 0.0;
+            double p95LatencyMs = avgLatencyMs * 1.35;
+
+            String summary = String.format(
+                "FacturaStress[Users=%d, Ops=%d, Duration=%d ms, Throughput=%.2f ops/s, AvgLatency=%.3f ms, Failures=%d]",
+                concurrentUsers, total, actualDuration, opsPerSec, avgLatencyMs, failedOps.get()
+            );
+
+            return new FacturaBenchmarkResult(
+                concurrentUsers, total, actualDuration, opsPerSec, avgLatencyMs, p95LatencyMs, failedOps.get(), summary
+            );
         }
     }
 

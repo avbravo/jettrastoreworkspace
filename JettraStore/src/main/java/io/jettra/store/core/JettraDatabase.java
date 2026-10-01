@@ -30,7 +30,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public final class JettraDatabase {
+public final class JettraDatabase implements AutoCloseable {
     private final String databaseName;
     private final JettraStoreConfig config;
     private final NativeMemTable memTable;
@@ -925,10 +925,20 @@ public final class JettraDatabase {
         }
     }
 
-    public void drop() {
+    @Override
+    public void close() {
+        try {
+            if (memoryEngine != null) {
+                memoryEngine.close();
+            }
+        } catch (Exception ignored) {}
         try {
             memTable.close();
         } catch (Exception ignored) {}
+    }
+
+    public void drop() {
+        close();
         documentEngines.clear();
         vectorEngines.clear();
         graphEngines.clear();
