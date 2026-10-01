@@ -83,4 +83,41 @@ public class JettraStorePoliceMonitorTest {
             assertTrue(box.max().x() > box.min().x(), "Box Max X debe ser mayor que Box Min X");
         }
     }
+
+    @Test
+    @DisplayName("Debe calcular objetos procesados en tiempo real y correspondencia con Personas, Edificios, Camiones y Perros")
+    public void testRealtimeProcessedObjectsAndCorrespondence() {
+        try (JettraStorePoliceMonitor monitor = new JettraStorePoliceMonitor()) {
+            long initialTotal = monitor.getProcessedObjectsTotal();
+            assertTrue(initialTotal >= 8_250_000L, "Total de objetos inicial debe ser >= 8,250,000");
+            assertTrue(monitor.getProcessedObjectsPerSecond() > 10_000L, "Throughput de ops/s debe ser > 10,000");
+
+            // Correspondencia física 3D en tiempo real:
+            // 1. Personas: Usuarios conectados en vivo a JettraStore procesando consultas
+            assertFalse(monitor.getLiveSessions().isEmpty(), "Deben existir personas (sesiones de usuarios) activas");
+            assertEquals(11, monitor.getLiveSessions().size(), "Debe haber 11 usuarios conectados procesando objetos");
+
+            // 2. Edificios: Zonas geográficas donde se conectan los usuarios
+            assertEquals(4, monitor.getUserZones().size(), "Deben existir 4 edificios/zonas conectados a las bases de datos");
+
+            // 3. Camiones: Tráfico de replicación y batches de datos en tiempo real
+            assertFalse(monitor.getActiveTraffic().isEmpty(), "Deben existir camiones transportando tráfico entre nodos");
+
+            // 4. Perros: Agentes JettraPolice activados
+            assertEquals(4, monitor.getActivePoliceAgents().size(), "Deben existir 4 agentes caninos policiales activos");
+
+            // Ejecutar ciclo de evaluación de telemetría
+            monitor.pollAndEvaluateServers();
+
+            // Verificar que los objetos procesados avanzaron de acuerdo al throughput
+            assertTrue(monitor.getProcessedObjectsTotal() > initialTotal, "Los objetos procesados acumulados deben incrementarse");
+
+            // Verificar que los camiones transportan batches proporcionales a las ops/sec
+            for (var tr : monitor.getActiveTraffic()) {
+                assertNotNull(tr.getPayloadSummary());
+                assertTrue(tr.getPayloadSummary().contains("Batch"), "El resumen del camión debe reportar el lote de objetos procesados");
+            }
+        }
+    }
+
 }

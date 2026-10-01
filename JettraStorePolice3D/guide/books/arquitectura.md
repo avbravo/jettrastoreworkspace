@@ -50,3 +50,40 @@ graph TD
 * **Edificios (`UserZoneGroup`)**: Agrupación física de usuarios por proximidad de subredes IP en sedes comunes con cálculo de tráfico en MB/s.
 * **Perros (`JettraPoliceAgent`)**: Caninos guardianes (`HEAP_SENTINEL`, `RAFT_QUORUM_K9`, `MEMTABLE_PURGE_DOG`, `SECURITY_PATROL`) que patrullan circularmente los nodos asignados y reaccionan de inmediato ante alertas y cambios en la salud de JettraStore.
 * **Camiones (`ClusterDataTraffic`)**: Paquetes de datos reales en tránsito entre nodos primarios y secundarios, transportando lotes de facturas, historiales clínicos, vectores AI o logs de consenso Raft.
+
+
+## 4. Gestión de Usuarios y Roles Multimodelo (`UserManager` & `JettraUser`)
+
+`JettraStorePolice3D` incluye un panel completo de administración de seguridad y acceso multibase de datos (`KEY_U` o botón `[👥 USUARIOS]` en la barra lateral):
+* **Persistencia Atómica**: Almacenado en `memory/security/users.json` con soporte JSON serializado vía Jackson.
+* **Operaciones CRUD**: Creación de nuevos usuarios, edición de credenciales y descripciones, y eliminación segura con protección irrevocable del usuario raíz `admin`.
+* **Roles Globales de Sistema**:
+  * `ADMIN`: Control total de clúster, configuración y seguridad.
+  * `OPERATOR`: Administración operativa de nodos y monitoreo de salud.
+  * `DEVELOPER`: Ingesta, ejecución de consultas multimodelo y gestión de esquemas.
+  * `ANALYST`: Ejecución de consultas analíticas OLAP, vectoriales y grafos.
+  * `AUDITOR`: Inspección de bitácoras, cumplimiento y logs de `JettraStorePolice`.
+  * `GUEST`: Acceso no autenticado o de demostración con permisos restringidos.
+* **Matriz de Permisos por Base de Datos**: Asignación granular e interactiva de permisos (`NONE`, `READ_ONLY`, `READ_WRITE`, `ADMIN`) para cada base de datos registrada en el servidor (`example_factura_db`, `samples_hostipal_db`, `samples_ambiental_db`, `system_metadata_db`).
+
+## 5. Explorador Multimodelo de Motores y Registros Paginados (`EngineDataCatalog`)
+
+Accesible directamente mediante **clic derecho sobre cualquier base de datos 3D** en el Mundo Interior del Nodo, mediante el atajo `KEY_E` o con el botón `[🌳 ENGINES / DATOS]`:
+* **Estructura en Árbol Jerárquico**:
+  * `DOCUMENT`: Documentos JSON/BSON con esquemas flexibles y timbrado (`facturas`, `detalles_factura`, `clientes`, `pacientes`, `medicamentos`).
+  * `GRAPH`: Redes de grafos, vértices y relaciones ponderadas (`red_comercial`, `red_hospitalaria`, `red_ecosistemas`).
+  * `VECTOR`: Embeddings vectoriales de alta dimensión para IA y búsqueda semántica Top-K (`factura_embeddings`, `expediente_embeddings`, `clima_embeddings`).
+  * `JAVA_RECORD`: Tipos fuertemente tipados in-memory Java 25 (`ProductRecord`, `FacturaRecord`, `PatientRecord`, `SensorRecord`).
+  * `KEYVALUE`: Almacén de pares clave-valor ultrarrápido Off-Heap con expiración (`cache_folios`, `sesiones_activas`, `alertas_cache`).
+  * `TIMESERIES`: Métricas temporales cronológicas continuas (`volumen_facturacion`, `signos_vitales`, `temperatura_global`).
+  * `GEOSPATIAL`: Coordenadas georreferenciadas con indexación espacial (`sucursales_fiscales`, `geolocalizacion_hospitales`, `sensores_satelitales`).
+  * `COLUMNAR`: Almacén columnar OLAP vectorizado para agregaciones masivas (`metricas_fiscales_olap`, `estadisticas_clinicas`, `analisis_clima_olap`).
+* **Visualización y Paginación**: Navegación fluida por lotes (`◄ ANTERIOR` / `SIGUIENTE ►`), contador de registros totales, marcas temporales, tamaño en bytes y un visor/inspector JSON con sintaxis destacada en tiempo real.
+
+## 6. Correspondencia Estricta de Objetos y Rendimiento en Tiempo Real
+
+Los objetos visualizados en el mundo 3D ya no son aleatorios; representan fielmente el procesamiento del servidor JettraStore en tiempo real:
+* **Personas**: Cada persona que camina entre las sedes y los servidores corresponde a una sesión de usuario activa en JettraStore. La cantidad de personas y sus consultas activas reflejan directamente las transacciones simultáneas del servidor.
+* **Edificios**: Representan los centros de conexión y sedes geográficas conectadas a las bases de datos (Financiera, Hospital, Ambiental, Data Center), con métricas visibles de throughput e IOPS.
+* **Camiones**: Cada camión que circula por las autopistas cuánticas del clúster transporta lotes de datos reales (`ClusterDataTraffic`), cuyo tamaño y cadencia se calculan en base a las operaciones por segundo (OPS/S) y a la replicación SSTable/Raft del servidor.
+* **Perros**: Los agentes de `JettraStorePolice` (`HEAP_SENTINEL`, `RAFT_QUORUM_K9`, `MEMTABLE_PURGE_DOG`, `SECURITY_PATROL`) incrementan su velocidad de patrullaje, cambian de objetivo y activan alertas visuales rojas proporcionales a la saturación de objetos procesados y presión de memoria en los nodos.
