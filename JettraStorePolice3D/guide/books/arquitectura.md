@@ -37,3 +37,16 @@ graph TD
 ### C. La Puerta al Mundo Principal (Portal 3D)
 * Diseñada como una arcada monumental con vórtice de anillos concéntricos en plasma giratorio.
 * Posee colisión por raycasting y disparador de proximidad física que devuelve al operador al clúster macro de forma instantánea.
+
+
+## 3. Modelo de Telemetría en Tiempo Real y Gestión de Conexiones
+
+### A. Gestión de Conexiones (`ConnectionManager` & `ConnectionProfile`)
+* **Persistencia JSON**: Los perfiles de conexión se almacenan en `memory/connections.json` con soporte para URLs multimodelo (`tcp://`, `jettra://`, `http://`), credenciales y marca `isDefault`.
+* **Conmutación Dinámica**: Permite el cambio de servidor en caliente (`switchConnection`) reconectando el `JettraClient` y actualizando en tiempo real la topología de la ciudad 3D.
+
+### B. Mapeo Determinista de Entidades en Tiempo Real
+* **Personas (`JettraLiveSession`)**: No son peatones con movimiento aleatorio; son usuarios reales que se mueven entre el edificio de su sede (`UserZoneGroup`) y los nodos servidores según el ciclo de vida de sus consultas (`APPROACHING_NODE` -> `EXECUTING_QUERY` -> `RETURNING_TO_BUILDING` -> `IDLE_IN_BUILDING`).
+* **Edificios (`UserZoneGroup`)**: Agrupación física de usuarios por proximidad de subredes IP en sedes comunes con cálculo de tráfico en MB/s.
+* **Perros (`JettraPoliceAgent`)**: Caninos guardianes (`HEAP_SENTINEL`, `RAFT_QUORUM_K9`, `MEMTABLE_PURGE_DOG`, `SECURITY_PATROL`) que patrullan circularmente los nodos asignados y reaccionan de inmediato ante alertas y cambios en la salud de JettraStore.
+* **Camiones (`ClusterDataTraffic`)**: Paquetes de datos reales en tránsito entre nodos primarios y secundarios, transportando lotes de facturas, historiales clínicos, vectores AI o logs de consenso Raft.

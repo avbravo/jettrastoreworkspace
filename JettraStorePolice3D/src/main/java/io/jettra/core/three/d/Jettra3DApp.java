@@ -18,6 +18,13 @@ import io.jettra.core.three.d.model.WorldEvent;
 import io.jettra.core.three.d.model.ServerNode3D;
 import io.jettra.core.three.d.model.DatabaseInfo3D;
 import io.jettra.core.three.d.police.JettraStorePoliceMonitor;
+import io.jettra.core.three.d.voice.JettraVoiceNarrator;
+import io.jettra.core.three.d.config.ConnectionManager;
+import io.jettra.core.three.d.config.ConnectionProfile;
+import io.jettra.core.three.d.model.ClusterDataTraffic;
+import io.jettra.core.three.d.model.JettraLiveSession;
+import io.jettra.core.three.d.model.JettraPoliceAgent;
+import io.jettra.core.three.d.model.UserZoneGroup;
 import io.jettra.store.cluster.ClusterNode;
 import com.raylib.BoundingBox;
 import com.raylib.Ray;
@@ -44,6 +51,30 @@ public class Jettra3DApp {
     private List<WorldEvent> worldEvents = new CopyOnWriteArrayList<>();
 
     private float worldTime = 0;
+
+    private void triggerWorldEvent(String text, int r, int g, int b) {
+        WorldEvent ev = new WorldEvent(text, worldTime, r, g, b);
+        worldEvents.add(ev);
+        if (worldEvents.size() > 60) {
+            worldEvents.remove(0);
+        }
+        if (voiceEnabled) {
+            JettraVoiceNarrator.getInstance().speak(text);
+        }
+    }
+
+    // Panel de Gestión de Conexiones a JettraStore
+    private boolean showConnectionModal = false;
+    private String formConnId = "";
+    private String formConnName = "JettraStore Local Master";
+    private String formConnUrl = "tcp://127.0.0.1:8765";
+    private String formConnUsername = "admin";
+    private String formConnPassword = "admin";
+    private boolean formConnIsDefault = true;
+    private int activeConnField = 0; // 0: Ninguno, 1: Nombre, 2: URL, 3: Usuario, 4: Password
+    private String selectedProfileId = "";
+    private String connStatusFeedback = "";
+    private float connStatusFeedbackTimer = 0f;
     private int selectedAgentIndex = -1;
     private int selectedArtifactIndex = -1;
     private boolean followMode = false;
@@ -118,8 +149,8 @@ public class Jettra3DApp {
         }
 
         initCamera();
-        initPopulation();
         initPoliceMonitor();
+        initPopulation();
 
         while (!windowShouldClose()) {
             float dt = getFrameTime();
@@ -149,6 +180,19 @@ public class Jettra3DApp {
     private void handleInput() {
         if (showConfigModal) return;
 
+        // Atajo 'K': Abrir / Cerrar Panel de Gestión de Conexiones
+        if (isKeyPressed(KEY_K)) {
+            showConnectionModal = !showConnectionModal;
+            if (showConnectionModal) {
+                loadSelectedProfileIntoForm();
+            }
+        }
+
+        // Atajo 'R': Resetear el mundo e interactuar con JettraStore en tiempo real
+        if (isKeyPressed(KEY_R) && worldMode == WorldMode.MAIN_WORLD) {
+            resetWorldWithJettraStore();
+        }
+
         if (isKeyPressed(KEY_TAB)) showHelp = !showHelp;
         if (isKeyPressed(KEY_C)) {
             initCamera();
@@ -171,6 +215,37 @@ public class Jettra3DApp {
             } else {
                 showChat = !showChat;
             }
+        }
+
+        if (showConnectionModal) {
+            if (isKeyPressed(KEY_ESCAPE)) {
+                showConnectionModal = false;
+            }
+            if (isKeyPressed(KEY_TAB)) {
+                activeConnField = (activeConnField >= 4) ? 1 : activeConnField + 1;
+            }
+            int key = getCharPressed();
+            while (key > 0) {
+                if ((key >= 32) && (key <= 126)) {
+                    char c = (char) key;
+                    switch (activeConnField) {
+                        case 1 -> formConnName += c;
+                        case 2 -> formConnUrl += c;
+                        case 3 -> formConnUsername += c;
+                        case 4 -> formConnPassword += c;
+                    }
+                }
+                key = getCharPressed();
+            }
+            if (isKeyPressed(KEY_BACKSPACE)) {
+                switch (activeConnField) {
+                    case 1 -> { if (!formConnName.isEmpty()) formConnName = formConnName.substring(0, formConnName.length() - 1); }
+                    case 2 -> { if (!formConnUrl.isEmpty()) formConnUrl = formConnUrl.substring(0, formConnUrl.length() - 1); }
+                    case 3 -> { if (!formConnUsername.isEmpty()) formConnUsername = formConnUsername.substring(0, formConnUsername.length() - 1); }
+                    case 4 -> { if (!formConnPassword.isEmpty()) formConnPassword = formConnPassword.substring(0, formConnPassword.length() - 1); }
+                }
+            }
+            return;
         }
 
         if (showChat) {
@@ -535,6 +610,93 @@ public class Jettra3DApp {
     }
 
     private void updateEntities(float dt) {
+        // Telemetría y cinemática en tiempo real sincronizada con JettraStore
+        if (policeMonitor != null) {
+            // A. Personas (Usuarios conectados caminando entre sus edificios de zona y los nodos)
+            for (JettraLiveSession session : policeMonitor.getLiveSessions()) {
+                session.advance(dt);
+                HumanEntity person = findEntityByName(session.getUsername());
+                if (person != null) {
+                    UserZoneGroup zone = policeMonitor.getZoneById(session.getZoneId());
+                    ServerNode3D node = policeMonitor.getNodeById(session.getTargetNodeId());
+                    if (zone != null && node != null) {
+                        float bx = zone.getBuildingX(); float bz = zone.getBuildingZ();
+                        float nx = node.getX(); float nz = node.getZ();
+                        float p = session.getProgress();
+                        float newX = bx + (nx - bx) * p;
+                        float newZ = bz + (nz - bz) * p;
+
+                        float dx = newX - person.x;
+                        float dz = newZ - person.z;
+                        if (Math.abs(dx) > 0.001f || Math.abs(dz) > 0.001f) {
+                            person.rotation = (float) Math.atan2(dx, dz) * (180.0f / (float) Math.PI);
+                        }
+                        person.x = newX;
+                        person.z = newZ;
+                        person.action = (session.getPhase() == JettraLiveSession.SessionPhase.EXECUTING_QUERY) ? "QUERYING" : "WALKING";
+                        person.currentThought = session.getCurrentOperation();
+                        person.thoughtTimer = 4.0f;
+                    }
+                }
+            }
+
+            // B. Perros (Agentes Caninos JettraPolice patrullando en tiempo real sus nodos asignados)
+            for (JettraPoliceAgent agent : policeMonitor.getActivePoliceAgents()) {
+                agent.advance(dt);
+                HumanEntity dog = findEntityByName(agent.getName());
+                if (dog != null) {
+                    ServerNode3D node = policeMonitor.getNodeById(agent.getTargetNodeId());
+                    if (node != null) {
+                        float radius = 3.6f;
+                        float ang = agent.getPatrolAngle();
+                        float targetX = node.getX() + (float) Math.cos(ang) * radius;
+                        float targetZ = node.getZ() + (float) Math.sin(ang) * radius;
+
+                        float forwardAngle = ang + (float)(Math.PI / 2.0);
+                        dog.rotation = forwardAngle * (180.0f / (float) Math.PI);
+                        dog.x = targetX;
+                        dog.z = targetZ;
+                        dog.action = "PATROLLING";
+                        dog.currentThought = agent.getCurrentMission();
+                        dog.thoughtTimer = 4.0f;
+
+                        if (agent.isAlertActive()) {
+                            dog.r = 255; dog.g = 50; dog.b = 50;
+                        } else if (dog.isJettraMascot) {
+                            dog.r = 255; dog.g = 215; dog.b = 0;
+                        } else {
+                            dog.r = 30; dog.g = 144; dog.b = 255;
+                        }
+                    }
+                }
+            }
+
+            // C. Camiones (Tráfico de datos real entre nodos del clúster)
+            for (ClusterDataTraffic traffic : policeMonitor.getActiveTraffic()) {
+                traffic.advance(dt);
+                HumanEntity truck = findEntityByName(traffic.getName());
+                if (truck != null) {
+                    ServerNode3D src = policeMonitor.getNodeById(traffic.getSourceNodeId());
+                    ServerNode3D tgt = policeMonitor.getNodeById(traffic.getTargetNodeId());
+                    if (src != null && tgt != null) {
+                        float sx = src.getX(); float sz = src.getZ();
+                        float tx = tgt.getX(); float tz = tgt.getZ();
+                        float p = traffic.getProgress();
+                        truck.x = sx + (tx - sx) * p;
+                        truck.z = sz + (tz - sz) * p;
+
+                        float dirX = traffic.isReversing() ? (sx - tx) : (tx - sx);
+                        float dirZ = traffic.isReversing() ? (sz - tz) : (tz - sz);
+                        truck.rotation = (float) Math.atan2(dirX, dirZ) * (180.0f / (float) Math.PI);
+
+                        truck.dataPayload = traffic.getPayloadSummary();
+                        truck.currentThought = "🚚 " + traffic.getPayloadSummary();
+                        truck.thoughtTimer = 4.0f;
+                    }
+                }
+            }
+        }
+
         boolean isNight = (weatherMode == 1);
         int schoolCount = 0; int hospitalCount = 0;
         int aliveCount = 0; float globalHealth = 0;
@@ -865,6 +1027,7 @@ public class Jettra3DApp {
 
             if (showHelp) drawHelpOverlay();
             if (showConfigModal) drawConfigModal();
+            if (showConnectionModal) drawConnectionManagerModal();
             if (showChat) drawChatWindow();
             if (showNodeInspectorModal) drawNodeInspectorModal();
             
@@ -1113,18 +1276,22 @@ public class Jettra3DApp {
         drawText("JAVA 25 EDITION", sw - 190, 45, 10, SKYBLUE);
 
         // Buttons
-        if (guiButton(sw - 190, 80, 180, 30, "RESET WORLD", RED)) {
-            entities.clear();
-            artifacts.clear();
-            megaProjects.clear();
-            worldEvents.add(new WorldEvent("Mundo reiniciado", worldTime, 255, 0, 0));
+        if (guiButton(sw - 190, 75, 180, 28, "🔌 CONEXIONES", GOLD)) {
+            showConnectionModal = !showConnectionModal;
+            if (showConnectionModal) {
+                loadSelectedProfileIntoForm();
+            }
         }
 
-        if (guiButton(sw - 190, 120, 180, 30, "SAVE STATE", LIME)) {
+        if (guiButton(sw - 190, 110, 180, 28, "RESET JETTRASTORE", RED)) {
+            resetWorldWithJettraStore();
+        }
+
+        if (guiButton(sw - 190, 145, 180, 28, "SAVE STATE", LIME)) {
             saveWorldState();
         }
 
-        if (guiButton(sw - 190, 160, 180, 30, "CONFIGURACIÓN", BLUE)) {
+        if (guiButton(sw - 190, 180, 180, 28, "CONFIGURACIÓN", BLUE)) {
             showConfigModal = !showConfigModal;
             if (showConfigModal) {
                 initCamera();
@@ -1163,9 +1330,10 @@ public class Jettra3DApp {
             camera.fovy(Math.min(120, camera.fovy() + 5));
         }
 
-        if (guiButton(sw - 190, 330, 180, 25, voiceEnabled ? "VOICE: ON" : "VOICE: OFF", voiceEnabled ? LIME : RED)) {
+        if (guiButton(sw - 190, 330, 180, 25, voiceEnabled ? "🔊 VOZ: ACTIVA" : "🔇 VOZ: MUTE", voiceEnabled ? LIME : RED)) {
             voiceEnabled = !voiceEnabled;
-            worldEvents.add(new WorldEvent("Voz " + (voiceEnabled ? "activada" : "desactivada"), worldTime, 200, 200, 0));
+            JettraVoiceNarrator.getInstance().setEnabled(voiceEnabled);
+            triggerWorldEvent("Voz " + (voiceEnabled ? "activada" : "desactivada"), 200, 200, 0);
         }
 
         if (guiButton(sw - 190, 365, 85, 30, sfxEnabled ? "SFX: ON" : "SFX: OFF", sfxEnabled ? LIME : RED)) {
@@ -1263,8 +1431,8 @@ public class Jettra3DApp {
     }
 
     private void drawHelpOverlay() {
-        drawRectangle(15, 15, 270, 215, fade(BLACK, 0.75f));
-        drawRectangleLines(15, 15, 270, 215, GOLD);
+        drawRectangle(15, 15, 285, 245, fade(BLACK, 0.75f));
+        drawRectangleLines(15, 15, 285, 245, GOLD);
         drawLegibleText("CONTROLES DE CÁMARA", 20, 20, 14, GOLD);
         drawLegibleText("- Teclas: W,S,A,D,Q,E", 25, 45, 12, RAYWHITE);
         drawLegibleText("- Mouse: Click Derecho Girar", 25, 60, 12, RAYWHITE);
@@ -1277,6 +1445,8 @@ public class Jettra3DApp {
         drawLegibleText("- Enter: Abrir/Cerrar Chat", 25, 165, 12, LIME);
         drawLegibleText("- Clic Derecho en Nodo: Ver Recursos", 25, 180, 11, GOLD);
         drawLegibleText("- Tecla N: Ciclar Servidores y Abrir Inspector", 25, 195, 11, GOLD);
+        drawLegibleText("- Tecla K: Gestión de Conexiones JettraStore", 25, 210, 11, LIME);
+        drawLegibleText("- Tecla R: Sincronizar Mundo en Tiempo Real", 25, 225, 11, SKYBLUE);
     }
 
     private void drawConfigModal() {
@@ -1312,34 +1482,121 @@ public class Jettra3DApp {
     }
     
     private void initPopulation() {
-        if (loadWorldState()) {
-            worldEvents.add(new WorldEvent("Sistema Restaurado desde /memory/world/", worldTime, 0, 255, 100));
-            // Ensure Jettra Wolf and at least a few persons exist if the save was corrupted or everyone died
-            if (entities.stream().noneMatch(e -> e.name != null && e.name.contains("Jettra"))) {
-                generateEntity("Jettra Wolf", 0, 0, 0, true, false, false);
-            }
-            if (entities.size() < 2) {
-                generateEntity("Wolf-Prime", 10, 0, 10, true, false, false);
-                generateEntity("Human-Alpha", 15, 0, 0, false, false, false);
-                for (int i = 0; i < 4; i++) {
-                    generateEntity("Agent-R" + (10 + i), (float)(Math.random()*60-30), 0, (float)(Math.random()*60-30), false, false, false);
-                }
-            }
-            return;
+        resetWorldWithJettraStore();
+    }
+
+    private void resetWorldWithJettraStore() {
+        entities.clear();
+        artifacts.clear();
+        megaProjects.clear();
+
+        if (policeMonitor == null) {
+            policeMonitor = new JettraStorePoliceMonitor();
         }
 
-        // Create initial agents
-        if (entities.stream().noneMatch(e -> "Jettra Wolf".equals(e.name))) {
-            generateEntity("Jettra Wolf", 0, 0, 0, true, false, false); // El lobo Jettra como líder
+        // 1. Edificios (Lugares donde se conectan los usuarios, agrupados por zonas cercanas)
+        for (UserZoneGroup zone : policeMonitor.getUserZones()) {
+            artifacts.add(new Artifact(
+                zone.getBuildingName(),
+                zone.getPrimaryDatabase(),
+                zone.getBuildingDescription(),
+                zone.getBuildingType(),
+                zone.getBuildingX(), zone.getBuildingY(), zone.getBuildingZ(),
+                zone.getColorR(), zone.getColorG(), zone.getColorB(),
+                zone.getConnectedUserCount() + " usuarios activos | " + zone.getSubnetPrefix() + ".x"
+            ));
         }
-        generateEntity("Wolf-Prime", 10, 0, 10, true, false, false);
-        generateEntity("Human-Alpha", 15, 0, 0, false, false, false);
-        generateEntity("Civic-01", -15, 0, -15, false, false, true);
-        
-        for (int i = 0; i < 6; i++) {
-            generateEntity("Agent-" + (10 + i), (float)(Math.random()*60-30), 0, (float)(Math.random()*60-30), false, false, false);
+
+        // 2. Oficial Supervisor JettraStorePolice
+        if (policeSentinelEntity == null) {
+            policeSentinelEntity = new HumanEntity();
+            policeSentinelEntity.name = "JettraStorePolice";
+            policeSentinelEntity.action = "PATROLLING";
+            policeSentinelEntity.job = "Centinela Supervisor de Servidores JettraStore";
+            policeSentinelEntity.r = 30; policeSentinelEntity.g = 144; policeSentinelEntity.b = 255;
+            policeSentinelEntity.isPoliceOfficer = true;
         }
-        worldEvents.add(new WorldEvent("Sistema Iniciado. Población generada.", worldTime, 200, 200, 255));
+        policeSentinelEntity.x = -14.0f; policeSentinelEntity.y = 0.0f; policeSentinelEntity.z = -8.5f;
+        policeSentinelEntity.targetX = -14.0f; policeSentinelEntity.targetZ = -8.5f; policeSentinelEntity.targetY = 0.0f;
+        policeSentinelEntity.currentThought = "🛡️ JettraStorePolice: Supervisando estabilidad Heap y quórum Raft...";
+        policeSentinelEntity.thoughtTimer = 6.0f;
+        entities.add(policeSentinelEntity);
+
+        // 3. Perros: Agentes JettraPolice que se activan en JettraStore
+        for (JettraPoliceAgent agent : policeMonitor.getActivePoliceAgents()) {
+            HumanEntity k9 = new HumanEntity();
+            k9.name = agent.getName();
+            k9.isWolf = true;
+            k9.isPoliceK9 = true;
+            if (agent.getName().contains("Alpha")) k9.isJettraMascot = true;
+            k9.action = "PATROLLING";
+            ServerNode3D node = policeMonitor.getNodeById(agent.getTargetNodeId());
+            float nx = (node != null) ? node.getX() : 0f;
+            float nz = (node != null) ? node.getZ() : -8f;
+            k9.x = nx + 3.0f; k9.y = 0; k9.z = nz;
+            k9.targetX = nx; k9.targetZ = nz;
+            if (agent.isAlertActive()) {
+                k9.r = 255; k9.g = 50; k9.b = 50;
+            } else if (k9.isJettraMascot) {
+                k9.r = 255; k9.g = 215; k9.b = 0;
+            } else {
+                k9.r = 30; k9.g = 144; k9.b = 255;
+            }
+            k9.currentThought = agent.getCurrentMission();
+            k9.thoughtTimer = 6.0f;
+            entities.add(k9);
+        }
+
+        // 4. Camiones: Tráfico de datos en tiempo real analizando el clúster
+        for (ClusterDataTraffic traffic : policeMonitor.getActiveTraffic()) {
+            HumanEntity truck = new HumanEntity();
+            truck.name = traffic.getName();
+            truck.isCar = true;
+            truck.action = "DRIVING";
+            ServerNode3D src = policeMonitor.getNodeById(traffic.getSourceNodeId());
+            ServerNode3D tgt = policeMonitor.getNodeById(traffic.getTargetNodeId());
+            float sx = (src != null) ? src.getX() : 0f;
+            float sz = (src != null) ? src.getZ() : -8f;
+            float tx = (tgt != null) ? tgt.getX() : 14f;
+            float tz = (tgt != null) ? tgt.getZ() : -8f;
+            truck.x = sx; truck.y = 0; truck.z = sz;
+            truck.targetX = tx; truck.targetZ = tz;
+            truck.dataPayload = traffic.getPayloadSummary();
+            truck.connectedDatabase = traffic.getSourceNodeId() + " -> " + traffic.getTargetNodeId();
+            truck.r = 255; truck.g = 180; truck.b = 40;
+            truck.currentThought = "🚚 " + traffic.getPayloadSummary();
+            truck.thoughtTimer = 5.0f;
+            entities.add(truck);
+        }
+
+        // 5. Personas: Usuarios conectados en tiempo real a JettraStore
+        for (JettraLiveSession session : policeMonitor.getLiveSessions()) {
+            UserZoneGroup zone = policeMonitor.getZoneById(session.getZoneId());
+            ServerNode3D node = policeMonitor.getNodeById(session.getTargetNodeId());
+            HumanEntity u = new HumanEntity();
+            u.name = session.getUsername();
+            u.connectedDatabase = session.getDatabase();
+            u.connectionFacility = (zone != null) ? zone.getBuildingName() : "Sede Central";
+            u.targetServer = session.getTargetNodeId();
+            u.job = "Usuario Conectado (" + session.getClientIp() + ")";
+            u.action = "WALKING";
+            if (zone != null) {
+                u.r = zone.getColorR(); u.g = zone.getColorG(); u.b = zone.getColorB();
+                u.x = zone.getBuildingX() + (float)(Math.random() * 2 - 1);
+                u.y = 0;
+                u.z = zone.getBuildingZ() + (float)(Math.random() * 2 - 1);
+            }
+            if (node != null) {
+                u.targetX = node.getX();
+                u.targetZ = node.getZ();
+            }
+            u.currentThought = session.getCurrentOperation();
+            u.thoughtTimer = 5.0f;
+            entities.add(u);
+        }
+
+        String connName = (policeMonitor.getCurrentProfile() != null) ? policeMonitor.getCurrentProfile().getName() : "Local";
+        triggerWorldEvent("Mundo sincronizado en tiempo real con [" + connName + "]: Edificios por zonas, usuarios en vivo, tráfico de clúster y agentes JettraPolice activos.", 0, 255, 180);
     }
 
     private boolean loadWorldState() {
@@ -2358,4 +2615,268 @@ public class Jettra3DApp {
         drawText("ATRAVESANDO PUERTA DIMENSIONAL...", sw / 2 - 210, sh / 2 - 20, 22, SKYBLUE);
         drawLegibleText("Regresando a la vista macro del clúster...", sw / 2 - 140, sh / 2 + 15, 13, GOLD);
     }
+
+    private void loadSelectedProfileIntoForm() {
+        if (policeMonitor == null) return;
+        ConnectionProfile cur = policeMonitor.getCurrentProfile();
+        if (cur != null) {
+            formConnId = cur.getId();
+            formConnName = cur.getName();
+            formConnUrl = cur.getUrl();
+            formConnUsername = cur.getUsername();
+            formConnPassword = cur.getPassword();
+            formConnIsDefault = cur.isDefault();
+            selectedProfileId = cur.getId();
+        }
+    }
+
+    private HumanEntity findEntityByName(String name) {
+        if (name == null) return null;
+        for (HumanEntity e : entities) {
+            if (name.equalsIgnoreCase(e.name)) return e;
+        }
+        return null;
+    }
+
+    private void drawInteractiveInput(int x, int y, int w, int h, String value, int fieldId, boolean isPassword) {
+        Rectangle rec = new Rectangle().x(x).y(y).width(w).height(h);
+        Vector2 mouse = getMousePosition();
+        boolean hovered = checkCollisionPointRec(mouse, rec);
+        boolean isActive = (activeConnField == fieldId);
+
+        if (hovered && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            activeConnField = fieldId;
+        }
+
+        Color bg = isActive ? new Color().r((byte)30).g((byte)45).b((byte)75).a((byte)255)
+                            : (hovered ? new Color().r((byte)25).g((byte)32).b((byte)52).a((byte)255)
+                                       : new Color().r((byte)15).g((byte)20).b((byte)35).a((byte)255));
+
+        drawRectangleRounded(rec, 0.15f, 4, bg);
+        drawRectangleRoundedLines(rec, 0.15f, 4, isActive ? GOLD : (hovered ? SKYBLUE : DARKGRAY));
+
+        String display = isPassword ? "•".repeat(value.length()) : value;
+        if (isActive && ((int)(worldTime * 2) % 2 == 0)) {
+            display += "_";
+        }
+        drawLegibleText(display, x + 8, y + 8, 12, RAYWHITE);
+    }
+
+    private void drawConnectionManagerModal() {
+        int sw = getScreenWidth();
+        int sh = getScreenHeight();
+
+        // Fondo oscurecido semi-transparente
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.65f));
+
+        int mw = 840;
+        int mh = 530;
+        int mx = (sw - mw) / 2;
+        int my = (sh - mh) / 2;
+
+        // Ventana principal con estilo ciberespacial y borde dorado
+        drawRectangle(mx, my, mw, mh, new Color().r((byte)18).g((byte)22).b((byte)35).a((byte)250));
+        drawRectangleLines(mx, my, mw, mh, GOLD);
+
+        // Barra de Título
+        drawRectangle(mx, my, mw, 45, new Color().r((byte)26).g((byte)32).b((byte)50).a((byte)255));
+        drawLine(mx, my + 45, mx + mw, my + 45, GOLD);
+        drawLegibleText("🔌 GESTIÓN DE CONEXIONES JETTRASTORE (TIEMPO REAL)", mx + 20, my + 14, 18, GOLD);
+
+        ConnectionProfile activeProfile = (policeMonitor != null) ? policeMonitor.getCurrentProfile() : null;
+        String activeBadge = (activeProfile != null) ? "[ACTIVA: " + activeProfile.getName() + "]" : "[DESCONECTADO]";
+        drawLegibleText(activeBadge, mx + mw - measureLegibleText(activeBadge, 13) - 20, my + 16, 13, LIME);
+
+        // Divisor vertical
+        int col1W = 340;
+        int col2X = mx + col1W + 25;
+        int col2W = mw - col1W - 45;
+        drawLine(mx + col1W + 10, my + 55, mx + col1W + 10, my + mh - 55, fade(GRAY, 0.4f));
+
+        // --- COLUMNA IZQUIERDA: LISTA DE CONEXIONES REGISTRADAS ---
+        drawLegibleText("LISTA DE CONEXIONES REGISTRADAS", mx + 20, my + 55, 13, SKYBLUE);
+        drawLegibleText("Seleccione una conexión para editar o conectar:", mx + 20, my + 72, 10, LIGHTGRAY);
+
+        List<ConnectionProfile> profiles = (policeMonitor != null) ? policeMonitor.getConnectionManager().getProfiles() : List.of();
+        int listY = my + 92;
+        int cardH = 68;
+
+        for (int i = 0; i < Math.min(5, profiles.size()); i++) {
+            ConnectionProfile p = profiles.get(i);
+            boolean isSelected = p.getId().equals(selectedProfileId);
+            boolean isCurrentActive = (activeProfile != null && p.getId().equals(activeProfile.getId()));
+
+            Rectangle cardRec = new Rectangle().x(mx + 20).y(listY + (i * (cardH + 6))).width(col1W - 20).height(cardH);
+            Vector2 mouse = getMousePosition();
+            boolean hovered = checkCollisionPointRec(mouse, cardRec);
+
+            Color cardBg = isSelected ? new Color().r((byte)35).g((byte)55).b((byte)90).a((byte)240)
+                                      : (hovered ? new Color().r((byte)28).g((byte)36).b((byte)58).a((byte)220)
+                                                 : new Color().r((byte)22).g((byte)28).b((byte)45).a((byte)200));
+
+            drawRectangleRounded(cardRec, 0.15f, 6, cardBg);
+            drawRectangleRoundedLines(cardRec, 0.15f, 6, isSelected ? GOLD : (hovered ? SKYBLUE : fade(GRAY, 0.4f)));
+
+            // Nombre y URL
+            drawLegibleText(p.getName(), (int)cardRec.x() + 10, (int)cardRec.y() + 8, 14, isSelected ? GOLD : RAYWHITE);
+            drawLegibleText("URL: " + p.getUrl(), (int)cardRec.x() + 10, (int)cardRec.y() + 27, 11, SKYBLUE);
+            drawLegibleText("User: " + p.getUsername(), (int)cardRec.x() + 10, (int)cardRec.y() + 45, 10, LIGHTGRAY);
+
+            // Badges
+            int badgeX = (int)(cardRec.x() + cardRec.width() - 95);
+            if (p.isDefault()) {
+                drawRectangle(badgeX, (int)cardRec.y() + 6, 85, 16, fade(GOLD, 0.25f));
+                drawRectangleLines(badgeX, (int)cardRec.y() + 6, 85, 16, GOLD);
+                drawLegibleText("★ DEFAULT", badgeX + 8, (int)cardRec.y() + 8, 10, GOLD);
+            }
+            if (isCurrentActive) {
+                int activeY = (int)cardRec.y() + (p.isDefault() ? 26 : 6);
+                drawRectangle(badgeX, activeY, 85, 16, fade(LIME, 0.25f));
+                drawRectangleLines(badgeX, activeY, 85, 16, LIME);
+                drawLegibleText("● EN LÍNEA", badgeX + 8, activeY + 2, 10, LIME);
+            }
+
+            // Clic para seleccionar
+            if (hovered && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                selectedProfileId = p.getId();
+                formConnId = p.getId();
+                formConnName = p.getName();
+                formConnUrl = p.getUrl();
+                formConnUsername = p.getUsername();
+                formConnPassword = p.getPassword();
+                formConnIsDefault = p.isDefault();
+                activeConnField = 0;
+            }
+        }
+
+        // Botón Nueva Conexión
+        if (guiButton(mx + 20, my + mh - 50, col1W - 20, 32, "+ NUEVA CONEXIÓN", new Color().r((byte)30).g((byte)120).b((byte)80).a((byte)255))) {
+            formConnId = "";
+            formConnName = "Nuevo Clúster JettraStore";
+            formConnUrl = "tcp://127.0.0.1:8765";
+            formConnUsername = "admin";
+            formConnPassword = "";
+            formConnIsDefault = profiles.isEmpty();
+            selectedProfileId = "";
+            activeConnField = 1;
+            connStatusFeedback = "Formulario listo para nueva conexión.";
+            connStatusFeedbackTimer = 3.0f;
+        }
+
+        // --- COLUMNA DERECHA: FORMULARIO DE DETALLES Y EDICIÓN ---
+        drawLegibleText("DATOS DE LA CONEXIÓN (URL, CREDENCIALES)", col2X, my + 55, 13, GOLD);
+        drawLegibleText("Haga clic en un campo o use TAB para editar:", col2X, my + 72, 10, LIGHTGRAY);
+
+        int formY = my + 92;
+        int inputH = 30;
+
+        // Campo 1: Nombre
+        drawLegibleText("Nombre Descriptivo:", col2X, formY, 11, RAYWHITE);
+        drawInteractiveInput(col2X, formY + 16, col2W, inputH, formConnName, 1, false);
+
+        // Campo 2: URL
+        formY += 56;
+        drawLegibleText("URL de la Base de Datos (ej. tcp://127.0.0.1:8765 o jettra://localhost:9091):", col2X, formY, 11, RAYWHITE);
+        drawInteractiveInput(col2X, formY + 16, col2W, inputH, formConnUrl, 2, false);
+
+        // Campo 3: Username
+        formY += 56;
+        drawLegibleText("Usuario (Username):", col2X, formY, 11, RAYWHITE);
+        drawInteractiveInput(col2X, formY + 16, col2W, inputH, formConnUsername, 3, false);
+
+        // Campo 4: Password
+        formY += 56;
+        drawLegibleText("Contraseña (Password):", col2X, formY, 11, RAYWHITE);
+        drawInteractiveInput(col2X, formY + 16, col2W, inputH, formConnPassword, 4, true);
+
+        // Checkbox: Default
+        formY += 56;
+        Rectangle chkRec = new Rectangle().x(col2X).y(formY).width(20).height(20);
+        if (checkCollisionPointRec(getMousePosition(), chkRec) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formConnIsDefault = !formConnIsDefault;
+        }
+        drawRectangleRounded(chkRec, 0.2f, 4, formConnIsDefault ? GOLD : DARKGRAY);
+        drawRectangleRoundedLines(chkRec, 0.2f, 4, WHITE);
+        if (formConnIsDefault) {
+            drawLegibleText("✓", col2X + 4, formY + 2, 14, BLACK);
+        }
+        drawLegibleText("Usar como conexión predeterminada al iniciar la aplicación", col2X + 28, formY + 3, 11, formConnIsDefault ? GOLD : RAYWHITE);
+
+        // Botones de acción del formulario
+        int btnY = my + mh - 50;
+
+        // Botón 1: Guardar
+        if (guiButton(col2X, btnY, 95, 32, "💾 GUARDAR", LIME)) {
+            if (policeMonitor != null) {
+                String idToSave = (formConnId != null && !formConnId.isEmpty()) ? formConnId : "conn_" + System.currentTimeMillis();
+                ConnectionProfile toSave = new ConnectionProfile(
+                    idToSave, formConnName, formConnUrl, formConnUsername, formConnPassword, formConnIsDefault
+                );
+                policeMonitor.getConnectionManager().saveOrUpdate(toSave);
+                selectedProfileId = idToSave;
+                formConnId = idToSave;
+                connStatusFeedback = "¡Conexión '" + formConnName + "' guardada!";
+                connStatusFeedbackTimer = 4.0f;
+                triggerWorldEvent("Perfil de conexión guardado: " + formConnName, 50, 255, 100);
+            }
+        }
+
+        // Botón 2: Conectar Ahora (Cambiar conexión activa en tiempo real)
+        if (guiButton(col2X + 105, btnY, 115, 32, "⚡ CONECTAR", SKYBLUE)) {
+            if (policeMonitor != null) {
+                String idToSave = (formConnId != null && !formConnId.isEmpty()) ? formConnId : "conn_" + System.currentTimeMillis();
+                ConnectionProfile toConn = new ConnectionProfile(
+                    idToSave, formConnName, formConnUrl, formConnUsername, formConnPassword, formConnIsDefault
+                );
+                policeMonitor.getConnectionManager().saveOrUpdate(toConn);
+                policeMonitor.switchConnection(toConn);
+                selectedProfileId = idToSave;
+                formConnId = idToSave;
+                resetWorldWithJettraStore();
+                connStatusFeedback = "¡Conectado a " + toConn.getName() + "!";
+                connStatusFeedbackTimer = 4.0f;
+                triggerWorldEvent("Conexión conmutada en tiempo real a " + toConn.getName() + " (" + toConn.getUrl() + ")", 0, 220, 255);
+            }
+        }
+
+        // Botón 3: Predeterminada
+        if (guiButton(col2X + 230, btnY, 120, 32, "★ DEFAULT", GOLD)) {
+            if (policeMonitor != null && formConnId != null && !formConnId.isEmpty()) {
+                policeMonitor.getConnectionManager().setDefault(formConnId);
+                formConnIsDefault = true;
+                connStatusFeedback = "Marcada como predeterminada.";
+                connStatusFeedbackTimer = 4.0f;
+                triggerWorldEvent("Conexión predeterminada establecida: " + formConnName, 255, 215, 0);
+            }
+        }
+
+        // Botón 4: Eliminar
+        if (guiButton(col2X + 360, btnY, 85, 32, "🗑️ BORRAR", RED)) {
+            if (policeMonitor != null && formConnId != null && !formConnId.isEmpty()) {
+                policeMonitor.getConnectionManager().delete(formConnId);
+                loadSelectedProfileIntoForm();
+                connStatusFeedback = "Conexión eliminada.";
+                connStatusFeedbackTimer = 4.0f;
+                triggerWorldEvent("Conexión eliminada del registro.", 255, 100, 100);
+            }
+        }
+
+        // Botón Cerrar (Esquina superior derecha)
+        Rectangle closeBtnRec = new Rectangle().x(mx + mw - 38).y(my + 10).width(26).height(26);
+        boolean closeHover = checkCollisionPointRec(getMousePosition(), closeBtnRec);
+        drawRectangleRounded(closeBtnRec, 0.2f, 4, closeHover ? RED : DARKGRAY);
+        drawLegibleText("X", (int)closeBtnRec.x() + 8, (int)closeBtnRec.y() + 5, 14, RAYWHITE);
+        if (closeHover && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            showConnectionModal = false;
+        }
+
+        // Mensaje de Feedback
+        if (connStatusFeedbackTimer > 0) {
+            connStatusFeedbackTimer -= getFrameTime();
+            drawRectangle(col2X, my + mh - 90, col2W, 26, new Color().r((byte)20).g((byte)45).b((byte)30).a((byte)220));
+            drawRectangleLines(col2X, my + mh - 90, col2W, 26, LIME);
+            drawLegibleText("✔ " + connStatusFeedback, col2X + 10, my + mh - 84, 11, LIME);
+        }
+    }
+
 }

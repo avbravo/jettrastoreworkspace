@@ -1,69 +1,71 @@
 # JettraStorePolice3D
 
-Proyecto unificado de monitoreo 3D en tiempo real para **JettraStore**, integrando la capa profunda de IA (`jettra-dl`) y el motor gráfico nativo (`jettra-3d-java`) en una sola aplicación interactiva con soporte para submundos cuánticos de nodos servidores y evaluación policial por **JettraStorePolice**.
+Proyecto unificado de monitoreo 3D en tiempo real para **JettraStore**, integrando la capa profunda de IA (`jettra-dl`) y el motor gráfico nativo (`jettra-3d-java`) en una sola aplicación interactiva con soporte para submundos cuánticos de nodos servidores, gestión avanzada de conexiones y evaluación policial en vivo por **JettraStorePolice**.
 
 ---
 
-## Características Principales
+## 1. Mapeo de Objetos 3D con Telemetría en Tiempo Real
 
-1. **Proyecto Unificado**:
-   - Fusión completa de `jettra-dl` y `jettra-3d-java` en un único artefacto Maven `JettraStorePolice3D` sin dependencias modulares intermedias.
-   - Desarrollado en **Java 25** aprovechando la API **Foreign Function & Memory (FFM / Project Panama)** para acceso nativo a **Raylib 5.5** y **Project Loom** para Virtual Threads.
+Todos los elementos y sus movimientos en el mundo 3D no son aleatorios; representan **datos en tiempo real tomados directamente de JettraStore en ejecución**:
 
-2. **Monitoreo 3D de Clúster JettraStore**:
-   - Servidores de clúster representados como racks 3D en el mundo macro (`node-01-master`, `node-02-replica`, `node-03-replica`).
-   - Balizas luminosas, haces de datos y anillos Raft animados.
-   - Centinela autónomo **JettraStorePolice** patrullando físicamente los nodos y emitiendo veredictos en tiempo real.
-   - Indicador visual cuando un nodo está **FUERA DE SERVICIO** (sirenas rojas parpadeantes, vigas cortadas y alertas críticas).
-
-3. **Expansión a Submundos Interiores de Nodo**:
-   - Al **hacer clic** sobre cualquier nodo servidor (o pulsar el botón en el modal de inspección), el nodo se expande y transporta al usuario al **Mundo Interior del Servidor**.
-   - **Bases de Datos 3D Alojadas**:
-     - `example_factura_db`: Multimodelo Off-Heap (Document, KeyValue, Vector, Graph, TimeSeries) con 3,750,000 registros (1.2 GB).
-     - `samples_hostipal_db`: Red Hospitalaria y Salud Pública con 2,000,000 registros (850 MB).
-     - `samples_ambiental_db`: Monitoreo Ambiental Mundial y Clima con 3,000,000 registros (1.45 GB).
-     - `system_metadata_db`: Catálogo de Esquemas y Transacciones Raft (45 MB).
-   - Fichas técnicas interactivas al hacer clic sobre los pedestales de bases de datos detallando sus buckets especializados y lecturas/escrituras IOPS.
-
-4. **Panel de Recursos Consumidos del Nodo**:
-   - HUD flotante de cristal que muestra en tiempo real:
-     - Saturación y uso de **Memoria Heap JVM** (con barra progresiva coloreada).
-     - **Memoria Off-Heap (Panama Direct Memory)** sin pausa de Garbage Collection.
-     - Concurrencia de **Hilos Virtuales Loom** y núcleos de CPU.
-     - **Almacenamiento LSM**: MemTable en RAM y volumen de archivos `.sst` en disco.
-     - Diagnóstico policial de estabilidad emitido por `JettraStorePolice`.
-     - Botón para simular desconexión/reconexión en caliente.
-
-5. **La Puerta al Mundo Principal (Portal Dimensional)**:
-   - Portal 3D monumental ubicado en el extremo del submundo con columnas de neón, umbral iluminado y vórtice de anillos plasmáticos giratorios.
-   - Al hacer clic en la puerta, acercarse a ella o pulsar la tecla **ESC** / **BACKSPACE**, el portal se activa y regresa al usuario de forma fluida al Mundo Principal.
+| Objeto 3D | Entidad en JettraStore | Comportamiento y Telemetría en Tiempo Real |
+|---|---|---|
+| **👤 Personas** | **Usuarios Conectados** | Representan las sesiones activas de usuarios conectadas a las bases de datos de JettraStore. Caminan entre sus sedes y los nodos servidores ejecutando consultas (`INSERT`, `SELECT`, `GROUP BY`, `KNN_SEARCH`, `TimeSeries PUSH`) y mostrando en sus pensamientos los resultados y latencias exactas. |
+| **🏢 Edificios** | **Zonas y Sedes de Conexión** | Representan los lugares físicos e instalaciones desde donde se conectan los usuarios. Los usuarios se agrupan automáticamente por proximidad de subred IP (`192.168.1.x`, `10.0.4.x`, `172.16.8.x`, `127.0.0.x`) y se concentran en edificios comunes que muestran la cantidad de usuarios activos y el ancho de banda. |
+| **🐾 Perros (Caninos)** | **Agentes JettraPolice** | Representan a los agentes guardianes de `JettraPolice` activados en tiempo real en JettraStore: **Heap Sentinel** (vigila saturación Heap y Off-Heap Panama), **Raft Quorum K9** (vigila latidos de réplicas y desvía tráfico ante fallos), **MemTable Purge Dog** (audita flush a SSTables) y **Security Patrol** (audita permisos y autenticación). Patrullan físicamente en círculos alrededor de sus servidores asignados y ladran/alertan en rojo ante cualquier anomalía. |
+| **🚚 Camiones** | **Tráfico de Datos del Clúster** | Representan el tráfico de paquetes, transacciones y replicación que ocurre entre los diferentes nodos analizando el clúster de JettraStore en tiempo real. Circulan por las arterias de red transportando lotes de datos con métricas en vivo (MB/s, tipo de replicación Raft, sync de vectores o compactación SSTable). |
+| **🖥️ Servidores / Racks** | **Nodos del Clúster JettraStore** | Nodos del clúster (`node-01-master`, `node-02-replica`, etc.) que muestran su estado operativo (En Línea / Fuera de Servicio) y telemetría de memoria. |
 
 ---
 
-## Controles e Interacción
+## 2. Panel de Gestión de Conexiones a JettraStore
+
+La aplicación incluye un panel interactivo completo para administrar las conexiones a JettraStore:
+
+* **Solicitud de Datos**: Solicita `Nombre`, `URL de la Base de Datos` (ej. `tcp://127.0.0.1:8765`), `Usuario` y `Contraseña`.
+* **Lista de Conexiones**: Muestra todas las conexiones registradas con indicadores de estado (`[★ DEFAULT]`, `[● EN LÍNEA]`).
+* **Operaciones CRUD**: Permite **almacenar** nuevas conexiones, **editar** las existentes y **eliminar** conexiones obsoletas con persistencia automática en `memory/connections.json`.
+* **Conexión Predeterminada**: El usuario puede marcar cualquier perfil como **predeterminado** para que se cargue al iniciar la aplicación.
+* **Conexión en Caliente**: Botón **`⚡ CONECTAR`** que conmuta inmediatamente la conexión activa del monitor y sincroniza los edificios, usuarios y agentes en tiempo real sin reiniciar la aplicación.
+* **Acceso Rápido**: Botón **`🔌 CONEXIONES`** en la barra lateral derecha o mediante la tecla de acceso directo **`K`**.
+
+---
+
+## 3. Expansión a Submundos Interiores de Nodo
+
+* Al **hacer clic** sobre cualquier servidor de la red, el nodo se expande e introduce al operador a su dimensión interna.
+* **Bases de Datos Alojadas**: Pedestales 3D con `example_factura_db`, `samples_hostipal_db`, `samples_ambiental_db` y `system_metadata_db`.
+* **Panel de Recursos Consumidos**: Métrica en vivo de Heap JVM, Memoria Off-Heap Panama, Hilos Virtuales Loom, MemTable y archivos SSTables.
+* **Puerta al Mundo Principal**: Portal monumental para regresar de forma fluida a la ciudad principal al interactuar con él o presionar `ESC`.
+
+---
+
+## 4. Controles e Interacción
 
 | Acción | Control |
 |---|---|
-| **Expandir y entrar al mundo del nodo** | Clic izquierdo sobre un servidor en la vista principal |
-| **Inspeccionar nodo (Ficha flotante)** | Clic derecho sobre un servidor o pulsar tecla `N` |
-| **Inspeccionar base de datos 3D** | Clic izquierdo sobre el pedestal de la base de datos dentro del nodo |
-| **Atravesar Puerta y regresar al mundo principal** | Clic sobre la Puerta 3D, pulsar tecla `ESC` o botón superior derecho |
-| **Alternar estado En Línea / Fuera de Servicio** | Botón dentro del panel de recursos de cada nodo |
-| **Moverse / Cámara libre** | Teclas `W`, `A`, `S`, `D` y botón derecho del ratón |
+| **Gestionar Conexiones JettraStore** | Tecla **`K`** o botón `[🔌 CONEXIONES]` en el panel lateral |
+| **Sincronizar Mundo en Tiempo Real** | Tecla **`R`** o botón `[RESET JETTRASTORE]` |
+| **Expandir y entrar al mundo del nodo** | Clic izquierdo sobre un servidor |
+| **Inspeccionar recursos del nodo** | Clic derecho sobre un servidor o pulsar tecla **`N`** |
+| **Inspeccionar base de datos 3D** | Clic sobre su pedestal dentro del mundo interior |
+| **Atravesar Puerta y regresar** | Clic sobre el Portal 3D, tecla **`ESC`** o botón superior derecho |
+| **Activar / Silenciar Voz del Sistema** | Botón `[🔊 VOZ]` en barra lateral (usa `spd-say`) |
+| **Moverse / Cámara libre** | Teclas `W`, `A`, `S`, `D` y arrastre con clic derecho |
 | **Zoom de cámara** | Rueda del ratón |
 
 ---
 
-## Compilación y Ejecución
+## 5. Compilación y Ejecución
 
-Compilar el proyecto y ejecutar los tests:
+Compilar y verificar tests unitarios:
 ```bash
 mvn clean test
 ```
 
-Iniciar la aplicación 3D:
+Ejecutar la aplicación nativa en Java 25:
 ```bash
-mvn exec:java
-# o mediante el script:
+mvn process-classes org.codehaus.mojo:exec-maven-plugin:3.5.1:exec
+# o mediante el script directo:
 ./buildandrun.sh
 ```

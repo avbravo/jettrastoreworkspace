@@ -81,4 +81,52 @@ public class InnerNodeWorldTest {
                     "Las bases de datos deben reflejar el estado fuera de servicio del nodo");
         }
     }
+
+    @Test
+    public void testArtifactConnectionFacilities() {
+        Artifact art = new Artifact("🏢 Centro Financiero", "example_factura_db", "Sede Comercial", 2,
+                -22f, 0f, 15f, 255, 190, 30, "4.2 MB/s | 1,200 ops/s");
+        assertEquals("🏢 Centro Financiero", art.name);
+        assertEquals("example_factura_db", art.connectedDatabase);
+        assertEquals(2, art.type);
+        assertEquals("4.2 MB/s | 1,200 ops/s", art.networkRate);
+    }
+
+    @Test
+    public void testJettraStoreEntityClassifications() {
+        // 1. Usuario conectado
+        HumanEntity user = new HumanEntity();
+        user.name = "usr_facturacion_01";
+        user.connectedDatabase = "example_factura_db";
+        user.connectionFacility = "Centro Financiero";
+        assertFalse(user.isCar);
+        assertFalse(user.isWolf);
+        assertEquals("example_factura_db", user.connectedDatabase);
+
+        // 2. Perro Agente JettraPolice
+        HumanEntity dog = new HumanEntity();
+        dog.name = "JettraPolice-K9-Beta";
+        dog.isWolf = true;
+        dog.isPoliceK9 = true;
+        assertTrue(dog.isWolf);
+        assertTrue(dog.isPoliceK9);
+
+        // 3. Camión de Tráfico de Datos
+        HumanEntity truck = new HumanEntity();
+        truck.name = "Tráfico-Facturas";
+        truck.isCar = true;
+        truck.dataPayload = "Lote: 25,000 Facturas JSON (3.8 MB/s)";
+        assertTrue(truck.isCar);
+        assertEquals("Lote: 25,000 Facturas JSON (3.8 MB/s)", truck.dataPayload);
+    }
+
+    @Test
+    public void testVoiceNarratorToggle() {
+        io.jettra.core.three.d.voice.JettraVoiceNarrator narrator = io.jettra.core.three.d.voice.JettraVoiceNarrator.getInstance();
+        boolean initial = narrator.isEnabled();
+        narrator.toggle();
+        assertEquals(!initial, narrator.isEnabled());
+        narrator.toggle();
+        assertEquals(initial, narrator.isEnabled());
+    }
 }

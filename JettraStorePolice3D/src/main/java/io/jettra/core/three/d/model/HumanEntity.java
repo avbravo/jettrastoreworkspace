@@ -22,28 +22,46 @@ public class HumanEntity {
     public float homeX, homeY, homeZ;
     public boolean hasHome;
     public String currentThought = "";
-    public boolean isWolf;
+    public boolean isWolf;        // Perros / Caninos agentes JettraPolice
     public boolean isAnimal;
-    public boolean isCar;
+    public boolean isCar;         // Camiones de Tráfico de Datos
     public boolean isMachine;
     public int entityType;
     public String dream = "";
-    public String job = "Ciudadano";
+    public String job = "Usuario de Base de Datos";
     public float appCooldown;
     public float thoughtTimer;
     public boolean isTraveling;
     public float travelTimer;
-    
+
+    // --- METADATOS JETTRASTORE: USUARIOS, POLICE K9 Y TRÁFICO DE DATOS ---
+    public String connectedDatabase = "";       // Base de datos a la que está conectado el usuario
+    public String connectionFacility = "";      // Edificio/Sede de origen de la conexión
+    public String targetServer = "";            // Servidor nodo consultado (master, replica)
+    public String queryType = "SELECT";         // SELECT, INSERT, BATCH, VECTOR_KNN, TIMESERIES_STREAM
+    public int queryCount = 0;                  // Cantidad de consultas realizadas
+    public String userRole = "ANALYST";         // DBA, OPERATOR, DEVELOPER, SENSOR_AGENT
+
+    // Para perros / agentes caninos JettraPolice
+    public boolean isPoliceK9 = false;
+    public boolean isJettraMascot = false;
+    public boolean isPoliceOfficer = false;
+
+    // Para camiones (Tráfico de Datos)
+    public String dataPayload = "";             // Ej: "Lote: 25,000 Facturas"
+    public float dataThroughputMb = 1.5f;       // MB/s transferidos
+    public String trafficDirection = "CLIENT_TO_SERVER"; // CLIENT_TO_SERVER, REPLICATION_RAFT
+
     // PECS Model - Physical
-    public float hunger = 100; // 100 is full, 0 is starving
-    public float thirst = 100; // 100 is full, 0 is dehydrated
+    public float hunger = 100;
+    public float thirst = 100;
     public float health = 100;
     public float mood = 100;
     public float stamina = 100;
     public float metabolismRate = 0.5f;
     public int age = 20;
     public String gender = "Other";
-    public float infectionLevel = 0; // 0 to 100
+    public float infectionLevel = 0;
     public boolean isDead = false;
 
     // PECS Model - Emotional (Personality Big Five)
@@ -54,7 +72,7 @@ public class HumanEntity {
     public float neuroticism = 0.5f;
 
     // PECS Model - Cognitive
-    public String currentGoal = "Explorando";
+    public String currentGoal = "CONSULTANDO_BD";
     
     // PECS Model - Social
     public String spouse = "";
@@ -67,15 +85,13 @@ public class HumanEntity {
     public HumanEntity() {
         this.metabolismRate = 0.01f + (float)Math.random() * 0.04f;
         this.gender = Math.random() > 0.5 ? "Male" : "Female";
-        this.age = 18 + (int)(Math.random() * 40);
-        
-        // Randomize Personality
+        this.age = 22 + (int)(Math.random() * 35);
         this.openness = (float)Math.random();
         this.conscientiousness = (float)Math.random();
         this.extraversion = (float)Math.random();
         this.agreeableness = (float)Math.random();
         this.neuroticism = (float)Math.random();
-        this.intelligence = 0.5f + (float)Math.random() * 0.5f;
+        this.intelligence = 0.7f + (float)Math.random() * 0.3f;
     }
 
     public void addHistory(String msg) {

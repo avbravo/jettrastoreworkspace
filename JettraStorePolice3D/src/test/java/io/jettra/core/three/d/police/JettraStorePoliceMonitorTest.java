@@ -24,7 +24,7 @@ public class JettraStorePoliceMonitorTest {
             assertEquals("node-01-master", n1.getName());
             assertEquals(ClusterNode.Role.PRIMARY, n1.getRole());
             assertEquals(ClusterNode.RaftState.LEADER, n1.getRaftState());
-            assertEquals(9091, n1.getPort());
+            assertEquals(monitor.getCurrentProfile().getPort(), n1.getPort());
 
             // Nodo 2: Réplica Secundaria
             ServerNode3D n2 = monitor.getNodeById("node-02");
