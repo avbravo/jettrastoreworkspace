@@ -47,6 +47,7 @@ public final class JettraDatabase implements AutoCloseable {
     private final Map<String, KeyValueEngine> keyValueEngines = new ConcurrentHashMap<>();
     private final Map<String, GeospatialEngine> geospatialEngines = new ConcurrentHashMap<>();
     private final Map<String, ColumnarEngine> columnarEngines = new ConcurrentHashMap<>();
+    private final Map<String, io.jettra.store.engine.models.RecordsEngine<?>> recordsEngines = new ConcurrentHashMap<>();
 
     public JettraDatabase(String databaseName, JettraStoreConfig config) {
         this(databaseName, config, null);
@@ -163,6 +164,19 @@ public final class JettraDatabase implements AutoCloseable {
 
     public ColumnarEngine getColumnarEngine(String name) {
         return columnarEngines.computeIfAbsent(name, ColumnarEngine::new);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T extends Record> io.jettra.store.engine.models.RecordsEngine<T> getRecordsEngine(String name, Class<T> recordClass) {
+        return (io.jettra.store.engine.models.RecordsEngine<T>) recordsEngines.computeIfAbsent(name, k -> new io.jettra.store.engine.models.RecordsEngine<>(name, recordClass));
+    }
+
+    public io.jettra.store.engine.models.RecordsEngine<?> getRecordsEngine(String name) {
+        return recordsEngines.get(name);
+    }
+
+    public java.util.Set<String> getRecordsEngineNames() {
+        return java.util.Collections.unmodifiableSet(recordsEngines.keySet());
     }
 
     public void flushMemTable() throws IOException {
@@ -946,6 +960,7 @@ public final class JettraDatabase implements AutoCloseable {
         keyValueEngines.clear();
         geospatialEngines.clear();
         columnarEngines.clear();
+        recordsEngines.clear();
         deleteStorageFiles();
     }
 
@@ -980,6 +995,7 @@ public final class JettraDatabase implements AutoCloseable {
         if (keyValueEngines.containsKey(collectionName)) return "KEYVALUE";
         if (geospatialEngines.containsKey(collectionName)) return "GEOSPATIAL";
         if (columnarEngines.containsKey(collectionName)) return "COLUMNAR";
+        if (recordsEngines.containsKey(collectionName)) return "RECORDS";
         return "DOCUMENT";
     }
 
@@ -991,6 +1007,7 @@ public final class JettraDatabase implements AutoCloseable {
         if (keyValueEngines.containsKey(collectionName)) return keyValueEngines.get(collectionName).size();
         if (geospatialEngines.containsKey(collectionName)) return geospatialEngines.get(collectionName).size();
         if (columnarEngines.containsKey(collectionName)) return columnarEngines.get(collectionName).size();
+        if (recordsEngines.containsKey(collectionName)) return recordsEngines.get(collectionName).size();
         return 0;
     }
 
@@ -1011,6 +1028,7 @@ public final class JettraDatabase implements AutoCloseable {
         all.addAll(keyValueEngines.keySet());
         all.addAll(geospatialEngines.keySet());
         all.addAll(columnarEngines.keySet());
+        all.addAll(recordsEngines.keySet());
         return all;
     }
 
@@ -1023,6 +1041,7 @@ public final class JettraDatabase implements AutoCloseable {
         if (keyValueEngines.remove(name) != null) removed = true;
         if (geospatialEngines.remove(name) != null) removed = true;
         if (columnarEngines.remove(name) != null) removed = true;
+        if (recordsEngines.remove(name) != null) removed = true;
         if (removed) {
             saveToDisk();
         }

@@ -916,3 +916,93 @@ MATH cbrt(1000) + sqrt(144) * 2 - hypot(3, 4) + fact(5)
   VECTOR CROSS [1, 0, 0] [0, 1, 0]
   VECTOR ANGLE [1, 0, 0] [0, 1, 0]
   ```
+
+
+---
+
+## 17. Historial Persistente, Expansión Bang y Autocompletado de Comandos CLI
+
+Para maximizar la productividad del operador y permitir una experiencia de consola ágil similar a shells modernos (`bash`, `zsh`, `fish`), `JettraStoreShell` incorpora un subsistema de historial persistente y autocompletado en tiempo real.
+
+### 17.1 Historial Persistente (`~/.jettra/history.log`)
+Cada comando ejecutado en la consola interactiva se persiste automáticamente en el archivo `~/.jettra/history.log` y se mantiene en memoria compartida (hasta los últimos 1,000 comandos).
+
+Comandos de gestión de historial:
+* **Ver historial completo o limitado:**
+  ```bash
+  HISTORY           # Muestra todos los comandos registrados con su número de orden
+  HISTORY 20        # Muestra los últimos 20 comandos ejecutados
+  ```
+  *Salida de ejemplo:*
+  ```text
+  === HISTORIAL DE COMANDOS (3 registrados) ===
+    [   1] CONNECT 127.0.0.1 9091
+    [   2] USE example_factura_db
+    [   3] DB STATS
+  --------------------------------------------------------------------------------
+  Uso: !<num> ejecuta comando por número | !! ejecuta el último | !<prefijo> ejecuta por coincidencia
+  ```
+* **Búsqueda en el historial:**
+  ```bash
+  HISTORY SEARCH factura
+  ```
+* **Limpiar el historial:**
+  ```bash
+  HISTORY CLEAR     # Vacía el historial en memoria y trunca ~/.jettra/history.log
+  ```
+
+### 17.2 Expansión Bang (`!`)
+Permite re-ejecutar comandos previos rápidamente:
+* `!!` : Re-ejecuta el último comando ingresado.
+* `!n` : Ejecuta el comando en la posición `n` del historial (ejemplo: `!1` para el primer comando).
+* `!<prefijo>` : Busca y ejecuta el comando más reciente que comience con `<prefijo>` (ejemplo: `!use` o `!stat`).
+
+### 17.3 Autocompletado Contextual (`COMPLETE` y `TAB`)
+El subsistema de autocompletado analiza el prefijo actual y propone completados basados en:
+1. **Palabras clave y comandos del sistema:** `SHOW DATABASES`, `DB STATS`, `CREATE INDEX`, `AGGREGATE`, `MATH`, `FINANCE`, `VECTOR`, etc.
+2. **Bases de datos disponibles:** Al escribir `USE ` o `DROP DATABASE `, sugiere bases de datos instaladas y de muestra.
+3. **Muestras preconfiguradas:** Al escribir `LOAD SAMPLE ` o `INSTALL SAMPLE `, sugiere `example_factura_db`, `samples_hostipal_db`, `samples_ambiental_db`.
+4. **Buckets y colecciones activas:** Al escribir `SHOW RECORDS `, `COUNT ` o `SELECT * FROM `, sugiere los buckets existentes en la base de datos seleccionada.
+5. **Historial de comandos previos:** Prioriza comandos frecuentes.
+
+Sintaxis en consola:
+```bash
+COMPLETE SH             # Sugiere SHOW BUCKETS, SHOW DATABASES, SHOW RECORDS, SHOW SAMPLES, etc.
+TAB LOAD                # Sugiere LOAD SAMPLE example_factura_db, etc.
+COMPLETE USE            # Sugiere las bases de datos lógicas registradas en el clúster
+```
+
+---
+
+## 18. Estadísticas Multimodelo Completas (DB STATS con 8 Motores Especializados y Java Records)
+
+El comando `DB STATS` audita e inspecciona la totalidad de los 8 motores multimodelo soportados en JettraStore, garantizando visibilidad transparente tanto de motores tradicionales como de motores analíticos y de alta velocidad:
+
+### 18.1 Salida Completa de `DB STATS`
+Al invocar `db stats` sobre una base de datos multimodal (por ejemplo `example_factura_db` tras `LOAD SAMPLE example_factura_db`), el reporte muestra detalladamente las unidades de cada motor:
+
+```text
+jettra-shell [admin@127.0.0.1:9091/example_factura_db]> db stats
+=== ESTADÍSTICAS DE BASE DE DATOS: 'example_factura_db' ===
+- Colecciones Totales: 10
+- Documentos:          [detalles_factura, facturas, clientes]
+- Clave-Valor (KV):    [cache_folios]
+- Vectores:            [factura_embeddings]
+- Grafos:              [red_comercial]
+- Series Temporales:   [volumen_facturacion]
+- Geoespacial (GIS):   [sucursales_fiscales]
+- Columnar (OLAP):     [analitica_fiscal]
+- Java Records:        [auditoria_records]
+- Índices Secundarios: 2
+- MemTable Utilizada:  0,00 KB
+```
+
+### 18.2 Motores Multimodelo Soportados y Representados
+1. **Documentos (`DocumentEngine`):** Almacenamiento JSON/BSON con soporte de índices Hash, B-Tree y Sparse.
+2. **Clave-Valor KV (`KeyValueEngine`):** Almacenamiento ultra veloz byte-array para caché de tokens, folios y estados volátiles.
+3. **Vectores (`VectorEngine`):** Embeddings multidimensionales indexados mediante grafos HNSW y búsqueda k-NN por similitud coseno.
+4. **Grafos (`GraphEngine`):** Redes de conocimiento orientadas a nodos y aristas dirigidas ponderadas con relaciones `JettraRef`.
+5. **Series Temporales (`TimeSeriesEngine`):** Registro de métricas append-only con compresión Delta y consultas cronológicas por rangos.
+6. **Geoespacial GIS (`GeospatialEngine`):** Puntos geoespaciales (latitud/longitud) indexados con R-Tree y consultas por radio geodésico y Bounding Box.
+7. **Columnar OLAP (`ColumnarEngine`):** Almacenamiento por columnas vectorizado para analítica fiscal y agregaciones masivas.
+8. **Java Records (`RecordsEngine`):** Objetos tipados de Java 25 (`record`) nativos, inmutables, con persistencia zero-copy en memoria y disco (ejemplo: `FacturaAuditRecord`).

@@ -181,6 +181,7 @@ public final class JettraStoreSamples {
         int tsTotal = massive ? 50_000 : 500;
         int geoTotal = massive ? 25_000 : 250;
         int colTotal = massive ? 25_000 : 250;
+        int recTotal = massive ? 100_000 : 1_000;
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             // Task 1: Clientes
@@ -331,6 +332,24 @@ public final class JettraStoreSamples {
                     Map.of(),
                     colTotal
                 );
+            });
+
+            // Task 10: Records Engine (Java 25 Records Tipados)
+            executor.submit(() -> {
+                var recEngine = db.getRecordsEngine("auditoria_records", io.jettra.store.sample.model.FacturaAuditRecord.class);
+                long now = System.currentTimeMillis();
+                for (int i = 0; i < recTotal; i++) {
+                    String id = "audit_" + i;
+                    recEngine.persist(id, new io.jettra.store.sample.model.FacturaAuditRecord(
+                        id,
+                        "SAT-UUID-" + (1000000 + i),
+                        "RFC-PAN-1000000",
+                        "RFC-PAN-" + (1000000 + (i % cliTotal)),
+                        250.0 + (i % 2000),
+                        "SHA256-TIMBRE-" + i,
+                        now - (i * 1000L)
+                    ));
+                }
             });
         }
 

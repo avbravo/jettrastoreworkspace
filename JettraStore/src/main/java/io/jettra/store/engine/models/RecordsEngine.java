@@ -29,6 +29,26 @@ public final class RecordsEngine<T extends Record> {
         return records.remove(id) != null;
     }
 
+    public void persistBatch(Map<String, T> batch) {
+        if (batch != null) records.putAll(batch);
+    }
+
+    public void insertBatch(Map<String, T> batch) {
+        persistBatch(batch);
+    }
+
+    public long count() {
+        return records.size();
+    }
+
+    public Map<String, T> getAll() {
+        return Collections.unmodifiableMap(records);
+    }
+
+    public Map<String, T> findAll() {
+        return getAll();
+    }
+
     public String getEntityName() { return entityName; }
     public Class<T> getRecordClass() { return recordClass; }
     public int size() { return records.size(); }

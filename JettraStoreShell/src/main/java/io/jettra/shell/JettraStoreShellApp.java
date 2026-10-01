@@ -19,6 +19,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.StandardOpenOption;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 
 public final class JettraStoreShellApp implements AutoCloseable {
@@ -65,12 +67,243 @@ public final class JettraStoreShellApp implements AutoCloseable {
 
     private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".jettra");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("connections.properties");
+    private static final Path HISTORY_FILE = CONFIG_DIR.resolve("history.log");
+    private final List<String> commandHistory = new CopyOnWriteArrayList<>();
 
     private void initDefaultConnections() {
         savedConnections.put("local_master", new SavedConnection("local_master", "127.0.0.1", 9091, "admin"));
         savedConnections.put("node-02-replica", new SavedConnection("node-02-replica", "127.0.0.1", 9092, "admin"));
         savedConnections.put("node-03-replica", new SavedConnection("node-03-replica", "127.0.0.1", 9093, "admin"));
         loadSavedConnections();
+        loadHistory();
+    }
+
+    private void loadHistory() {
+        try {
+            if (Files.exists(HISTORY_FILE)) {
+                List<String> lines = Files.readAllLines(HISTORY_FILE, StandardCharsets.UTF_8);
+                commandHistory.clear();
+                int start = Math.max(0, lines.size() - 1000);
+                for (int i = start; i < lines.size(); i++) {
+                    String l = lines.get(i).trim();
+                    if (!l.isEmpty()) {
+                        commandHistory.add(l);
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public void recordHistory(String command) {
+        if (command == null || command.isBlank()) return;
+        String trimmed = command.trim();
+        if (trimmed.startsWith("!") || trimmed.equalsIgnoreCase("HISTORY") || trimmed.equalsIgnoreCase("HISTORY CLEAR")) {
+            return;
+        }
+        commandHistory.add(trimmed);
+        try {
+            if (!Files.exists(CONFIG_DIR)) {
+                Files.createDirectories(CONFIG_DIR);
+            }
+            Files.writeString(HISTORY_FILE, trimmed + System.lineSeparator(),
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (Exception ignored) {}
+    }
+
+    public List<String> getCommandHistory() {
+        return Collections.unmodifiableList(commandHistory);
+    }
+
+    public String handleHistory(String command) {
+        String upper = command.toUpperCase().trim();
+        if (upper.equals("HISTORY CLEAR")) {
+            commandHistory.clear();
+            try {
+                if (Files.exists(HISTORY_FILE)) {
+                    Files.writeString(HISTORY_FILE, "", StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
+                }
+            } catch (Exception ignored) {}
+            return "[OK] Historial de comandos limpiado exitosamente.";
+        }
+
+        if (upper.startsWith("HISTORY SEARCH ")) {
+            String term = command.substring("HISTORY SEARCH ".length()).trim().toLowerCase();
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== BÚSQUEDA EN HISTORIAL ('%s') ===%n", term));
+            int matches = 0;
+            for (int i = 0; i < commandHistory.size(); i++) {
+                String cmd = commandHistory.get(i);
+                if (cmd.toLowerCase().contains(term)) {
+                    sb.append(String.format("  [%4d] %s%n", (i + 1), cmd));
+                    matches++;
+                }
+            }
+            if (matches == 0) {
+                sb.append(String.format("  (No se encontraron coincidencias para '%s')%n", term));
+            }
+            return sb.toString();
+        }
+
+        int count = commandHistory.size();
+        if (upper.startsWith("HISTORY ")) {
+            try {
+                count = Integer.parseInt(command.substring("HISTORY ".length()).trim());
+            } catch (NumberFormatException ignored) {}
+        }
+
+        if (commandHistory.isEmpty()) {
+            return "[INFO] El historial de comandos está vacío.";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== HISTORIAL DE COMANDOS (%d registrados) ===%n", commandHistory.size()));
+        int start = Math.max(0, commandHistory.size() - count);
+        for (int i = start; i < commandHistory.size(); i++) {
+            sb.append(String.format("  [%4d] %s%n", (i + 1), commandHistory.get(i)));
+        }
+        sb.append("--------------------------------------------------------------------------------\n");
+        sb.append("Uso: !<num> ejecuta comando por número | !! ejecuta el último | !<prefijo> ejecuta por coincidencia\n");
+        return sb.toString();
+    }
+
+    private String expandBangCommand(String cmd) {
+        String trimmed = cmd.trim();
+        if (trimmed.equals("!!")) {
+            if (commandHistory.isEmpty()) {
+                throw new IllegalArgumentException("[ERROR] Historial vacío. No hay comando previo para ejecutar.");
+            }
+            return commandHistory.get(commandHistory.size() - 1);
+        }
+        if (trimmed.matches("^!\\d+$")) {
+            int idx = Integer.parseInt(trimmed.substring(1));
+            if (idx < 1 || idx > commandHistory.size()) {
+                throw new IllegalArgumentException("[ERROR] Índice de historial fuera de rango: " + idx + " (Total: " + commandHistory.size() + ")");
+            }
+            return commandHistory.get(idx - 1);
+        }
+        if (trimmed.startsWith("!") && trimmed.length() > 1) {
+            String prefix = trimmed.substring(1).toLowerCase();
+            for (int i = commandHistory.size() - 1; i >= 0; i--) {
+                String h = commandHistory.get(i);
+                if (h.toLowerCase().startsWith(prefix)) {
+                    return h;
+                }
+            }
+            throw new IllegalArgumentException("[ERROR] No se encontró ningún comando en el historial que comience con '" + prefix + "'.");
+        }
+        return cmd;
+    }
+
+    public List<String> autocomplete(String prefix) {
+        if (prefix == null) prefix = "";
+        String pTrim = prefix.trim();
+        String pUpper = pTrim.toUpperCase();
+
+        Set<String> candidates = new LinkedHashSet<>();
+
+        List<String> baseKeywords = List.of(
+            "HELP", "MENU", "MENU CONNECTIONS", "STATUS", "CONNECT ", "LOGIN ", "LOGOUT",
+            "SAVE CONNECTION ", "REMOVE CONNECTION ", "LIST CONNECTIONS",
+            "SHOW DATABASES", "SHOW SAMPLES", "CREATE DATABASE ", "DROP DATABASE ", "USE ", "DB STATS",
+            "SHOW BUCKETS", "SHOW RECORDS ", "COUNT ", "CREATE INDEX ", "DROP INDEX ", "LIST INDEXES",
+            "SHOW NODES", "ADD NODE ", "REMOVE NODE ", "START NODE ", "STOP NODE ",
+            "STORAGE_MODE ", "LAZY REFERENCE ON", "LAZY REFERENCE OFF", "LAZY REFERENCE STATUS",
+            "INSERT INTO ", "SELECT ", "UPDATE ", "DELETE FROM ",
+            "KV PUT ", "KV GET ", "KV DELETE ", "KV SCAN ",
+            "VEC INDEX ", "VEC SEARCH ",
+            "GRAPH ADD EDGE ", "GRAPH TRAVERSE ", "GRAPH BFS ", "GRAPH SHORTEST ",
+            "SERIES ADD ", "SERIES RANGE ", "SERIES STATS ",
+            "GEO INSERT ", "GEO RADIUS ", "GEO BBOX ",
+            "COL INSERT ", "COL SCAN ",
+            "AGGREGATE ", "AGG SUM ", "AGG AVG ", "AGG MIN ", "AGG MAX ", "AGG COUNT ", "AGG GROUP ",
+            "MATH ", "FINANCE ", "STATS ", "VECTOR ",
+            "INSTALL SAMPLES", "INSTALL SAMPLES FACTURA", "INSTALL SAMPLES HOSPITAL", "INSTALL SAMPLES AMBIENTAL",
+            "LOAD SAMPLE example_factura_db", "LOAD SAMPLE samples_hostipal_db", "LOAD SAMPLE samples_ambiental_db",
+            "BACKUP DATABASE", "RESTORE DATABASE",
+            "HISTORY", "HISTORY CLEAR", "HISTORY SEARCH ",
+            "PAGE NEXT", "PAGE PREV", "PAGE FIRST", "PAGE LAST", "PAGE SIZE ",
+            "COMPLETE ", "TAB "
+        );
+
+        if (pUpper.startsWith("USE ") || pUpper.startsWith("DROP DATABASE ") || pUpper.startsWith("DROP DB ")) {
+            String verb = pTrim.substring(0, pTrim.indexOf(' ') + 1);
+            String dbPrefix = pTrim.substring(verb.length()).trim().toLowerCase();
+            List<String> dbs = new ArrayList<>(List.of(
+                "default_db", "sample_enterprise_db", "sample_ecommerce_db", "sample_ai_graph_db",
+                "sample_iot_telemetry_db", "sample_financial_db", "example_factura_db",
+                "samples_hostipal_db", "samples_ambiental_db"
+            ));
+            if (client != null) {
+                try {
+                    for (String d : client.listDatabases()) {
+                        if (!dbs.contains(d)) dbs.add(d);
+                    }
+                } catch (Exception ignored) {}
+            }
+            for (String d : dbs) {
+                if (d.toLowerCase().startsWith(dbPrefix)) {
+                    candidates.add(verb + d);
+                }
+            }
+        } else if (pUpper.startsWith("LOAD SAMPLE ") || pUpper.startsWith("INSTALL SAMPLE ")) {
+            String verb = pTrim.substring(0, pTrim.lastIndexOf(' ') + 1);
+            String sub = pTrim.substring(verb.length()).trim().toLowerCase();
+            List<String> samples = List.of("example_factura_db", "samples_hostipal_db", "samples_ambiental_db");
+            for (String s : samples) {
+                if (s.toLowerCase().startsWith(sub)) {
+                    candidates.add(verb + s);
+                }
+            }
+        } else if (pUpper.startsWith("SHOW RECORDS ") || pUpper.startsWith("COUNT ") || pUpper.startsWith("SELECT * FROM ")) {
+            String verb = pTrim.substring(0, pTrim.lastIndexOf(' ') + 1);
+            String bucketPrefix = pTrim.substring(verb.length()).trim().toLowerCase();
+            if (client != null) {
+                try {
+                    JettraDatabase db = client.getDatabase(currentDatabase);
+                    if (db != null) {
+                        for (String b : db.getAllCollectionNames()) {
+                            if (b.toLowerCase().startsWith(bucketPrefix)) {
+                                candidates.add(verb + b);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        for (String kw : baseKeywords) {
+            if (kw.toUpperCase().startsWith(pUpper)) {
+                candidates.add(kw);
+            }
+        }
+
+        for (int i = commandHistory.size() - 1; i >= 0; i--) {
+            String h = commandHistory.get(i);
+            if (h.toUpperCase().startsWith(pUpper) && !candidates.contains(h)) {
+                candidates.add(h);
+                if (candidates.size() >= 25) break;
+            }
+        }
+
+        return new ArrayList<>(candidates);
+    }
+
+    public String handleAutocomplete(String command) {
+        String prefix = "";
+        String upper = command.toUpperCase().trim();
+        if (upper.startsWith("COMPLETE ") || upper.startsWith("AUTOCOMPLETE ") || upper.startsWith("TAB ")) {
+            prefix = command.substring(command.indexOf(' ') + 1).trim();
+        }
+        List<String> results = autocomplete(prefix);
+        if (results.isEmpty()) {
+            return String.format("[INFO] No se encontraron sugerencias de autocompletado para '%s'.", prefix);
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("=== SUGERENCIAS DE AUTOCOMPLETADO ('%s') ===%n", prefix));
+        for (int i = 0; i < results.size(); i++) {
+            sb.append(String.format("  [%02d] %s%n", (i + 1), results.get(i)));
+        }
+        return sb.toString();
     }
 
     private void loadSavedConnections() {
@@ -147,7 +380,30 @@ Seleccione una conexión para iniciar:
         if (trimmed.endsWith(";")) {
             trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
         }
+
+        // 0. Expansión de Historial por Bang (!n, !!, !prefix)
+        if (trimmed.startsWith("!")) {
+            try {
+                trimmed = expandBangCommand(trimmed);
+                System.out.println(">> Ejecutando desde historial: " + trimmed);
+            } catch (IllegalArgumentException e) {
+                return e.getMessage();
+            }
+        }
+
         String upper = trimmed.toUpperCase();
+
+        // 0.1 Historial y Autocompletado
+        if (upper.equals("HISTORY") || upper.startsWith("HISTORY ")) {
+            return handleHistory(trimmed);
+        } else if (upper.equals("COMPLETE") || upper.startsWith("COMPLETE ")
+                || upper.equals("TAB") || upper.startsWith("TAB ")
+                || upper.startsWith("AUTOCOMPLETE ")) {
+            return handleAutocomplete(trimmed);
+        }
+
+        // Registrar comando en historial persistente
+        recordHistory(trimmed);
 
         // 1. Ayuda y Menú
         if (upper.equals("HELP") || upper.equals("?")) {
@@ -747,14 +1003,24 @@ Seleccione una conexión para iniciar:
             === ESTADÍSTICAS DE BASE DE DATOS: '%s' ===
             - Colecciones Totales: %d
             - Documentos:          %s
+            - Clave-Valor (KV):    %s
             - Vectores:            %s
             - Grafos:              %s
             - Series Temporales:   %s
+            - Geoespacial (GIS):   %s
+            - Columnar (OLAP):     %s
+            - Java Records:        %s
             - Índices Secundarios: %d
             - MemTable Utilizada:  %.2f KB
             """, currentDatabase, db.getAllCollectionNames().size(),
-            db.getDocumentEngineNames(), db.getVectorEngineNames(),
-            db.getGraphEngineNames(), db.getTimeSeriesEngineNames(),
+            db.getDocumentEngineNames(),
+            db.getKeyValueEngineNames(),
+            db.getVectorEngineNames(),
+            db.getGraphEngineNames(),
+            db.getTimeSeriesEngineNames(),
+            db.getGeospatialEngineNames(),
+            db.getColumnarEngineNames(),
+            db.getRecordsEngineNames(),
             db.getIndexManager().listIndexes(null).size(),
             (db.getMemTable().getUsedBytes() / 1024.0));
     }
@@ -1913,6 +2179,31 @@ Seleccione una conexión para iniciar:
                     25_000
                 );
             });
+
+            // Task 10: Pure Java 25 Records (100,000 auditoria_records)
+            executor.submit(() -> {
+                var recordsEngine = db.getRecordsEngine("auditoria_records", io.jettra.store.sample.model.FacturaAuditRecord.class);
+                int totalRecords = 100_000;
+                int chunkSize = 25_000;
+                long now = System.currentTimeMillis();
+                for (int base = 0; base < totalRecords; base += chunkSize) {
+                    Map<String, io.jettra.store.sample.model.FacturaAuditRecord> batch = new HashMap<>(chunkSize);
+                    int end = Math.min(base + chunkSize, totalRecords);
+                    for (int i = base; i < end; i++) {
+                        String id = "rec_" + i;
+                        batch.put(id, new io.jettra.store.sample.model.FacturaAuditRecord(
+                            id,
+                            "FOL-SAT-2026-" + i,
+                            "RFC-EMISOR-PAN-" + (i % 500),
+                            "RFC-REC-PAN-" + (i % 200_000),
+                            150.0 + (i % 1500),
+                            "sha256-hash-audit-" + i,
+                            now - (i * 500L)
+                        ));
+                    }
+                    recordsEngine.insertBatch(batch);
+                }
+            });
         }
 
         // Flush persistencia física para volcar buffers a almacenamiento antes de indexación
@@ -1932,10 +2223,10 @@ Seleccione una conexión para iniciar:
 
         return String.format("""
             ==============================================================================================
-                    CARGA MASIVA EXITOSA: BASE DE DATOS 'example_factura_db' (3,000,000 OBJETOS)
+                    CARGA MASIVA EXITOSA: BASE DE DATOS 'example_factura_db' (3,100,000 OBJETOS)
             ==============================================================================================
             [OK] Tiempo de Inserción y Timbrado Multimodelo: %d ms (Java 25 Virtual Threads)
-            [OK] Objetos Repartidos en 9 Buckets Especializados:
+            [OK] Objetos Repartidos en 10 Buckets Especializados:
               * [DOCUMENT]   'facturas'              : 1,000,000 facturas electrónicas timbradas
               * [DOCUMENT]   'detalles_factura'      : 1,000,000 renglones/items vinculados
               * [DOCUMENT]   'clientes'              :   200,000 clientes empresariales con RFC/RUC
@@ -1945,8 +2236,9 @@ Seleccione una conexión para iniciar:
               * [TIMESERIES] 'volumen_facturacion'   :    50,000 métricas históricas de facturación
               * [GEOSPATIAL] 'sucursales_fiscales'   :    25,000 puntos GIS de sucursales emisoras
               * [COLUMNAR]   'analitica_fiscal'      :    25,000 filas de cálculo analítico de IVA/Totales
+              * [RECORDS]    'auditoria_records'     :   100,000 registros tipados Java 25 (FacturaAuditRecord)
             ----------------------------------------------------------------------------------------------
-            GRAN TOTAL EN 'example_factura_db': 3,000,000 objetos multimodelo conectados mediante JettraRef.
+            GRAN TOTAL EN 'example_factura_db': 3,100,000 objetos multimodelo conectados mediante JettraRef.
             Índices Creados: idx_fac_cliente (HASH), idx_cli_rfc (BTREE)
             Base de datos activa conmutada a: 'example_factura_db'
             ==============================================================================================
@@ -2130,6 +2422,13 @@ Seleccione una conexión para iniciar:
                 rows.add(new UnitRow("COLUMNAR", "Column Family", col, colEng.size(), "ARROW/SLOT (Compressed)"));
             }
         }
+        // 8. Records
+        if (filterEngine == null || filterEngine.contains("REC")) {
+            for (String col : db.getRecordsEngineNames()) {
+                var recEng = db.getRecordsEngine(col);
+                rows.add(new UnitRow("RECORDS", "Typed Java Record", col, recEng != null ? recEng.count() : 0, "TYPED-HEAP (Zero-Copy)"));
+            }
+        }
 
         if (rows.isEmpty()) {
             return String.format("[INFO] No se encontraron buckets/units en la base de datos '%s'%s.",
@@ -2283,7 +2582,7 @@ Seleccione una conexión para iniciar:
             return sb.toString();
         }
 
-        // 7. COLUMNAR
+                // 7. COLUMNAR
         if (db.getColumnarEngineNames().contains(unitName)) {
             var col = db.getColumnarEngine(unitName);
             if (col.getRowCount() == 0) return String.format("[INFO] El bucket columnar '%s' está vacío.", unitName);
@@ -2295,7 +2594,24 @@ Seleccione una conexión para iniciar:
             return sb.toString();
         }
 
-        return String.format("[NOT FOUND] No se encontró el bucket/unit '%s' en la base de datos '%s'. Use 'show buckets' para ver las unidades disponibles.",
+        // 8. RECORDS
+        if (db.getRecordsEngineNames().contains(unitName)) {
+            var recEng = db.getRecordsEngine(unitName);
+            if (recEng == null || recEng.count() == 0) return String.format("[INFO] El bucket de registros tipados '%s' está vacío.", unitName);
+
+            var recs = recEng.findAll();
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("=== REGISTROS DE TYPED RECORD BUCKET '%s' (Tipo: %s | Mostrando %d de %d) ===\n",
+                unitName, recEng.getRecordClass().getSimpleName(), Math.min(recs.size(), limit), recs.size()));
+            int idx = 1;
+            for (var entry : recs.entrySet()) {
+                if (idx > limit) break;
+                sb.append(String.format("  [%02d] Record ID: %-15s -> %s\n", idx++, entry.getKey(), entry.getValue()));
+            }
+            return sb.toString();
+        }
+
+return String.format("[NOT FOUND] No se encontró el bucket/unit '%s' en la base de datos '%s'. Use 'show buckets' para ver las unidades disponibles.",
             unitName, currentDatabase);
     }
 
@@ -2342,6 +2658,12 @@ Seleccione una conexión para iniciar:
                 grandTotal += c;
                 sb.append(String.format("  * [GEOSPATIAL] %-22s : %d punto(s) GIS\n", col, c));
             }
+            for (String col : db.getRecordsEngineNames()) {
+                var rec = db.getRecordsEngine(col);
+                long c = rec != null ? rec.count() : 0;
+                grandTotal += c;
+                sb.append(String.format("  * [RECORDS]    %-22s : %d objeto(s) tipado(s)\n", col, c));
+            }
             sb.append(String.format("Gran Total en '%s': %d registro(s) multimodelo.\n", currentDatabase, grandTotal));
             return sb.toString();
         }
@@ -2375,6 +2697,11 @@ Seleccione una conexión para iniciar:
         if (db.getGeospatialEngineNames().contains(unitName)) {
             long c = db.getGeospatialEngine(unitName).size();
             return String.format("[COUNT] [GEOSPATIAL] '%s': %d punto(s) espaciales.", unitName, c);
+        }
+        if (db.getRecordsEngineNames().contains(unitName)) {
+            var rec = db.getRecordsEngine(unitName);
+            long c = rec != null ? rec.count() : 0;
+            return String.format("[COUNT] [RECORDS] '%s': %d objeto(s) tipado(s).", unitName, c);
         }
 
         return String.format("[NOT FOUND] El bucket/unit '%s' no existe en la base de datos '%s'.", unitName, currentDatabase);
@@ -2533,6 +2860,15 @@ Seleccione una conexión para iniciar:
               ts range <serie> <inicio> <fin>       Consulta métricas en rango de tiempo.
               kv put <tabla> <clave> <valor>        Almacena clave-valor en memoria de acceso ultra rápido.
               kv get <tabla> <clave>                Recupera el valor asociado a la clave.
+
+            9. HISTORIAL Y AUTOCOMPLETADO:
+              history [n]                           Muestra los últimos n comandos ejecutados (o todos).
+              history search <término>              Busca comandos en el historial que contengan el texto.
+              history clear                         Borra el historial en memoria y en disco (~/.jettra/history.log).
+              !<n>                                  Ejecuta el comando en la posición n del historial.
+              !!                                    Ejecuta el último comando ejecutado.
+              !<prefijo>                            Ejecuta el comando más reciente que comience con el prefijo.
+              complete <prefijo> / tab <prefijo>    Muestra sugerencias de autocompletado para el prefijo indicado.
             ==============================================================================================
             """;
     }

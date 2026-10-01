@@ -11,8 +11,8 @@
         <module>JettraStoreDriver</module>
         <module>JettraStoreFX</module>
         <module>JettraStoreMeter</module>
-        <module>JettraStorePoliceFX</module>
         <module>JettraStoreShell</module>
+        <module>JettraStorePolice3D</module>
     </modules>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

@@ -356,11 +356,30 @@ public class JettraStoreShellTest {
 
             String countAll = shell.executeCommand("COUNT ALL");
             System.out.println("DEBUG countAll: " + countAll);
-            assertTrue(countAll.contains("3000000 registro(s) multimodelo"));
+            assertTrue(countAll.contains("3100000 registro(s) multimodelo"));
+            assertTrue(countAll.contains("auditoria_records"));
+
+            String stats = shell.executeCommand("DB STATS");
+            System.out.println("DEBUG stats: " + stats);
+            assertTrue(stats.contains("Documentos:"));
+            assertTrue(stats.contains("Clave-Valor (KV):"));
+            assertTrue(stats.contains("Vectores:"));
+            assertTrue(stats.contains("Grafos:"));
+            assertTrue(stats.contains("Series Temporales:"));
+            assertTrue(stats.contains("Geoespacial (GIS):"));
+            assertTrue(stats.contains("Columnar (OLAP):"));
+            assertTrue(stats.contains("Java Records:"));
+            assertTrue(stats.contains("auditoria_records"));
+            assertTrue(stats.contains("sucursales_fiscales"));
+            assertTrue(stats.contains("analitica_fiscal"));
 
             String showRecs = shell.executeCommand("SHOW RECORDS facturas LIMIT 2");
             System.out.println("DEBUG showRecs: " + showRecs);
             assertTrue(showRecs.contains("REGISTROS DE DOCUMENT BUCKET 'facturas'"));
+
+            String showAudit = shell.executeCommand("SHOW RECORDS auditoria_records LIMIT 2");
+            System.out.println("DEBUG showAudit: " + showAudit);
+            assertTrue(showAudit.contains("REGISTROS DE TYPED RECORD BUCKET 'auditoria_records'"));
         }
     }
 
@@ -522,6 +541,72 @@ public class JettraStoreShellTest {
             // 6. SQL GROUP BY standard
             String sqlGroup = shell.executeCommand("SELECT server, SUM(cpu) AS total_cpu, AVG(cpu) AS avg_cpu FROM metrics GROUP BY server");
             assertTrue(sqlGroup.contains("total_cpu"));
+        }
+    }
+
+    @Test
+    @DisplayName("Debe gestionar historial persistente, expansión bang (!n, !!, !prefix) y autocompletado")
+    public void testHistoryAndAutocomplete() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraStoreShellApp shell = new JettraStoreShellApp(client);
+
+            // 1. Limpiar historial inicial
+            String clearRes = shell.executeCommand("HISTORY CLEAR");
+            assertTrue(clearRes.contains("[OK]"));
+            assertTrue(shell.getCommandHistory().isEmpty());
+
+            // 2. Ejecutar comandos y verificar registro
+            shell.executeCommand("USE default_db");
+            shell.executeCommand("STATUS");
+            shell.executeCommand("SHOW DATABASES");
+
+            assertEquals(3, shell.getCommandHistory().size());
+            assertEquals("USE default_db", shell.getCommandHistory().get(0));
+            assertEquals("STATUS", shell.getCommandHistory().get(1));
+            assertEquals("SHOW DATABASES", shell.getCommandHistory().get(2));
+
+            // 3. Comando HISTORY
+            String histDisplay = shell.executeCommand("HISTORY");
+            assertTrue(histDisplay.contains("USE default_db"));
+            assertTrue(histDisplay.contains("STATUS"));
+            assertTrue(histDisplay.contains("SHOW DATABASES"));
+
+            // 4. Búsqueda en historial
+            String searchRes = shell.executeCommand("HISTORY SEARCH stat");
+            assertTrue(searchRes.contains("STATUS"));
+
+            // 5. Expansión bang
+            String bangLast = shell.executeCommand("!!");
+            assertTrue(bangLast.contains("default_db"));
+
+            String bangFirst = shell.executeCommand("!1");
+            assertTrue(bangFirst.contains("[SUCCESS] Conmutado a base de datos activa: 'default_db'"));
+
+            String bangPrefix = shell.executeCommand("!stat");
+            System.out.println("DEBUG bangPrefix: " + bangPrefix);
+            assertTrue(bangPrefix.contains("Panama FFM") || bangPrefix.contains("RESOURCE MONITOR"));
+
+            // 6. Autocompletado programático y por comando shell
+            var complShow = shell.autocomplete("SHOW");
+            System.out.println("DEBUG complShow: " + complShow);
+            assertTrue(complShow.contains("SHOW DATABASES"));
+            assertTrue(complShow.contains("SHOW BUCKETS"));
+
+            var complLoad = shell.autocomplete("LOAD SAMPLE ");
+            System.out.println("DEBUG complLoad: " + complLoad);
+            assertTrue(complLoad.contains("LOAD SAMPLE example_factura_db"));
+
+            var complUse = shell.autocomplete("USE ");
+            System.out.println("DEBUG complUse: " + complUse);
+            assertTrue(complUse.contains("USE default_db"));
+
+            String complCli = shell.executeCommand("COMPLETE SH");
+            System.out.println("DEBUG complCli: " + complCli);
+            assertTrue(complCli.contains("SHOW DATABASES") || complCli.contains("SHOW BUCKETS"));
+
+            String tabCli = shell.executeCommand("TAB AGG");
+            System.out.println("DEBUG tabCli: " + tabCli);
+            assertTrue(tabCli.contains("AGGREGATE ") || tabCli.contains("AGG SUM "));
         }
     }
 }

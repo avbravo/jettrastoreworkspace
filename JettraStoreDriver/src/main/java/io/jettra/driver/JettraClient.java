@@ -482,6 +482,38 @@ public final class JettraClient implements AutoCloseable {
         return getDatabase(databaseName).getDocumentEngineNames();
     }
 
+    public Set<String> getKeyValueEngineNames(String databaseName) {
+        return getDatabase(databaseName).getKeyValueEngineNames();
+    }
+
+    public Set<String> getVectorEngineNames(String databaseName) {
+        return getDatabase(databaseName).getVectorEngineNames();
+    }
+
+    public Set<String> getGraphEngineNames(String databaseName) {
+        return getDatabase(databaseName).getGraphEngineNames();
+    }
+
+    public Set<String> getTimeSeriesEngineNames(String databaseName) {
+        return getDatabase(databaseName).getTimeSeriesEngineNames();
+    }
+
+    public Set<String> getGeospatialEngineNames(String databaseName) {
+        return getDatabase(databaseName).getGeospatialEngineNames();
+    }
+
+    public Set<String> getColumnarEngineNames(String databaseName) {
+        return getDatabase(databaseName).getColumnarEngineNames();
+    }
+
+    public Set<String> getRecordsEngineNames(String databaseName) {
+        return getDatabase(databaseName).getRecordsEngineNames();
+    }
+
+    public <T extends Record> io.jettra.store.engine.models.RecordsEngine<T> getRecordsEngine(String databaseName, String entityName, Class<T> recordClass) {
+        return getDatabase(databaseName).getRecordsEngine(entityName, recordClass);
+    }
+
     public long count(String databaseName, String bucketName) {
         var db = getDatabase(databaseName);
         if (db.getDocumentEngineNames().contains(bucketName)) {
@@ -560,6 +592,9 @@ public final class JettraClient implements AutoCloseable {
             return db.getGeospatialEngine(bucketName).size();
         } else if (db.getColumnarEngineNames().contains(bucketName)) {
             return db.getColumnarEngine(bucketName).size();
+        } else if (db.getRecordsEngineNames().contains(bucketName)) {
+            var r = db.getRecordsEngine(bucketName);
+            return r != null ? r.size() : 0;
         }
         return 0;
     }
@@ -623,6 +658,18 @@ public final class JettraClient implements AutoCloseable {
                     if (i < e.getValue().size()) row.put(e.getKey(), e.getValue().get(i));
                 }
                 items.add(new BucketRecord("row_" + (i + 1), row.toString(), "Columnar"));
+            }
+        } else if (db.getRecordsEngineNames().contains(bucketName)) {
+            var recEngine = db.getRecordsEngine(bucketName);
+            if (recEngine != null) {
+                int count = 0;
+                for (var rec : recEngine.listAll()) {
+                    if (count >= offset && items.size() < limit) {
+                        items.add(new BucketRecord("rec_" + (count + 1), rec.toString(), "JavaRecord (" + recEngine.getRecordClass().getSimpleName() + ")"));
+                    }
+                    count++;
+                    if (items.size() >= limit) break;
+                }
             }
         }
         return items;
