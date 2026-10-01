@@ -140,3 +140,39 @@ A partir de la versión 1.0+, `JettraStoreFX` opera como un cliente 100% desacop
    * Persistencia y lectura directa en disco fuera del Heap de la JVM mediante Project Panama (FFM API).
    * Elimina la presión del Garbage Collector (*zero GC pressure*) y previene desbordamientos de Heap ante volúmenes masivos.
    * Botón dedicado para ejecutar compactación en caliente de `JettraMemory` desde la pestaña de recursos.
+
+---
+
+## 8. Módulo Visual: Analítica & Cálculo (`🧮 Analítica & Cálculo`)
+
+`JettraStoreFX` incorpora una pestaña especializada de **Analítica & Cálculo** diseñada para científicos de datos, analistas financieros y administradores de bases de datos.
+
+### 8.1 Sección de Agregaciones Multimodelo y GROUP BY
+* **Panel de Parámetros Dinámicos:** Permite seleccionar la colección destino (ej. `facturas`), el campo de agrupación (ej. `estado`), la función de agregación (`SUM`, `AVG`, `COUNT`, `MIN`, `MAX`, `MEDIAN`, `IQR`, `STDDEV`) y el campo numérico objetivo (ej. `total`).
+* **Visualización de Resultados:** Muestra el desglose de grupos calculados en tiempo real con latencia sub-milisegundo.
+
+### 8.2 Evaluador Matemático Cuantitativo
+* **Entrada de Expresiones Aritméticas Complejas:** Admite funciones trigonométricas, raíces cúbicas, factoriales, MCD, MCM e hipotenusas (`cbrt(1000) + sqrt(144) * 2 - hypot(3, 4)`).
+* **Badge de Resultados:** Presenta el valor computado con alta precisión flotante y resaltado sintáctico.
+
+### 8.3 Motor Financiero y Tabla de Amortización Francesa
+* **Calculadora de Cuota Mensual Fija (PMT):** Determina el pago periódico exacto ingresando préstamo, tasa de interés anual y número de meses.
+* **Generador de Cronograma de Amortización Francesa:** Genera una tabla formateada que detalla para cada período la cuota constante, la cuota de capital, la cuota de interés devengada y el saldo insoluto pendiente.
+* **Resumen Estadístico Descriptivo:** Procesa muestras numéricas para desplegar media, mediana, moda, desviación estándar, varianza, asimetría (skewness), curtosis, IQR y percentil 95.
+
+### 8.4 Álgebra Vectorial y Similitud de Embeddings (IA)
+* **Entrada de Vectores Numéricos:** Permite ingresar vectores multidimensionales en formato `[f1, f2, f3, ...]`.
+* **Botones de Operación Inmediata:**
+  * **🎯 Similitud Coseno:** Evalúa el coseno del ángulo entre los vectores y su porcentaje de proximidad semántica.
+  * **📏 Distancia Euclidiana ($L_2$):** Métrica de proximidad cartesiana.
+  * **⚡ Producto Punto:** Producto escalar multidimensional.
+  * **✖ Cruz 3D:** Producto vectorial ortogonal para vectores tridimensionales.
+  * **📐 Ángulo:** Despliega el ángulo entre ambos vectores en grados sexagesimales y radianes.
+
+### 8.5 Plantillas de Consulta Rápida en la Consola SQL/LQL
+En la pestaña **Consola SQL / LQL**, se integraron botones de snippets para insertar con un solo clic consultas modelo:
+* `📊 Group By`: `SELECT estado, SUM(total) AS total_ventas, AVG(total) AS promedio, COUNT(*) AS facturas FROM facturas GROUP BY estado;`
+* `📐 Math`: `MATH cbrt(64) + sqrt(144) * 2 - hypot(3, 4) + fact(5);`
+* `💵 Finanzas`: `FINANCE AMORTIZATION 10000 0.05 12`
+* `📈 Estadística`: `STATS SUMMARY 12, 15, 18, 22, 25, 30, 35, 42, 50, 65, 80`
+* `🧭 Vector Similitud`: `VECTOR COSINE [0.8, 0.2, 0.5] [0.75, 0.25, 0.45]`

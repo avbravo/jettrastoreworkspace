@@ -926,3 +926,146 @@ El módulo [`JettraStoreMeter`](file:///home/avbravo/NetBeansProjects/jettrastac
 * **Patrón `AutoCloseable` en Cadena:** La clase maestra `JettraDatabase` implementa formalmente `AutoCloseable`:
   * Al cerrarse la base de datos o desconectarse el cliente `JettraClient`, se cierra en cascada el motor `JettraMemoryEngine`, liberando de forma segura los `Arena` y `MemorySegment` de Panama FFM.
   * Se detienen los Virtual Threads demonio de recolección de memoria (`stopBackgroundCollector()`) y se sincronizan los segmentos WAL pendientes con `fsync` inmediato en disco.
+
+---
+
+## 17. Motor Cuantitativo y Analítico: Agregaciones, Matemáticas, Finanzas, Estadística y Álgebra Vectorial
+
+JettraStore incorpora en su núcleo arquitectónico un motor analítico y cuantitativo de alto rendimiento (`io.jettra.store.calc`), diseñado para ejecutar operaciones matemáticas, estadísticas, financieras, vectoriales y agregaciones multidimensionales con latencia sub-milisegundo sin requerir procesamiento externo ni bibliotecas pesadas de terceros.
+
+### 17.1 Motor de Agregaciones y Agrupamiento Multidimensional (`JettraAggregation`)
+
+El motor `JettraAggregation` implementa algoritmos de agregación basados en particionamiento hash y streaming perezoso con control anti-saturación de memoria coordinado con `JettraPolice`:
+
+* **Funciones de Agregación Nativas Soportadas:**
+  * `COUNT`: Conteo de registros totales o valores no nulos.
+  * `SUM`: Sumatoria acumulativa de alta precisión.
+  * `AVG` / `MEAN`: Media aritmética del grupo.
+  * `MIN` / `MAX`: Valores mínimo y máximo locales del grupo.
+  * `MEDIAN` / `MED`: Mediana muestral exacta calculada sobre buckets ordenados.
+  * `MODE`: Moda (valor más frecuente).
+  * `RANGE`: Rango o amplitud (Max - Min).
+  * `IQR`: Rango intercuartílico (P75 - P25).
+  * `STDDEV` / `STD`: Desviación estándar muestral (N-1).
+  * `VARIANCE` / `VAR`: Varianza muestral.
+  * `SKEWNESS` / `SKEW`: Coeficiente de asimetría muestral de Fisher-Pearson.
+  * `KURTOSIS` / `KURT`: Curtosis de exceso.
+  * `P50`, `P90`, `P95`, `P99` / `P<n>`: Percentiles exactos sobre la distribución del grupo.
+  * `FIRST` / `LAST`: Primer y último valor registrado en el bucket.
+
+* **Sintaxis SQL Estándar:**
+  ```sql
+  SELECT categoria, SUM(monto) AS total_ventas, AVG(monto) AS promedio, MEDIAN(monto) AS mediana
+  FROM facturas 
+  WHERE estado = 'TIMBRADA'
+  GROUP BY categoria;
+  ```
+
+* **Comando Directo Shell / CLI:**
+  ```bash
+  AGGREGATE facturas GROUP BY estado SUM total AVG total MEDIAN total COUNT
+  ```
+
+* **API Fluente en `JettraClient` y `JettraDriver`:**
+  ```java
+  var res = client.aggregateSum("main_db", "facturas", "total", "categoria");
+  var custom = client.aggregate("main_db", "ventas", List.of("region", "vendedor"), 
+      List.of(
+          new AggregateSpec("SUM", "monto", "total_ventas"),
+          new AggregateSpec("MEDIAN", "monto", "mediana_ventas"),
+          new AggregateSpec("COUNT", "*", "total_pedidos")
+      )
+  );
+  ```
+
+---
+
+### 17.2 Motor Matemático Cuantitativo y Evaluador de Expresiones (`JettraMath`)
+
+`JettraMath` provee rutinas aritméticas escalares de precisión IEEE-754 y un evaluador de expresiones matemáticas integrado (`JettraMath.eval(...)`):
+
+* **Operaciones Aritméticas y Raíces:** `sqrt(x)`, `cbrt(x)`, `pow(base, exp)`, `mod(x, y)`, `abs(x)`, `sign(x)`, `round(x, decimals)`, `ceil(x)`, `floor(x)`, `clamp(val, min, max)`.
+* **Combinatoria y Teoría de Números:**
+  * `factorial(int n)`: Cálculo exacto de permutaciones ($n!$).
+  * `gcd(long a, long b)`: Máximo Común Divisor mediante algoritmo euclidiano acelerado.
+  * `lcm(long a, long b)`: Mínimo Común Múltiplo.
+* **Geometría y Trigonometría:** `hypot(x, y)`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `toDegrees`, `toRadians`.
+* **Evaluador de Expresiones Matemáticas:**
+  ```java
+  double valor = JettraMath.eval("cbrt(64) + sqrt(144) * 2 - hypot(3, 4) + fact(5)");
+  // valor = 4.0 + 24.0 - 5.0 + 120.0 = 143.0
+  ```
+* **Comando Shell:**
+  ```bash
+  MATH cbrt(1000) + pow(2, 10) * sqrt(25)
+  ```
+
+---
+
+### 17.3 Motor Financiero Cuantitativo (`JettraFinance`)
+
+Módulo diseñado para sistemas contables, entidades bancarias, software de facturación electrónica y análisis cuantitativo de inversiones:
+
+* **Préstamos y Amortizaciones:**
+  * `pmt(rate, nper, pv)`: Cuota mensual fija en sistema francés.
+  * `amortizationSchedule(principal, annualRate, periods)`: Genera el cronograma detallado con desglose de cuota, capital amortizado, interés devengado y saldo insoluto para cada período.
+  * `loanAffordability(monthlyPayment, annualRate, years)`: Capacidad máxima de endeudamiento a partir de la cuota mensual admisible.
+* **Valor del Dinero en el Tiempo e Inversiones:**
+  * `pv(rate, nper, pmt, fv)`: Valor presente de anualidades o flujos futuros.
+  * `fv(rate, nper, pmt, pv)`: Valor futuro acumulado.
+  * `npv(rate, cashFlows...)`: Valor Presente Neto (VAN).
+  * `irr(cashFlows...)`: Tasa Interna de Retorno (TIR) aproximada por Newton-Raphson de convergencia rápida.
+  * `mirr(financeRate, reinvestRate, cashFlows...)`: TIR modificada considerando tasas asimétricas de financiamiento y reinversión.
+  * `cagr(beginningValue, endingValue, periods)`: Tasa de Crecimiento Anual Compuesto.
+  * `roi(gain, cost)`: Retorno sobre la inversión en porcentaje.
+  * `paybackPeriod(initialInvestment, annualInflows...)`: Período exacto de recuperación de la inversión en años.
+* **Interés y Depreciaciones:**
+  * `compoundInterest(principal, annualRate, compoundsPerYear, years)`: Interés compuesto $A = P(1 + r/n)^{nt}$.
+  * `simpleInterest(principal, annualRate, years)`: Interés simple $A = P(1 + rt)$.
+  * `effectiveRate(nominalRate, periodsPerYear)`: Tasa efectiva anual (EAR).
+  * `depreciationStraightLine(cost, salvageValue, lifeYears)`: Depreciación lineal anual.
+  * `depreciationDoubleDeclining(cost, salvageValue, lifeYears, period)`: Depreciación por saldo doble decreciente.
+
+---
+
+### 17.4 Motor Estadístico Descriptivo e Inferencial (`JettraStatistics`)
+
+* **Tendencia Central:** `mean(data)`, `median(data)`, `mode(data)`, `weightedMean(data, weights)`, `geometricMean(data)`, `harmonicMean(data)`.
+* **Dispersión y Forma:**
+  * `variance(data, sample)` y `stddev(data, sample)`.
+  * `iqr(data)`: Rango intercuartílico.
+  * `standardError(data)`: Error estándar de la media ($\sigma / \sqrt{n}$).
+  * `skewness(data)`: Asimetría de la distribución.
+  * `kurtosis(data)`: Curtosis de colas pesadas.
+  * `percentile(data, p)`: Percentil $p$ de interpolación lineal continua.
+* **Análisis Bivariado y Machine Learning:**
+  * `covariance(x, y, sample)`: Covarianza muestral.
+  * `correlation(x, y)`: Coeficiente de correlación lineal de Pearson $r \in [-1.0, 1.0]$.
+  * `linearRegression(x, y)`: Ajuste por mínimos cuadrados ordinarios ($y = mx + b$) con coeficiente de determinación $R^2$.
+  * `zscore(value, mean, stddev)`: Normalización estadística estándar ($Z$).
+* **Resumen Integral `summary(data)`:** Genera el objeto inmutable `StatsSummary` con métricas precomputadas en un único recorrido de datos con tiempo $O(N \log N)$.
+
+---
+
+### 17.5 Motor de Álgebra Vectorial y Búsqueda Multidimensional (`JettraVectorMath`)
+
+Diseñado para optimizar las operaciones de embeddings, modelos de lenguaje (LLM), visión artificial y análisis espacial:
+
+* **Métricas de Similaridad y Distancia Vectorial:**
+  * `dotProduct(v1, v2)`: Producto escalar multidimensional.
+  * `norm(v)`: Norma euclidiana ($L_2$).
+  * `l1Norm(v)`: Norma Manhattan ($L_1$).
+  * `cosineSimilarity(v1, v2)`: Similaridad coseno normalizada en $[-1.0, 1.0]$.
+  * `euclideanDistance(v1, v2)`: Distancia euclidiana $L_2$.
+  * `manhattanDistance(v1, v2)`: Distancia Manhattan $L_1$.
+  * `chebyshevDistance(v1, v2)`: Distancia de Chebyshev ($L_\infty$).
+  * `minkowskiDistance(v1, v2, p)`: Distancia de Minkowski generalizada para cualquier parámetro $p \ge 1$.
+* **Operaciones de Álgebra Lineal y Geometría 3D:**
+  * `normalize(v)`: Normalización a vector unitario de longitud 1.0.
+  * `add(v1, v2)` y `subtract(v1, v2)`: Suma y resta vectorial.
+  * `multiplyScalar(v, scalar)`: Escalamiento uniforme.
+  * `multiply(v1, v2)` y `divide(v1, v2)`: Multiplicación y división elemento a elemento (Producto de Hadamard).
+  * `angle(v1, v2)` y `vectorAngleDegrees(v1, v2)`: Ángulo entre vectores en radianes y grados sexagesimales.
+  * `crossProduct(v1, v2)`: Producto cruz tridimensional $ec{v}_1 	imes ec{v}_2$.
+  * `projection(v, onto)` y `rejection(v, from)`: Descomposición ortogonal y proyecciones.
+  * `centroid(vectors)`: Baricentro o centroide de una nube de vectores en $K$ dimensiones.

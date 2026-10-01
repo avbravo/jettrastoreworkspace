@@ -834,3 +834,85 @@ logout
 ### 7.2 Comportamiento de los Modos
 * **`JVM-RAM`:** Las colecciones se cargan y consultan en las áreas de memoria Stack y Heap de Java con estructuras `UnifiedMap`, aprovechando ZGC y Compact Object Headers.
 * **`DISK-MEMORY`:** Los registros se escriben y leen directamente en disco mediante `JettraMemory` utilizando punteros nativos Panama `MemorySegment`, asegurando 0% de impacto en el montículo.
+
+---
+
+## 16. Módulo de Analítica, Cálculos Cuantitativos y Álgebra Vectorial CLI
+
+`JettraStoreShell` incorpora comandos directos y sintaxis declarativa para realizar cálculos analíticos instantáneos con salida en tablas ASCII formateadas:
+
+### 16.1 Comandos de Agregación (`AGGREGATE` y `SELECT ... GROUP BY`)
+* **Comando Directo:**
+  ```bash
+  AGGREGATE facturas GROUP BY estado SUM total AVG total MEDIAN total COUNT
+  ```
+* **Sintaxis SQL:**
+  ```sql
+  SELECT region, SUM(monto) AS total_ventas, AVG(monto) AS promedio, MEDIAN(monto) AS mediana FROM ventas GROUP BY region;
+  ```
+
+### 16.2 Evaluador Matemático Cuantitativo (`MATH` / `CALC`)
+Permite evaluar cualquier expresión aritmética, trigonométrica o combinatoria:
+```bash
+MATH cbrt(1000) + sqrt(144) * 2 - hypot(3, 4) + fact(5)
+```
+* Funciones soportadas: `sqrt`, `cbrt`, `pow`, `abs`, `round`, `ceil`, `floor`, `factorial` / `fact`, `gcd`, `lcm`, `hypot`, `sin`, `cos`, `tan`, `atan2`.
+
+### 16.3 Operaciones Financieras (`FINANCE`)
+* **Cuota Mensual Fija PMT (Sistema Francés):**
+  ```bash
+  FINANCE PMT 0.004166 360 200000
+  ```
+* **Valor Futuro (FV) y Valor Presente (PV):**
+  ```bash
+  FINANCE FV 0.05 10 1000 5000
+  FINANCE PV 0.05 10 1000 15000
+  ```
+* **Tasa de Crecimiento Anual Compuesto (CAGR %):**
+  ```bash
+  FINANCE CAGR 100000 350000 5
+  ```
+* **Valor Presente Neto (NPV / VAN) y TIR (IRR %):**
+  ```bash
+  FINANCE NPV 0.10 -100000 30000 40000 50000 35000
+  FINANCE IRR -100000 30000 40000 50000 35000
+  ```
+* **Tabla Completa de Amortización Francesa:**
+  ```bash
+  FINANCE AMORTIZATION 10000 0.05 12
+  ```
+
+### 16.4 Estadística Descriptiva e Inferencial (`STATS`)
+* **Resumen Integral:**
+  ```bash
+  STATS SUMMARY 12, 15, 18, 22, 25, 30, 35, 42, 50, 65, 80
+  ```
+* **Medidas Individuales:**
+  ```bash
+  STATS MEAN 10, 20, 30, 40, 50
+  STATS MEDIAN 10, 20, 30, 40, 50
+  STATS STDDEV 10, 20, 30, 40, 50
+  STATS IQR 10, 20, 30, 40, 50
+  ```
+* **Correlación de Pearson y Regresión Lineal Bivariada:**
+  ```bash
+  STATS CORRELATION [1, 2, 3, 4, 5] [2.1, 4.0, 5.9, 8.1, 9.9]
+  STATS REGRESSION [1, 2, 3, 4, 5] [2.1, 4.0, 5.9, 8.1, 9.9]
+  ```
+
+### 16.5 Álgebra Vectorial y Búsqueda Multidimensional (`VECTOR`)
+* **Similitud Coseno y Distancia Euclidiana:**
+  ```bash
+  VECTOR COSINE [0.8, 0.2, 0.5] [0.75, 0.25, 0.45]
+  VECTOR EUCLIDEAN [0.8, 0.2, 0.5] [0.75, 0.25, 0.45]
+  ```
+* **Producto Punto y Normalización:**
+  ```bash
+  VECTOR DOT [1, 2, 3] [4, 5, 6]
+  VECTOR NORMALIZE [3, 4, 0]
+  ```
+* **Geometría 3D y Ángulos:**
+  ```bash
+  VECTOR CROSS [1, 0, 0] [0, 1, 0]
+  VECTOR ANGLE [1, 0, 0] [0, 1, 0]
+  ```

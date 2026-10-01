@@ -316,15 +316,20 @@ Seleccione una conexión para iniciar:
                 || upper.startsWith("MATCH ") || upper.startsWith("VECTOR SIMILARITY ") 
                 || upper.startsWith("VECTOR MATCH ") || upper.startsWith("FETCH ")) {
             return handleJettraQL(trimmed);
-        } else if (upper.startsWith("SQL ") || upper.startsWith("JETTRASQL ") || upper.startsWith("SELECT ")) {
+        } else if (upper.startsWith("SQL ") || upper.startsWith("JETTRASQL ") || upper.startsWith("SELECT ")
+                || upper.startsWith("AGGREGATE ") || upper.startsWith("MATH ") || upper.startsWith("CALC ")
+                || upper.startsWith("FINANCE ") || upper.startsWith("FINANCIAL ")
+                || upper.startsWith("STATS ") || upper.startsWith("STATISTICS ")) {
             return handleJettraSQL(trimmed);
         }
 
-        // 13. Motores Multimodelo Especializados
+        // 13. Motores Multimodelo Especializados y Álgebra Vectorial
         if (upper.startsWith("VECTOR INDEX ")) {
             return handleVectorIndex(trimmed);
         } else if (upper.startsWith("VECTOR SEARCH ")) {
             return handleVectorSearch(trimmed);
+        } else if (upper.startsWith("VECTOR ")) {
+            return handleJettraSQL(trimmed);
         } else if (upper.startsWith("GRAPH ADD VERTEX ")) {
             return handleGraphAddVertex(trimmed);
         } else if (upper.startsWith("GRAPH ADD EDGE ")) {
@@ -2474,14 +2479,36 @@ Seleccione una conexión para iniciar:
               STORAGE_MODE                          Muestra el modo de almacenamiento activo (JVM-RAM o DISK-MEMORY).
               STORAGE_MODE <JVM_RAM | DISK_MEMORY>  Conmuta el modo entre RAM JVM (Heap/Stack) o DISK-MEMORY (JettraMemory LSM).
 
-            5. REGISTROS REFERENCIADOS (JETTRAREF) Y LAZY LOADING:
+            5. CÁLCULO, AGREGACIONES, ESTADÍSTICA, FINANZAS Y ÁLGEBRA VECTORIAL:
+              AGGREGATE <col> [GROUP BY c] [SUM f] [AVG f] [MIN f] [MAX f] [MEDIAN f] [COUNT]
+              MATH <expresion>                     Evaluador matemático (sqrt, cbrt, pow, gcd, lcm, fact, hypot, etc.)
+              FINANCE PMT <tasa> <nper> <prestamo>  Cálculo de cuota periódica fija (sistema francés).
+              FINANCE FV <tasa> <nper> <cuota>      Cálculo de valor futuro de una inversión.
+              FINANCE CAGR <inicial> <final> <anios> Tasa de crecimiento anual compuesto (CAGR %).
+              FINANCE NPV <tasa> <cf0> <cf1>...    Valor presente neto / VAN.
+              FINANCE IRR <cf0> <cf1> <cf2>...     Tasa interna de retorno / TIR %.
+              FINANCE AMORTIZATION <p> <tasa> <n>  Genera tabla completa de amortización francesa.
+              STATS MEAN <n1, n2, n3...>            Media aritmética muestral.
+              STATS MEDIAN <n1, n2, n3...>          Mediana muestral.
+              STATS SUMMARY <n1, n2, n3...>         Resumen descriptivo completo (mean, median, stddev, min, max, p95).
+              STATS CORRELATION [x1, x2...] [y1, y2...] Coeficiente de correlación de Pearson r.
+              STATS REGRESSION [x1, x2...] [y1, y2...]  Regresión lineal simple (y = mx + b).
+              VECTOR DOT [v1] [v2]                 Producto punto entre vectores.
+              VECTOR COSINE [v1] [v2]              Similitud coseno entre embeddings.
+              VECTOR EUCLIDEAN [v1] [v2]           Distancia euclidiana.
+              VECTOR CROSS [v1] [v2]               Producto cruz 3D.
+              VECTOR ANGLE [v1] [v2]               Ángulo entre vectores (radianes y grados).
+              VECTOR NORMALIZE [v]                 Normaliza a vector unitario (norma L2 = 1.0).
+              SELECT cat, SUM(v), AVG(v), MEDIAN(v) FROM <col> GROUP BY cat  SQL estándar con agregaciones.
+
+            6. REGISTROS REFERENCIADOS (JETTRAREF) Y LAZY LOADING:
               lazy reference on / off (lazy reference on / lazy reference off)               Alterna la resolución diferida (Lazy) o inmediata (Eager).
               insert ref <col> <id> KEY <k> TARGET <engine>::<col>#<id>  Vincula un puntero cruzado multimodelo.
               resolve ref <engine>::<col>#<id>      Resuelve manualmente el destino de una referencia.
               show refs <col> <id>                  Muestra todas las referencias de un registro y sus resoluciones.
               get <col> <id>                        Obtiene un documento y resuelve sus punteros _ref_*.
 
-            6. ADMINISTRACIÓN DE ÍNDICES:
+            7. ADMINISTRACIÓN DE ÍNDICES:
               create index <nombre> ON <col> (campo) [TYPE BTREE|HASH|SPARSE] [UNIQUE]  Crea índice secundario.
               drop index <nombre>                   Elimina el índice especificado.
               alter index <nombre> rebuild          Reconstruye el índice re-escaneando los documentos.

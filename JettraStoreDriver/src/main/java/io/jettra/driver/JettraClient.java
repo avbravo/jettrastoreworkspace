@@ -246,6 +246,156 @@ public final class JettraClient implements AutoCloseable {
         return processor.execute(query);
     }
 
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregate(
+            String databaseName, 
+            String collection, 
+            List<String> groupByFields, 
+            List<io.jettra.store.calc.JettraAggregation.AggregateSpec> specs) {
+        return getDatabase(databaseName).aggregate(collection, groupByFields, specs);
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregate(
+            String databaseName, 
+            String collection, 
+            String groupByField, 
+            io.jettra.store.calc.JettraAggregation.AggregateSpec... specs) {
+        return getDatabase(databaseName).aggregate(collection, groupByField, specs);
+    }
+
+    public double evalMath(String expression) {
+        return io.jettra.store.calc.JettraMath.eval(expression);
+    }
+
+    public double evalMath(String expression, Map<String, Double> variables) {
+        return io.jettra.store.calc.JettraMath.eval(expression, variables);
+    }
+
+    public io.jettra.store.calc.JettraStatistics.StatsSummary statsSummary(List<? extends Number> data) {
+        return io.jettra.store.calc.JettraStatistics.summary(data);
+    }
+
+    public double pmt(double rate, int nper, double pv) {
+        return io.jettra.store.calc.JettraFinance.pmt(rate, nper, pv);
+    }
+
+    public double fv(double rate, int nper, double pmt, double pv) {
+        return io.jettra.store.calc.JettraFinance.fv(rate, nper, pmt, pv);
+    }
+
+    public double roi(double gain, double cost) {
+        return io.jettra.store.calc.JettraFinance.roi(gain, cost);
+    }
+
+    public List<io.jettra.store.calc.JettraFinance.AmortizationRow> amortizationSchedule(double principal, double annualRate, int periods) {
+        return io.jettra.store.calc.JettraFinance.amortizationSchedule(principal, annualRate, periods);
+    }
+
+    public float dotProduct(float[] v1, float[] v2) {
+        return io.jettra.store.calc.JettraVectorMath.dotProduct(v1, v2);
+    }
+
+    public float cosineSimilarity(float[] v1, float[] v2) {
+        return io.jettra.store.calc.JettraVectorMath.cosineSimilarity(v1, v2);
+    }
+
+    public float euclideanDistance(float[] v1, float[] v2) {
+        return io.jettra.store.calc.JettraVectorMath.euclideanDistance(v1, v2);
+    }
+
+    // --- Métodos de Agregación de Alto Nivel ---
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateSum(String db, String col, String field, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("SUM", field, "total_" + field));
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateAvg(String db, String col, String field, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("AVG", field, "avg_" + field));
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateMin(String db, String col, String field, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("MIN", field, "min_" + field));
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateMax(String db, String col, String field, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("MAX", field, "max_" + field));
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateCount(String db, String col, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("COUNT", "*", "total_count"));
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregateMedian(String db, String col, String field, String groupBy) {
+        return aggregate(db, col, groupBy, new io.jettra.store.calc.JettraAggregation.AggregateSpec("MEDIAN", field, "median_" + field));
+    }
+
+    // --- Métodos Matemáticos ---
+    public double sqrt(double x) { return io.jettra.store.calc.JettraMath.sqrt(x); }
+    public double cbrt(double x) { return io.jettra.store.calc.JettraMath.cbrt(x); }
+    public double pow(double b, double e) { return io.jettra.store.calc.JettraMath.pow(b, e); }
+    public double round(double x, int d) { return io.jettra.store.calc.JettraMath.round(x, d); }
+    public long factorial(int n) { return io.jettra.store.calc.JettraMath.factorial(n); }
+    public long gcd(long a, long b) { return io.jettra.store.calc.JettraMath.gcd(a, b); }
+    public long lcm(long a, long b) { return io.jettra.store.calc.JettraMath.lcm(a, b); }
+    public double hypot(double x, double y) { return io.jettra.store.calc.JettraMath.hypot(x, y); }
+
+    // --- Métodos Financieros ---
+    public double pv(double rate, int nper, double pmt, double fv) {
+        return io.jettra.store.calc.JettraFinance.pv(rate, nper, pmt, fv);
+    }
+    public double npv(double rate, double... cashFlows) {
+        return io.jettra.store.calc.JettraFinance.npv(rate, cashFlows);
+    }
+    public double irr(double... cashFlows) {
+        return io.jettra.store.calc.JettraFinance.irr(cashFlows);
+    }
+    public double cagr(double beginningValue, double endingValue, double periods) {
+        return io.jettra.store.calc.JettraFinance.cagr(beginningValue, endingValue, periods);
+    }
+    public double compoundInterest(double principal, double annualRate, int compoundsPerYear, double years) {
+        return io.jettra.store.calc.JettraFinance.compoundInterest(principal, annualRate, compoundsPerYear, years);
+    }
+    public double simpleInterest(double principal, double annualRate, double years) {
+        return io.jettra.store.calc.JettraFinance.simpleInterest(principal, annualRate, years);
+    }
+    public double depreciationStraightLine(double cost, double salvageValue, int lifeYears) {
+        return io.jettra.store.calc.JettraFinance.depreciationStraightLine(cost, salvageValue, lifeYears);
+    }
+    public double paybackPeriod(double initialInvestment, double... annualInflows) {
+        return io.jettra.store.calc.JettraFinance.paybackPeriod(initialInvestment, annualInflows);
+    }
+    public double mirr(double financeRate, double reinvestRate, double... cashFlows) {
+        return io.jettra.store.calc.JettraFinance.mirr(financeRate, reinvestRate, cashFlows);
+    }
+
+    // --- Métodos Estadísticos ---
+    public double statsMean(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.mean(data); }
+    public double statsMedian(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.median(data); }
+    public double statsMode(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.mode(data); }
+    public double statsStdDev(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.stddev(data, true); }
+    public double statsVariance(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.variance(data, true); }
+    public double statsPercentile(List<? extends Number> data, double p) { return io.jettra.store.calc.JettraStatistics.percentile(data, p); }
+    public double statsSkewness(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.skewness(data); }
+    public double statsKurtosis(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.kurtosis(data); }
+    public double statsIqr(List<? extends Number> data) { return io.jettra.store.calc.JettraStatistics.iqr(data); }
+    public double statsCorrelation(List<? extends Number> x, List<? extends Number> y) { return io.jettra.store.calc.JettraStatistics.correlation(x, y); }
+    public double statsCovariance(List<? extends Number> x, List<? extends Number> y) { return io.jettra.store.calc.JettraStatistics.covariance(x, y, true); }
+    public io.jettra.store.calc.JettraStatistics.RegressionResult statsLinearRegression(List<? extends Number> x, List<? extends Number> y) {
+        return io.jettra.store.calc.JettraStatistics.linearRegression(x, y);
+    }
+
+    // --- Métodos Vectoriales ---
+    public float manhattanDistance(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.manhattanDistance(v1, v2); }
+    public float chebyshevDistance(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.chebyshevDistance(v1, v2); }
+    public float norm(float[] v) { return io.jettra.store.calc.JettraVectorMath.norm(v); }
+    public float[] normalize(float[] v) { return io.jettra.store.calc.JettraVectorMath.normalize(v); }
+    public float[] vectorAdd(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.add(v1, v2); }
+    public float[] vectorSubtract(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.subtract(v1, v2); }
+    public float[] vectorMultiply(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.multiply(v1, v2); }
+    public double vectorAngle(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.angle(v1, v2); }
+    public double vectorAngleDegrees(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.angleDegrees(v1, v2); }
+    public float[] crossProduct(float[] v1, float[] v2) { return io.jettra.store.calc.JettraVectorMath.crossProduct(v1, v2); }
+    public float[] projection(float[] v, float[] onto) { return io.jettra.store.calc.JettraVectorMath.projection(v, onto); }
+    public float[] centroid(List<float[]> vectors) { return io.jettra.store.calc.JettraVectorMath.centroid(vectors); }
+
     public JettraAdminClient admin() {
         return adminClient;
     }

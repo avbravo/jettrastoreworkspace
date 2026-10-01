@@ -1100,4 +1100,20 @@ public final class JettraDatabase implements AutoCloseable {
         return memoryEngine != null && memoryEngine.delete(key);
     }
 
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregate(
+            String collection, 
+            List<String> groupByFields, 
+            List<io.jettra.store.calc.JettraAggregation.AggregateSpec> specs) {
+        DocumentEngine engine = getDocumentEngine(collection);
+        return io.jettra.store.calc.JettraAggregation.aggregate(engine, groupByFields, specs);
+    }
+
+    public io.jettra.store.calc.JettraAggregation.AggregationResult aggregate(
+            String collection, 
+            String groupByField, 
+            io.jettra.store.calc.JettraAggregation.AggregateSpec... specs) {
+        List<String> groups = (groupByField != null && !groupByField.isBlank()) ? List.of(groupByField) : Collections.emptyList();
+        return aggregate(collection, groups, List.of(specs));
+    }
+
 }

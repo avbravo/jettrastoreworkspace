@@ -50,4 +50,41 @@ public class JettraClientTest {
             Files.deleteIfExists(backupPath);
         }
     }
+    @Test
+    @DisplayName("Debe ejecutar cálculos, agregaciones, estadística, finanzas y vectores con JettraClient")
+    public void testDriverCalcAndAggregations() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            // 1. Math
+            assertEquals(5.0, client.sqrt(25.0), 0.001);
+            assertEquals(120L, client.factorial(5));
+            assertEquals(14.0, client.evalMath("sqrt(16) + 10"), 0.001);
+
+            // 2. Stats
+            var data = java.util.List.of(10.0, 20.0, 30.0, 40.0, 50.0);
+            assertEquals(30.0, client.statsMean(data), 0.001);
+            assertEquals(30.0, client.statsMedian(data), 0.001);
+            assertEquals(20.0, client.statsIqr(data), 0.001);
+
+            // 3. Finance
+            double pmt = client.pmt(0.05 / 12.0, 360, 200000.0);
+            assertTrue(pmt > 1000.0 && pmt < 1100.0);
+            double cagr = client.cagr(100.0, 200.0, 3.0);
+            assertTrue(cagr > 25.0 && cagr < 27.0);
+
+            // 4. Vector
+            float[] v1 = new float[]{1f, 0f, 0f};
+            float[] v2 = new float[]{0f, 1f, 0f};
+            assertEquals(0f, client.dotProduct(v1, v2), 0.001f);
+            float[] cross = client.crossProduct(v1, v2);
+            assertEquals(1f, cross[2], 0.001f);
+
+            // 5. Aggregations on database
+            JettraDatabase db = client.getDatabase("calc_driver_db");
+            db.getDocumentEngine("sales").insert("s1", Map.of("cat", "X", "val", 100.0));
+            db.getDocumentEngine("sales").insert("s2", Map.of("cat", "X", "val", 300.0));
+            var agg = client.aggregateSum("calc_driver_db", "sales", "val", "cat");
+            assertNotNull(agg);
+            assertEquals(1, agg.totalGroups());
+        }
+    }
 }

@@ -113,6 +113,7 @@ public class JettraStoreFXApp extends Application {
         mainTabPane.getTabs().addAll(
             createConnectionsAndLoginTab(),
             createDataExplorerTab(),
+            createAnalyticsAndCalcTab(),
             createBackupRestoreTab(),
             createClusterDashboardTab(),
             createSystemResourcesTab(),
@@ -1613,22 +1614,371 @@ public class JettraStoreFXApp extends Application {
     // 7. PESTAÑA: CONSOLA SQL & JETTRAQL
     // =========================================================================
 
+    private Tab createAnalyticsAndCalcTab() {
+        Tab tab = new Tab("🧮 Analítica & Cálculo");
+
+        ScrollPane scroll = new ScrollPane();
+        scroll.setFitToWidth(true);
+        scroll.setStyle("-fx-background: #0A0F1D; -fx-background-color: #0A0F1D;");
+
+        VBox rootBox = new VBox(16);
+        rootBox.setPadding(new Insets(20));
+        rootBox.setStyle("-fx-background-color: #0A0F1D;");
+
+        Label headerTitle = new Label("CENTRO DE ANALÍTICA, AGREGACIONES Y CÁLCULO CUANTITATIVO");
+        headerTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #38BDF8;");
+
+        Label headerSub = new Label("Motores integrados: JettraAggregation (GROUP BY), JettraMath, JettraStatistics, JettraFinance y JettraVectorMath");
+        headerSub.setStyle("-fx-font-size: 11px; -fx-text-fill: #94A3B8;");
+
+        // --- SECCIÓN 1: AGREGACIONES MULTIMODELO ---
+        VBox secAgg = new VBox(10);
+        secAgg.setPadding(new Insets(14));
+        secAgg.setStyle("-fx-background-color: #0F172A; -fx-background-radius: 8; -fx-border-color: #1E293B; -fx-border-radius: 8;");
+
+        Label lblAggTitle = new Label("1. AGREGACIONES MULTIMODELO Y GROUP BY (JettraAggregation)");
+        lblAggTitle.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #10B981;");
+
+        HBox aggInputs = new HBox(10);
+        aggInputs.setAlignment(Pos.CENTER_LEFT);
+
+        TextField txtAggCol = new TextField("facturas");
+        txtAggCol.setPromptText("Colección (ej. facturas)");
+        txtAggCol.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        TextField txtAggGroup = new TextField("estado");
+        txtAggGroup.setPromptText("Campo Agrupar (ej. estado)");
+        txtAggGroup.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        ComboBox<String> cmbAggFn = new ComboBox<>(FXCollections.observableArrayList("SUM", "AVG", "COUNT", "MIN", "MAX", "MEDIAN", "IQR", "STDDEV"));
+        cmbAggFn.setValue("SUM");
+        cmbAggFn.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white;");
+
+        TextField txtAggField = new TextField("total");
+        txtAggField.setPromptText("Campo Numérico (ej. total)");
+        txtAggField.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        Button btnRunAgg = new Button("⚡ Ejecutar Agregación");
+        btnRunAgg.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        aggInputs.getChildren().addAll(new Label("Col:"), txtAggCol, new Label("Group:"), txtAggGroup, new Label("Fn:"), cmbAggFn, new Label("Campo:"), txtAggField, btnRunAgg);
+
+        TextArea txtAggOutput = new TextArea();
+        txtAggOutput.setPrefRowCount(5);
+        txtAggOutput.setEditable(false);
+        txtAggOutput.setStyle("-fx-control-inner-background: #020617; -fx-font-family: monospace; -fx-text-fill: #34D399;");
+
+        btnRunAgg.setOnAction(e -> {
+            try {
+                String sql = String.format("SELECT %s, %s(%s) AS resultado, COUNT(*) AS conteo FROM %s GROUP BY %s;",
+                    txtAggGroup.getText().trim(), cmbAggFn.getValue(), txtAggField.getText().trim(), txtAggCol.getText().trim(), txtAggGroup.getText().trim());
+                var res = client.sql(currentDatabase, sql);
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("=== AGREGACIÓN EN '%s' (%s) ===%n", currentDatabase, res.message()));
+                for (List<Object> row : res.rows()) {
+                    sb.append("  → ").append(row).append("\n");
+                }
+                txtAggOutput.setText(sb.toString());
+                logStatus("Agregación completada en " + currentDatabase);
+            } catch (Exception ex) {
+                txtAggOutput.setText("[ERROR AGREGACIÓN] " + ex.getMessage());
+            }
+        });
+
+        secAgg.getChildren().addAll(lblAggTitle, aggInputs, txtAggOutput);
+
+        // --- SECCIÓN 2: EVALUADOR MATEMÁTICO ---
+        VBox secMath = new VBox(10);
+        secMath.setPadding(new Insets(14));
+        secMath.setStyle("-fx-background-color: #0F172A; -fx-background-radius: 8; -fx-border-color: #1E293B; -fx-border-radius: 8;");
+
+        Label lblMathTitle = new Label("2. EVALUADOR MATEMÁTICO CUANTITATIVO (JettraMath)");
+        lblMathTitle.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #F59E0B;");
+
+        HBox mathInputs = new HBox(10);
+        mathInputs.setAlignment(Pos.CENTER_LEFT);
+
+        TextField txtMathExpr = new TextField("cbrt(1000) + sqrt(144) * 2 - hypot(3, 4)");
+        txtMathExpr.setPrefWidth(450);
+        txtMathExpr.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: #FDE047; -fx-font-family: monospace;");
+
+        Button btnEvalMath = new Button("📐 Evaluar Expresión");
+        btnEvalMath.setStyle("-fx-background-color: #D97706; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        Label lblMathRes = new Label("Resultado: --");
+        lblMathRes.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #FDE047; -fx-background-color: #292524; -fx-padding: 4 10 4 10; -fx-background-radius: 4;");
+
+        btnEvalMath.setOnAction(e -> {
+            try {
+                double r = client.evalMath(txtMathExpr.getText().trim());
+                lblMathRes.setText(String.format("Resultado: %.6f", r));
+                logStatus("Cálculo matemático: " + r);
+            } catch (Exception ex) {
+                lblMathRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        mathInputs.getChildren().addAll(txtMathExpr, btnEvalMath, lblMathRes);
+        secMath.getChildren().addAll(lblMathTitle, mathInputs);
+
+        // --- SECCIÓN 3: MOTOR FINANCIERO Y ESTADÍSTICA ---
+        VBox secFin = new VBox(10);
+        secFin.setPadding(new Insets(14));
+        secFin.setStyle("-fx-background-color: #0F172A; -fx-background-radius: 8; -fx-border-color: #1E293B; -fx-border-radius: 8;");
+
+        Label lblFinTitle = new Label("3. FINANZAS CUANTITATIVAS Y ESTADÍSTICA DESCRIPTIVA (JettraFinance & JettraStatistics)");
+        lblFinTitle.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #38BDF8;");
+
+        HBox finInputs = new HBox(10);
+        finInputs.setAlignment(Pos.CENTER_LEFT);
+
+        TextField txtPv = new TextField("200000");
+        txtPv.setPromptText("Préstamo PV");
+        txtPv.setPrefWidth(90);
+        txtPv.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        TextField txtRate = new TextField("0.05");
+        txtRate.setPromptText("Tasa Anual (0.05)");
+        txtRate.setPrefWidth(80);
+        txtRate.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        TextField txtNper = new TextField("360");
+        txtNper.setPromptText("Meses (360)");
+        txtNper.setPrefWidth(70);
+        txtNper.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        Button btnPmt = new Button("💵 PMT Cuota");
+        btnPmt.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white;");
+
+        Button btnAmort = new Button("📋 Tabla Amortización");
+        btnAmort.setStyle("-fx-background-color: #2563EB; -fx-text-fill: white;");
+
+        TextField txtStatsData = new TextField("12.5, 18.2, 24.0, 31.5, 42.1, 55.0, 68.4");
+        txtStatsData.setPromptText("Muestra de datos (separada por comas)");
+        txtStatsData.setPrefWidth(220);
+        txtStatsData.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: white;");
+
+        Button btnStatsSummary = new Button("📊 Resumen Estadístico");
+        btnStatsSummary.setStyle("-fx-background-color: #4F46E5; -fx-text-fill: white;");
+
+        finInputs.getChildren().addAll(new Label("Préstamo:"), txtPv, new Label("Tasa:"), txtRate, new Label("Meses:"), txtNper, btnPmt, btnAmort, new Label("Muestra:"), txtStatsData, btnStatsSummary);
+
+        TextArea txtFinOutput = new TextArea();
+        txtFinOutput.setPrefRowCount(6);
+        txtFinOutput.setEditable(false);
+        txtFinOutput.setStyle("-fx-control-inner-background: #020617; -fx-font-family: monospace; -fx-text-fill: #7DD3FC;");
+
+        btnPmt.setOnAction(e -> {
+            try {
+                double pv = Double.parseDouble(txtPv.getText().trim());
+                double r = Double.parseDouble(txtRate.getText().trim()) / 12.0;
+                int n = Integer.parseInt(txtNper.getText().trim());
+                double cuota = client.pmt(r, n, pv);
+                txtFinOutput.setText(String.format("=== CÁLCULO DE CUOTA FIJA (PMT) ===%nPréstamo: $%,.2f | Tasa Mensual: %.4f%% | Períodos: %d meses%nCuota Mensual Fija: $%,.2f%n",
+                    pv, r * 100.0, n, cuota));
+            } catch (Exception ex) {
+                txtFinOutput.setText("[ERROR PMT] " + ex.getMessage());
+            }
+        });
+
+        btnAmort.setOnAction(e -> {
+            try {
+                double pv = Double.parseDouble(txtPv.getText().trim());
+                double r = Double.parseDouble(txtRate.getText().trim());
+                int n = Integer.parseInt(txtNper.getText().trim());
+                var sched = client.amortizationSchedule(pv, r, Math.min(n, 24)); // primeras 24 cuotas
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("=== TABLA DE AMORTIZACIÓN FRANCESA (Primeros %d períodos) ===%n", sched.size()));
+                sb.append(String.format("%-8s | %-12s | %-14s | %-12s | %-14s%n", "Período", "Cuota", "Amort. Capital", "Interés", "Saldo Pendiente"));
+                sb.append("-".repeat(70)).append("\n");
+                for (var row : sched) {
+                    sb.append(String.format("%-8d | $%-11.2f | $%-13.2f | $%-11.2f | $%-13.2f%n",
+                        row.period(), row.payment(), row.principalPart(), row.interestPart(), row.remainingBalance()));
+                }
+                txtFinOutput.setText(sb.toString());
+            } catch (Exception ex) {
+                txtFinOutput.setText("[ERROR AMORTIZACIÓN] " + ex.getMessage());
+            }
+        });
+
+        btnStatsSummary.setOnAction(e -> {
+            try {
+                List<Double> list = new ArrayList<>();
+                for (String s : txtStatsData.getText().split("[,\s]+")) {
+                    if (!s.isBlank()) list.add(Double.parseDouble(s.trim()));
+                }
+                var s = client.statsSummary(list);
+                double iqr = client.statsIqr(list);
+                double sk = client.statsSkewness(list);
+                double kt = client.statsKurtosis(list);
+                txtFinOutput.setText(String.format("=== RESUMEN ESTADÍSTICO DESCRIPTIVO (%d muestras) ===%n" +
+                    "Suma: %.2f | Media: %.4f | Mediana: %.4f | Desv. Estándar: %.4f%n" +
+                    "Varianza: %.4f | IQR (Rango Intercuartil): %.4f | Mínimo: %.2f | Máximo: %.2f%n" +
+                    "Asimetría (Skewness): %.4f | Curtosis: %.4f | Percentil 95: %.4f%n",
+                    s.count(), s.sum(), s.mean(), s.median(), s.stddev(), s.variance(), iqr, s.min(), s.max(), sk, kt, s.p95()));
+            } catch (Exception ex) {
+                txtFinOutput.setText("[ERROR ESTADÍSTICA] " + ex.getMessage());
+            }
+        });
+
+        secFin.getChildren().addAll(lblFinTitle, finInputs, txtFinOutput);
+
+        // --- SECCIÓN 4: ÁLGEBRA VECTORIAL ---
+        VBox secVec = new VBox(10);
+        secVec.setPadding(new Insets(14));
+        secVec.setStyle("-fx-background-color: #0F172A; -fx-background-radius: 8; -fx-border-color: #1E293B; -fx-border-radius: 8;");
+
+        Label lblVecTitle = new Label("4. ÁLGEBRA VECTORIAL Y SIMILITUD DE EMBEDDINGS (JettraVectorMath)");
+        lblVecTitle.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #A855F7;");
+
+        HBox vecInputs = new HBox(10);
+        vecInputs.setAlignment(Pos.CENTER_LEFT);
+
+        TextField txtV1 = new TextField("0.75, 0.20, 0.60");
+        txtV1.setPromptText("Vector 1");
+        txtV1.setPrefWidth(140);
+        txtV1.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: #E9D5FF;");
+
+        TextField txtV2 = new TextField("0.80, 0.15, 0.58");
+        txtV2.setPromptText("Vector 2");
+        txtV2.setPrefWidth(140);
+        txtV2.setStyle("-fx-control-inner-background: #1E293B; -fx-text-fill: #E9D5FF;");
+
+        Button btnCosine = new Button("🎯 Similitud Coseno");
+        btnCosine.setStyle("-fx-background-color: #9333EA; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        Button btnEuclid = new Button("📏 Distancia Euclidiana");
+        btnEuclid.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white;");
+
+        Button btnDot = new Button("⚡ Producto Punto");
+        btnDot.setStyle("-fx-background-color: #6D28D9; -fx-text-fill: white;");
+
+        Button btnCross = new Button("✖ Cruz 3D");
+        btnCross.setStyle("-fx-background-color: #5B21B6; -fx-text-fill: white;");
+
+        Button btnAngle = new Button("📐 Ángulo (°)");
+        btnAngle.setStyle("-fx-background-color: #4C1D95; -fx-text-fill: white;");
+
+        vecInputs.getChildren().addAll(new Label("V1:"), txtV1, new Label("V2:"), txtV2, btnCosine, btnEuclid, btnDot, btnCross, btnAngle);
+
+        Label lblVecRes = new Label("Resultado Vectorial: --");
+        lblVecRes.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #E9D5FF; -fx-background-color: #3B0764; -fx-padding: 6 12 6 12; -fx-background-radius: 4;");
+
+        java.util.function.Function<TextField, float[]> parseVec = (tf) -> {
+            String[] parts = tf.getText().split("[,\s]+");
+            float[] v = new float[parts.length];
+            for (int i = 0; i < parts.length; i++) v[i] = Float.parseFloat(parts[i].trim());
+            return v;
+        };
+
+        btnCosine.setOnAction(e -> {
+            try {
+                float[] v1 = parseVec.apply(txtV1);
+                float[] v2 = parseVec.apply(txtV2);
+                float sim = client.cosineSimilarity(v1, v2);
+                lblVecRes.setText(String.format("Similitud Coseno: %.6f (%.2f%% similitud semántica)", sim, sim * 100.0));
+            } catch (Exception ex) {
+                lblVecRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        btnEuclid.setOnAction(e -> {
+            try {
+                float[] v1 = parseVec.apply(txtV1);
+                float[] v2 = parseVec.apply(txtV2);
+                float d = client.euclideanDistance(v1, v2);
+                lblVecRes.setText(String.format("Distancia Euclidiana: %.6f", d));
+            } catch (Exception ex) {
+                lblVecRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        btnDot.setOnAction(e -> {
+            try {
+                float[] v1 = parseVec.apply(txtV1);
+                float[] v2 = parseVec.apply(txtV2);
+                float dot = client.dotProduct(v1, v2);
+                lblVecRes.setText(String.format("Producto Punto: %.6f", dot));
+            } catch (Exception ex) {
+                lblVecRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        btnCross.setOnAction(e -> {
+            try {
+                float[] v1 = parseVec.apply(txtV1);
+                float[] v2 = parseVec.apply(txtV2);
+                float[] cross = client.crossProduct(v1, v2);
+                lblVecRes.setText("Producto Cruz 3D: " + Arrays.toString(cross));
+            } catch (Exception ex) {
+                lblVecRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        btnAngle.setOnAction(e -> {
+            try {
+                float[] v1 = parseVec.apply(txtV1);
+                float[] v2 = parseVec.apply(txtV2);
+                double deg = client.vectorAngleDegrees(v1, v2);
+                lblVecRes.setText(String.format("Ángulo entre Vectores: %.2f° (%.4f rad)", deg, Math.toRadians(deg)));
+            } catch (Exception ex) {
+                lblVecRes.setText("Error: " + ex.getMessage());
+            }
+        });
+
+        secVec.getChildren().addAll(lblVecTitle, vecInputs, lblVecRes);
+
+        rootBox.getChildren().addAll(headerTitle, headerSub, secAgg, secMath, secFin, secVec);
+        scroll.setContent(rootBox);
+        tab.setContent(scroll);
+        return tab;
+    }
+
     private Tab createConsoleTab() {
         Tab tab = new Tab("Consola SQL / LQL");
 
-        VBox content = new VBox(12);
-        content.setPadding(new Insets(18));
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(16));
         content.setStyle("-fx-background-color: #0A0F1D;");
 
-        Label lblTitle = new Label("TERMINAL INTERACTIVA DE CONSULTAS (SQL & JETTRAQL)");
+        Label lblTitle = new Label("TERMINAL INTERACTIVA DE CONSULTAS (SQL, JETTRAQL, AGGREGATE, MATH, FINANCE, STATS, VECTOR)");
         lblTitle.setStyle("-fx-font-size: 13px; -fx-font-weight: bold; -fx-text-fill: #38BDF8;");
+
+        // Snippets de Consulta Rápida
+        HBox snippetsRow = new HBox(8);
+        snippetsRow.setAlignment(Pos.CENTER_LEFT);
+        Label lblSnip = new Label("Plantillas:");
+        lblSnip.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 11px;");
+
+        Button snipAgg = new Button("📊 Group By");
+        snipAgg.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #38BDF8; -fx-font-size: 11px;");
+
+        Button snipMath = new Button("📐 Math");
+        snipMath.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #F59E0B; -fx-font-size: 11px;");
+
+        Button snipFin = new Button("💵 Finanzas (Amortización)");
+        snipFin.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #10B981; -fx-font-size: 11px;");
+
+        Button snipStats = new Button("📈 Estadística");
+        snipStats.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #818CF8; -fx-font-size: 11px;");
+
+        Button snipVec = new Button("🧭 Vector Similitud");
+        snipVec.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #C084FC; -fx-font-size: 11px;");
+
+        snippetsRow.getChildren().addAll(lblSnip, snipAgg, snipMath, snipFin, snipStats, snipVec);
 
         TextArea editor = new TextArea("SELECT * FROM products WHERE price > 50.0;");
         editor.setPrefRowCount(4);
         editor.setStyle("-fx-control-inner-background: #0F172A; -fx-font-family: monospace; -fx-text-fill: #FACC15;");
 
+        snipAgg.setOnAction(e -> editor.setText("SELECT estado, SUM(total) AS total_ventas, AVG(total) AS promedio, COUNT(*) AS facturas FROM facturas GROUP BY estado;"));
+        snipMath.setOnAction(e -> editor.setText("MATH cbrt(64) + sqrt(144) * 2 - hypot(3, 4) + fact(5);"));
+        snipFin.setOnAction(e -> editor.setText("FINANCE AMORTIZATION 10000 0.05 12"));
+        snipStats.setOnAction(e -> editor.setText("STATS SUMMARY 12, 15, 18, 22, 25, 30, 35, 42, 50, 65, 80"));
+        snipVec.setOnAction(e -> editor.setText("VECTOR COSINE [0.8, 0.2, 0.5] [0.75, 0.25, 0.45]"));
+
         HBox btnRow = new HBox(10);
-        Button btnRun = new Button("▶ Ejecutar Sentencia SQL");
+        Button btnRun = new Button("▶ Ejecutar Sentencia SQL / Calc");
         btnRun.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold;");
 
         Button btnRunJql = new Button("⚡ Ejecutar JettraQL");
@@ -1647,10 +1997,43 @@ public class JettraStoreFXApp extends Application {
 
         btnRun.setOnAction(e -> {
             try {
+                long start = System.currentTimeMillis();
                 var res = client.sql(currentDatabase, editor.getText());
-                output.setText(String.format("=== RESULTADO SQL EN '%s' ===%nFilas Afectadas: %d%nMensaje: %s%n", 
-                    currentDatabase, res.affectedRows(), res.message()));
-                logStatus("SQL ejecutado en " + currentDatabase);
+                long elapsed = System.currentTimeMillis() - start;
+
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("=== RESULTADO SQL / CALC EN '%s' (%d ms) ===%n", currentDatabase, elapsed));
+                sb.append(String.format("Filas Afectadas / Seleccionadas: %d | Mensaje: %s%n", res.affectedRows(), res.message()));
+
+                if (!res.rows().isEmpty()) {
+                    List<String> cols = res.columns();
+                    sb.append("+");
+                    for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+                    sb.append("\n|");
+                    for (String c : cols) sb.append(String.format(" %-" + Math.max(c.length(), 12) + "s |", c));
+                    sb.append("\n+");
+                    for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+                    sb.append("\n");
+
+                    int maxDisplay = Math.min(res.rows().size(), 100);
+                    for (int r = 0; r < maxDisplay; r++) {
+                        List<Object> row = res.rows().get(r);
+                        sb.append("|");
+                        for (int i = 0; i < cols.size(); i++) {
+                            String val = (i < row.size() && row.get(i) != null) ? row.get(i).toString() : "";
+                            sb.append(String.format(" %-" + Math.max(cols.get(i).length(), 12) + "s |", val));
+                        }
+                        sb.append("\n");
+                    }
+                    if (res.rows().size() > maxDisplay) {
+                        sb.append(String.format("... y %d fila(s) adicionales no mostradas.%n", res.rows().size() - maxDisplay));
+                    }
+                    sb.append("+");
+                    for (String c : cols) sb.append("-".repeat(Math.max(c.length() + 2, 14))).append("+");
+                    sb.append("\n");
+                }
+                output.setText(sb.toString());
+                logStatus("Ejecutado con éxito en " + currentDatabase);
             } catch (Exception ex) {
                 output.setText("[ERROR SQL] " + ex.getMessage());
             }
@@ -1669,11 +2052,10 @@ public class JettraStoreFXApp extends Application {
 
         btnClear.setOnAction(e -> output.clear());
 
-        content.getChildren().addAll(lblTitle, editor, btnRow, new Label("Salida / Resultados:"), output);
+        content.getChildren().addAll(lblTitle, snippetsRow, editor, btnRow, new Label("Salida / Resultados Formateados:"), output);
         tab.setContent(content);
         return tab;
     }
-
 
     private void executeQuickExplorerQuery(String query) {
         if (client == null || !isConnected) {

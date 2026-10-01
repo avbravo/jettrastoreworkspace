@@ -477,4 +477,51 @@ public class JettraStoreShellTest {
             assertTrue(p3.contains("PÁGINA [ 3 /"));
         }
     }
+    @Test
+    @DisplayName("Debe procesar comandos interactivos de cálculo, agregación, finanzas, estadística y vectores")
+    public void testShellCalcAggregationsStatsFinanceVector() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra");
+             JettraStoreShellApp shell = new JettraStoreShellApp(client)) {
+
+            // 1. Math
+            String mathRes = shell.executeCommand("MATH 50 + cbrt(1000) * 2");
+            assertTrue(mathRes.contains("JETTRASQL RESULTADO"));
+            assertTrue(mathRes.contains("70.0"));
+
+            // 2. Finance
+            String finPmt = shell.executeCommand("FINANCE PMT 0.004166 360 200000");
+            assertTrue(finPmt.contains("cuota_pmt"));
+
+            String finCagr = shell.executeCommand("FINANCE CAGR 100 200 3");
+            assertTrue(finCagr.contains("cagr_pct"));
+
+            // 3. Stats
+            String statsSummary = shell.executeCommand("STATS SUMMARY 10, 20, 30, 40, 50");
+            assertTrue(statsSummary.contains("mean"));
+            assertTrue(statsSummary.contains("median"));
+
+            // 4. Vector
+            String vecDot = shell.executeCommand("VECTOR DOT [1, 2, 3] [4, 5, 6]");
+            assertTrue(vecDot.contains("producto_punto"));
+            assertTrue(vecDot.contains("32.0"));
+
+            String vecCross = shell.executeCommand("VECTOR CROSS [1, 0, 0] [0, 1, 0]");
+            assertTrue(vecCross.contains("producto_cruz_3d"));
+            assertTrue(vecCross.contains("0.0, 0.0, 1.0"));
+
+            // 5. Aggregations via Shell
+            shell.executeCommand("USE shell_calc_db");
+            shell.executeCommand("INSERT INTO metrics VALUES ('m1', '{\"server\": \"srv1\", \"cpu\": 40.0}')");
+            shell.executeCommand("INSERT INTO metrics VALUES ('m2', '{\"server\": \"srv1\", \"cpu\": 60.0}')");
+            shell.executeCommand("INSERT INTO metrics VALUES ('m3', '{\"server\": \"srv2\", \"cpu\": 80.0}')");
+
+            String aggRes = shell.executeCommand("AGGREGATE metrics GROUP BY server SUM cpu AVG cpu COUNT");
+            assertTrue(aggRes.contains("SUM(cpu)"));
+            assertTrue(aggRes.contains("AVG(cpu)"));
+
+            // 6. SQL GROUP BY standard
+            String sqlGroup = shell.executeCommand("SELECT server, SUM(cpu) AS total_cpu, AVG(cpu) AS avg_cpu FROM metrics GROUP BY server");
+            assertTrue(sqlGroup.contains("total_cpu"));
+        }
+    }
 }
