@@ -101,6 +101,60 @@ Base de datos activa conmutada a: 'example_factura_db'
 * **Garantía Anti-OOM:** Las inserciones se despachan en lotes (*chunks*) acotados de 25,000 a 50,000 registros mediante `UnifiedMap` de `JettraCollection`.
 * **Zero `.toArray()`:** La indexación secundaria sobre 1,200,000 campos se ejecuta por streaming directo (`forEach`), evitando duplicaciones masivas en memoria.
 
+### 3.3 Carga Masiva de Muestra Hospitalaria Multimodelo (`LOAD SAMPLE samples_hostipal_db`)
+Para pruebas de estrés orientadas al sector salud con 2,000,000 de objetos:
+```text
+admin@jettra-cluster:primary> LOAD SAMPLE samples_hostipal_db
+
+==============================================================================================
+        CARGA MASIVA EXITOSA: BASE DE DATOS 'samples_hostipal_db' (2,000,000 OBJETOS)
+==============================================================================================
+[OK] Tiempo de Inserción y Procesamiento: 3410 ms (Java 25 Virtual Threads)
+[OK] Objetos Repartidos en 11 Buckets Multimodelo:
+  * [DOCUMENT]   'pacientes'                  :   500,000 pacientes con historial y referencias
+  * [DOCUMENT]   'afecciones'                 :   400,000 afecciones clínicas y sintomatología
+  * [DOCUMENT]   'medicamentos'               :   200,000 fármacos con principio activo y dosis
+  * [DOCUMENT]   'enfermedades'               :   100,000 diagnósticos con código CIE-10
+  * [DOCUMENT]   'hospitales'                 :    50,000 centros y hospitales con camas y UCI
+  * [KEYVALUE]   'inventario_medicamentos'    :   300,000 registros de stock y disponibilidad
+  * [VECTOR]     'sintomas_embeddings'        :   200,000 embeddings 3D para triaje predictivo
+  * [GRAPH]      'red_hospitalaria'           :   100,000 relaciones internamiento / pabellones
+  * [TIMESERIES] 'telemetria_signos_vitales'  :   100,000 lecturas continuas de ritmo/presión
+  * [GEOSPATIAL] 'ubicacion_hospitales'       :    25,000 coordenadas geográficas de centros
+  * [COLUMNAR]   'analitica_costos_salud'     :    25,000 filas de cálculo analítico de costos
+----------------------------------------------------------------------------------------------
+GRAN TOTAL EN 'samples_hostipal_db': 2,000,000 objetos multimodelo conectados mediante JettraRef.
+Base de datos activa conmutada a: 'samples_hostipal_db'
+==============================================================================================
+```
+
+### 3.4 Carga Masiva de Muestra Ambiental Mundial (`LOAD SAMPLE samples_ambiental_db`)
+Para monitoreo climático y de emisiones mundiales con 3,000,000 de objetos:
+```text
+admin@jettra-cluster:primary> LOAD SAMPLE samples_ambiental_db
+
+==============================================================================================
+        CARGA MASIVA EXITOSA: BASE DE DATOS 'samples_ambiental_db' (3,000,000 OBJETOS)
+==============================================================================================
+[OK] Tiempo de Inserción y Procesamiento: 4890 ms (Java 25 Virtual Threads)
+[OK] Objetos Repartidos en 11 Buckets Multimodelo:
+  * [DOCUMENT]   'mediciones_calidad_aire'    : 1,000,000 mediciones (AQI, PM2.5, PM10, CO2)
+  * [DOCUMENT]   'estaciones_meteorologicas'  :   200,000 estaciones de monitoreo mundial
+  * [DOCUMENT]   'fuentes_emision'            :   200,000 industrias y plantas emisoras
+  * [DOCUMENT]   'reservas_naturales'         :   100,000 reservas, biomas y parques
+  * [DOCUMENT]   'especies_afectadas'         :   100,000 registros de biodiversidad
+  * [KEYVALUE]   'cache_alertas_ambientales'  :   400,000 alertas globales en caché
+  * [VECTOR]     'patrones_climaticos_embeddings': 300,000 vectores 3D de atmósfera/presión
+  * [GRAPH]      'red_corredores_biologicos'  :   200,000 enlaces entre reservas y estaciones
+  * [TIMESERIES] 'temperatura_global_telemetria': 300,000 puntos temporales de temperatura
+  * [GEOSPATIAL] 'coordenadas_estaciones'     :   100,000 coordenadas GIS globales
+  * [COLUMNAR]   'analitica_emisiones_anuales':   100,000 filas de cálculo analítico de CO2
+----------------------------------------------------------------------------------------------
+GRAN TOTAL EN 'samples_ambiental_db': 3,000,000 objetos multimodelo conectados mediante JettraRef.
+Base de datos activa conmutada a: 'samples_ambiental_db'
+==============================================================================================
+```
+
 ---
 
 ## 4. Comandos de Administración de Usuarios y Seguridad

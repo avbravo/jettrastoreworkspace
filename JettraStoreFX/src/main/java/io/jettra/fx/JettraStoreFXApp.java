@@ -585,9 +585,11 @@ public class JettraStoreFXApp extends Application {
         btnRefreshDb.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 10px;");
         btnRefreshDb.setOnAction(e -> refreshDataExplorerDatabases());
 
-        Button btnInstallSamples = new Button("📦 3M Factura");
+        MenuButton btnInstallSamples = new MenuButton("📦 Muestras");
         btnInstallSamples.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
-        btnInstallSamples.setOnAction(e -> {
+        
+        MenuItem itemFactura = new MenuItem("📦 3M Factura (example_factura_db)");
+        itemFactura.setOnAction(e -> {
             new Thread(() -> {
                 Platform.runLater(() -> logStatus("Iniciando carga de muestra 3M 'example_factura_db'..."));
                 try {
@@ -601,6 +603,40 @@ public class JettraStoreFXApp extends Application {
                 }
             }).start();
         });
+
+        MenuItem itemHospital = new MenuItem("🏥 2M Hospital (samples_hostipal_db)");
+        itemHospital.setOnAction(e -> {
+            new Thread(() -> {
+                Platform.runLater(() -> logStatus("Iniciando carga de muestra 2M 'samples_hostipal_db'..."));
+                try {
+                    client.sql(currentDatabase, "INSTALL SAMPLES HOSPITAL");
+                    Platform.runLater(() -> {
+                        refreshDataExplorerDatabases();
+                        logStatus("Muestra 'samples_hostipal_db' (2M objetos) cargada exitosamente.");
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> logStatus("Error: " + ex.getMessage()));
+                }
+            }).start();
+        });
+
+        MenuItem itemAmbiental = new MenuItem("🌍 3M Ambiental (samples_ambiental_db)");
+        itemAmbiental.setOnAction(e -> {
+            new Thread(() -> {
+                Platform.runLater(() -> logStatus("Iniciando carga de muestra 3M 'samples_ambiental_db'..."));
+                try {
+                    client.sql(currentDatabase, "INSTALL SAMPLES AMBIENTAL");
+                    Platform.runLater(() -> {
+                        refreshDataExplorerDatabases();
+                        logStatus("Muestra 'samples_ambiental_db' (3M objetos) cargada exitosamente.");
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> logStatus("Error: " + ex.getMessage()));
+                }
+            }).start();
+        });
+
+        btnInstallSamples.getItems().addAll(itemFactura, itemHospital, itemAmbiental);
 
         Button btnPoliceAudit = new Button("🛡️ Police");
         btnPoliceAudit.setStyle("-fx-background-color: #EA580C; -fx-text-fill: white; -fx-font-size: 10px; -fx-font-weight: bold;");
@@ -1087,7 +1123,7 @@ public class JettraStoreFXApp extends Application {
 
         ComboBox<String> cmbDbBackup = new ComboBox<>();
         cmbDbBackup.setPrefWidth(300);
-        cmbDbBackup.setItems(FXCollections.observableArrayList("sample_enterprise_db", "sample_ecommerce_db", "example_factura_db"));
+        cmbDbBackup.setItems(FXCollections.observableArrayList("sample_enterprise_db", "sample_ecommerce_db", "example_factura_db", "samples_hostipal_db", "samples_ambiental_db"));
         cmbDbBackup.getSelectionModel().select(0);
 
         TextField txtBackupPath = new TextField("./data/backup_" + currentDatabase + ".jettra_bak");

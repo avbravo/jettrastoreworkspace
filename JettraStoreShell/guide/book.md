@@ -219,9 +219,14 @@ jettra-shell [admin@127.0.0.1:9091/default_db]> show samples
 | sample_iot_telemetry_db | INSTALADA (Lista)  | Sensores Temperatura/Vibración, Smart Devs  |
 | sample_financial_db     | INSTALADA (Lista)  | Transacciones de Cuentas, Ledger y Series   |
 | example_factura_db      | INSTALADA (Lista)  | Facturación 3M Objetos (1M Fac, 1M Det, etc)|
+| samples_hostipal_db     | INSTALADA (Lista)  | Salud 2M Objetos (Pacientes, CIE10, Fármacos)|
+| samples_ambiental_db    | INSTALADA (Lista)  | Medio Ambiente 3M Objetos (Estaciones, AQI) |
 +-------------------------+--------------------+---------------------------------------------+
 Para instalar o re-inicializar las muestras estándar, ejecute: INSTALL SAMPLES
-Para cargar la muestra masiva de 3 millones de objetos con referencias cruzadas, ejecute: LOAD SAMPLE example_factura_db
+Para cargar las muestras masivas, ejecute:
+  LOAD SAMPLE example_factura_db   (3M objetos)
+  LOAD SAMPLE samples_hostipal_db  (2M objetos)
+  LOAD SAMPLE samples_ambiental_db (3M objetos)
 ```
 
 ---
@@ -741,7 +746,8 @@ logout
   show databases / show dbs             Lista todas las bases de datos detectadas en disco y memoria.
   show samples / show sample dbs        Muestra las bases de datos de prueba preconfiguradas (incluyendo 3M).
   LOAD SAMPLE example_factura_db        Carga la base de datos de facturación con 3,000,000 objetos multimodelo.
-  INSTALL SAMPLES FACTURA               Instala la base masiva example_factura_db con referencias JettraRef.
+  LOAD SAMPLE samples_hostipal_db       Carga la base de datos de salud hospitalaria con 2,000,000 objetos.
+  LOAD SAMPLE samples_ambiental_db      Carga la base de datos ambiental mundial con 3,000,000 objetos.
   create database <nombre>              Crea una nueva base de datos lógica.
   drop database <nombre>                Elimina la base de datos especificada.
   use <nombre>                          Conmuta la base de datos activa.

@@ -346,6 +346,16 @@ Seleccione una conexión para iniciar:
                 || upper.equals("LOAD SAMPLE EXAMPLE_FACTURA_DB") || upper.equals("INSTALL SAMPLE EXAMPLE_FACTURA_DB")
                 || upper.equals("LOAD SAMPLE FACTURA") || upper.equals("INSTALL FACTURA")) {
             return installFacturaSampleDatabase();
+        } else if (upper.equals("INSTALL SAMPLES HOSPITAL") || upper.equals("INSTALL SAMPLE HOSPITAL")
+                || upper.equals("LOAD SAMPLE SAMPLES_HOSTIPAL_DB") || upper.equals("LOAD SAMPLE SAMPLES_HOSPITAL_DB")
+                || upper.equals("INSTALL SAMPLE SAMPLES_HOSTIPAL_DB") || upper.equals("INSTALL SAMPLE SAMPLES_HOSPITAL_DB")
+                || upper.equals("LOAD SAMPLE HOSPITAL") || upper.equals("INSTALL HOSPITAL")) {
+            return installHospitalSampleDatabase();
+        } else if (upper.equals("INSTALL SAMPLES AMBIENTAL") || upper.equals("INSTALL SAMPLE AMBIENTAL")
+                || upper.equals("LOAD SAMPLE SAMPLES_AMBIENTAL_DB") || upper.equals("LOAD SAMPLE SAMPLES_ENVIRONMENTAL_DB")
+                || upper.equals("INSTALL SAMPLE SAMPLES_AMBIENTAL_DB") || upper.equals("INSTALL SAMPLE SAMPLES_ENVIRONMENTAL_DB")
+                || upper.equals("LOAD SAMPLE AMBIENTAL") || upper.equals("INSTALL AMBIENTAL")) {
+            return installAmbientalSampleDatabase();
         } else if (upper.startsWith("INSTALL SAMPLES") || upper.equals("1")) {
             return installAllSampleDatabases();
         } else if (upper.startsWith("BACKUP DATABASE")) {
@@ -650,7 +660,9 @@ Seleccione una conexión para iniciar:
             "sample_ai_graph_db",
             "sample_iot_telemetry_db",
             "sample_financial_db",
-            "example_factura_db"
+            "example_factura_db",
+            "samples_hostipal_db",
+            "samples_ambiental_db"
         };
 
         StringBuilder sb = new StringBuilder();
@@ -669,6 +681,8 @@ Seleccione una conexión para iniciar:
                 case "sample_iot_telemetry_db" -> "Sensores Temperatura/Vibración, Smart Devices, Geo";
                 case "sample_financial_db"     -> "Transacciones de Cuentas, Ledger y Cotizaciones";
                 case "example_factura_db"      -> "Facturación 3M Objetos (1M Fac, 1M Det, 200k Cli, KV, Vec, Graph)";
+                case "samples_hostipal_db"     -> "Salud 2M Objetos (Pacientes, CIE10, Medicamentos, Hospitales)";
+                case "samples_ambiental_db"    -> "Medio Ambiente 3M Objetos (Estaciones, Calidad Aire, Biomas)";
                 default -> "Muestra Multimodelo";
             };
             sb.append(String.format("| %-23s | %-18s | %-43s |\n", s, installed ? "INSTALADA (Lista)" : "NO INSTALADA", desc));
@@ -1655,6 +1669,72 @@ Seleccione una conexión para iniciar:
     }
 
 
+    public String installHospitalSampleDatabase() {
+        long start = System.currentTimeMillis();
+        client.dropDatabase("samples_hostipal_db");
+        JettraDatabase db = client.getDatabase("samples_hostipal_db");
+        io.jettra.store.sample.JettraStoreSamples.installHospital(db, true);
+        this.currentDatabase = "samples_hostipal_db";
+        long duration = System.currentTimeMillis() - start;
+
+        return String.format("""
+            ==============================================================================================
+                    CARGA MASIVA EXITOSA: BASE DE DATOS 'samples_hostipal_db' (2,000,000 OBJETOS)
+            ==============================================================================================
+            [OK] Tiempo de Inserción y Procesamiento: %d ms (Java 25 Virtual Threads)
+            [OK] Objetos Repartidos en 11 Buckets Multimodelo:
+              * [DOCUMENT]   'pacientes'                  :   500,000 pacientes con historial y referencias
+              * [DOCUMENT]   'afecciones'                 :   400,000 afecciones clínicas y sintomatología
+              * [DOCUMENT]   'medicamentos'               :   200,000 fármacos con principio activo y dosis
+              * [DOCUMENT]   'enfermedades'               :   100,000 diagnósticos con código CIE-10
+              * [DOCUMENT]   'hospitales'                 :    50,000 centros y hospitales con camas y UCI
+              * [KEYVALUE]   'inventario_medicamentos'    :   300,000 registros de stock y disponibilidad
+              * [VECTOR]     'sintomas_embeddings'        :   200,000 embeddings 3D para triaje predictivo
+              * [GRAPH]      'red_hospitalaria'           :   100,000 relaciones internamiento / pabellones
+              * [TIMESERIES] 'telemetria_signos_vitales'  :   100,000 lecturas continuas de ritmo/presión
+              * [GEOSPATIAL] 'ubicacion_hospitales'       :    25,000 coordenadas geográficas de centros
+              * [COLUMNAR]   'analitica_costos_salud'     :    25,000 filas de cálculo analítico de costos
+            ----------------------------------------------------------------------------------------------
+            GRAN TOTAL EN 'samples_hostipal_db': 2,000,000 objetos multimodelo conectados mediante JettraRef.
+            Índices Creados: idx_pac_hospital, idx_pac_sangre, idx_enf_cie10, idx_med_principio
+            Base de datos activa conmutada a: 'samples_hostipal_db'
+            ==============================================================================================
+            """, duration);
+    }
+
+    public String installAmbientalSampleDatabase() {
+        long start = System.currentTimeMillis();
+        client.dropDatabase("samples_ambiental_db");
+        JettraDatabase db = client.getDatabase("samples_ambiental_db");
+        io.jettra.store.sample.JettraStoreSamples.installAmbiental(db, true);
+        this.currentDatabase = "samples_ambiental_db";
+        long duration = System.currentTimeMillis() - start;
+
+        return String.format("""
+            ==============================================================================================
+                    CARGA MASIVA EXITOSA: BASE DE DATOS 'samples_ambiental_db' (3,000,000 OBJETOS)
+            ==============================================================================================
+            [OK] Tiempo de Inserción y Procesamiento: %d ms (Java 25 Virtual Threads)
+            [OK] Objetos Repartidos en 11 Buckets Multimodelo:
+              * [DOCUMENT]   'mediciones_calidad_aire'    : 1,000,000 mediciones (AQI, PM2.5, PM10, CO2)
+              * [DOCUMENT]   'estaciones_meteorologicas'  :   200,000 estaciones de monitoreo mundial
+              * [DOCUMENT]   'fuentes_emision'            :   200,000 industrias y plantas emisoras
+              * [DOCUMENT]   'reservas_naturales'         :   100,000 reservas, biomas y parques
+              * [DOCUMENT]   'especies_afectadas'         :   100,000 registros de biodiversidad
+              * [KEYVALUE]   'cache_alertas_ambientales'  :   400,000 alertas globales en caché
+              * [VECTOR]     'patrones_climaticos_embeddings': 300,000 vectores 3D de atmósfera/presión
+              * [GRAPH]      'red_corredores_biologicos'  :   200,000 enlaces entre reservas y estaciones
+              * [TIMESERIES] 'temperatura_global_telemetria': 300,000 puntos temporales de temperatura
+              * [GEOSPATIAL] 'coordenadas_estaciones'     :   100,000 coordenadas GIS globales
+              * [COLUMNAR]   'analitica_emisiones_anuales':   100,000 filas de cálculo analítico de CO2
+            ----------------------------------------------------------------------------------------------
+            GRAN TOTAL EN 'samples_ambiental_db': 3,000,000 objetos multimodelo conectados mediante JettraRef.
+            Índices Creados: idx_med_aqi, idx_med_estacion, idx_est_pais, idx_res_bioma
+            Base de datos activa conmutada a: 'samples_ambiental_db'
+            ==============================================================================================
+            """, duration);
+    }
+
     public String installFacturaSampleDatabase() {
         long start = System.currentTimeMillis();
         client.dropDatabase("example_factura_db");
@@ -2373,8 +2453,10 @@ Seleccione una conexión para iniciar:
               drop database <nombre>                Elimina la base de datos especificada.
               use <nombre>                          Conmuta la base de datos activa.
               db stats                              Muestra estadísticas de la base de datos activa.
-              INSTALL SAMPLES                       Instala y persiste las 5 bases de datos de ejemplo.
-  LOAD SAMPLE example_factura_db        Carga la base de datos de facturación con 3,000,000 objetos multimodelo.
+              INSTALL SAMPLES                       Instala y persiste las 5 bases de datos de ejemplo estándar.
+              LOAD SAMPLE example_factura_db        Carga la base de datos de facturación (3M objetos).
+              LOAD SAMPLE samples_hostipal_db       Carga la base de datos hospitalaria (2M objetos).
+              LOAD SAMPLE samples_ambiental_db      Carga la base de datos ambiental mundial (3M objetos).
               backup database [nombre] [destino]    Genera un snapshot físico .snap de la base de datos.
               restore database <archivo> <nombre>   Restaura un snapshot .snap en una base de datos.
 

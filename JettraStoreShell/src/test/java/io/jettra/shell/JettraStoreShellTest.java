@@ -141,6 +141,8 @@ public class JettraStoreShellTest {
 
             String showSamples = shell.executeCommand("SHOW SAMPLES");
             assertTrue(showSamples.contains("sample_enterprise_db"));
+            assertTrue(showSamples.contains("samples_hostipal_db"));
+            assertTrue(showSamples.contains("samples_ambiental_db"));
             assertTrue(showSamples.contains("INSTALADA"));
 
             // 3. Consultas expresivas con JettraQL

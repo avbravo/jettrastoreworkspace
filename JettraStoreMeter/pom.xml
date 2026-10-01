@@ -91,11 +91,15 @@
                 </configuration>
             </plugin>
 
-            <!-- Ejecución del Test Runner de JettraTest -->
+            <!-- Ejecución del Test Runner de JettraTest y CLI Runner -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
+                <configuration>
+                    <mainClass>${mainClass}</mainClass>
+                    <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                </configuration>
                 <executions>
                     <execution>
                         <id>jettra-test</id>

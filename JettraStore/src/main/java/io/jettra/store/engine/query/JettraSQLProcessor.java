@@ -34,9 +34,35 @@ public final class JettraSQLProcessor {
             return executeUpdate(trimmed);
         } else if (upper.startsWith("DELETE FROM ")) {
             return executeDelete(trimmed);
+        } else if (upper.startsWith("INSTALL SAMPLES") || upper.startsWith("INSTALL SAMPLE") || upper.startsWith("LOAD SAMPLE")) {
+            return executeInstallSamples(upper);
         }
 
         return new QueryResult(List.of("result"), List.of(List.of("SQL not fully parsed: " + trimmed)), 1, "Generic execution");
+    }
+
+    private QueryResult executeInstallSamples(String upper) {
+        if (database == null) {
+            return new QueryResult(List.of("error"), List.of(List.of((Object)"Base de datos no disponible")), 0, "Error");
+        }
+        String dbName = database.getDatabaseName();
+        if (upper.contains("HOSPITAL") || upper.contains("HOSTIPAL")) {
+            io.jettra.store.sample.JettraStoreSamples.installHospital(database, true);
+            return new QueryResult(List.of("status", "database", "objects"), 
+                List.of(List.of((Object)"SUCCESS", (Object)dbName, (Object)"2000000")), 1, "Muestra hospital 2M instalada exitosamente");
+        } else if (upper.contains("AMBIENTAL") || upper.contains("ENVIRONMENTAL")) {
+            io.jettra.store.sample.JettraStoreSamples.installAmbiental(database, true);
+            return new QueryResult(List.of("status", "database", "objects"), 
+                List.of(List.of((Object)"SUCCESS", (Object)dbName, (Object)"3000000")), 1, "Muestra ambiental 3M instalada exitosamente");
+        } else if (upper.contains("FACTURA")) {
+            io.jettra.store.sample.JettraStoreSamples.installFactura(database, true);
+            return new QueryResult(List.of("status", "database", "objects"), 
+                List.of(List.of((Object)"SUCCESS", (Object)dbName, (Object)"3000000")), 1, "Muestra factura 3M instalada exitosamente");
+        } else {
+            io.jettra.store.sample.JettraStoreSamples.installSample(dbName, database, true);
+            return new QueryResult(List.of("status", "database"), 
+                List.of(List.of((Object)"SUCCESS", (Object)dbName)), 1, "Muestra instalada");
+        }
     }
 
     private QueryResult executeSelect(String sql) {
