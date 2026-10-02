@@ -13,6 +13,7 @@
     <description>Unified 3D Cluster Monitor and Database Subworlds with JettraStorePolice</description>
 
     <properties>
+        <mainClass>io.jettra.core.three.d.Jettra3DApp</mainClass>
         <java.version>25</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
