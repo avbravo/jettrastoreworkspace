@@ -1,15 +1,16 @@
 # ==============================================================================
 # JettraStore Distributed Multi-Model Database (Java 25+ Panama FFM & Raft)
 # ==============================================================================
-#FROM eclipse-temurin:25-jdk
 FROM bellsoft/liberica-runtime-container:jre-25-stream-musl
 LABEL maintainer="Jettra Ecosystem <dev@jettra.io>"
 LABEL description="JettraStore - Motor de Base de Datos Multimodelo Distribuido en Java 25+"
 
-# Instalar curl para healthchecks y utilidades del sistema
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates tzdata && \
-    rm -rf /var/lib/apt/lists/*
+# Instalar curl para healthchecks y utilidades del sistema (compatible con Alpine/musl y Debian/glibc)
+RUN if command -v apk > /dev/null; then \
+        apk add --no-cache curl ca-certificates tzdata; \
+    elif command -v apt-get > /dev/null; then \
+        apt-get update && apt-get install -y --no-install-recommends curl ca-certificates tzdata && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 WORKDIR /app
 
@@ -17,9 +18,8 @@ WORKDIR /app
 RUN mkdir -p /jettra/data /jettra/config && \
     chown -R 1000:1000 /jettra /app
 
-# Copiar artefacto principal compilado y librerías de dependencias
-COPY target/JettraStore-1.0-SNAPSHOT.jar /app/JettraStore.jar
-COPY target/lib/ /app/lib/
+# Copiar el Uber JAR autónomo (Fat JAR con todas las librerías integradas)
+COPY target/JettraStore-*-uber.jar /app/JettraStore.jar
 COPY src/main/resources/database.properties /app/config/database.properties
 
 # Variables de entorno predeterminadas para nodo autónomo o clúster
@@ -30,7 +30,7 @@ ENV JETTRA_NODE_ID=node-01 \
     JETTRA_REST_PORT=8080 \
     JETTRA_ADMIN_USERNAME=admin \
     JETTRA_ADMIN_PASSWORD=admin-jettra \
-    JAVA_OPTS="-Xms512m -Xmx2g -XX:+UseZGC -XX:+UseCompactObjectHeaders --enable-preview --enable-native-access=ALL-UNNAMED"
+    JAVA_OPTS="-Xms512m -Xmx2g -XX:+UseZGC -XX:+UnlockExperimentalVMOptions -XX:+UseCompactObjectHeaders --enable-preview --enable-native-access=ALL-UNNAMED"
 
 # Exponer puertos: REST HTTP (8080) y Puerto de Clúster / gRPC (9091)
 EXPOSE 8080 9091
@@ -45,5 +45,5 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
 # Usuario no root seguro
 USER 1000:1000
 
-# Inicio del servidor autónomo JettraStore
-ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -cp '/app/JettraStore.jar:/app/lib/*' io.jettra.store.JettraStoreServer"]
+# Inicio del servidor autónomo JettraStore ejecutando directamente el Uber JAR
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/JettraStore.jar"]
