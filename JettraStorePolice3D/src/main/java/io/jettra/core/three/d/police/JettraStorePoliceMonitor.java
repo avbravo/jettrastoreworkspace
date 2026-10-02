@@ -3,6 +3,7 @@ package io.jettra.core.three.d.police;
 import io.jettra.core.three.d.config.ConnectionManager;
 import io.jettra.core.three.d.config.ConnectionProfile;
 import io.jettra.core.three.d.model.ClusterDataTraffic;
+import io.jettra.core.three.d.config.ClusterConfigLoader;
 import io.jettra.core.three.d.model.JettraLiveSession;
 import io.jettra.core.three.d.model.JettraPoliceAgent;
 import io.jettra.core.three.d.model.ServerNode3D;
@@ -21,6 +22,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -97,24 +99,42 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
 
     private void initNodes() {
         serverNodes.clear();
-        String host = (currentProfile != null) ? currentProfile.getHost() : "127.0.0.1";
-        int basePort = (currentProfile != null) ? currentProfile.getPort() : 9091;
+        ClusterConfigLoader loader = ClusterConfigLoader.getInstance();
+        loader.reload();
+        List<ClusterConfigLoader.ConfiguredNode> cfgNodes = loader.getNodes();
 
-        // Servidor 1: Nodo Maestro Primario
-        ServerNode3D n1 = new ServerNode3D("node-01", "node-01-master", host, basePort, ClusterNode.Role.PRIMARY, -14.0f, 0.0f, -12.0f);
-        n1.setRaftState(ClusterNode.RaftState.LEADER);
-        serverNodes.add(n1);
+        float[][] coords = {
+            {-14.0f, 0.0f, -12.0f},
+            {0.0f, 0.0f, -18.0f},
+            {14.0f, 0.0f, -12.0f}
+        };
 
-        // Servidor 2: Nodo Réplica Secundaria A
-        ServerNode3D n2 = new ServerNode3D("node-02", "node-02-replica", host, basePort + 1, ClusterNode.Role.SECONDARY, 0.0f, 0.0f, -18.0f);
-        n2.setRaftState(ClusterNode.RaftState.FOLLOWER);
-        serverNodes.add(n2);
+        for (int i = 0; i < cfgNodes.size(); i++) {
+            ClusterConfigLoader.ConfiguredNode cn = cfgNodes.get(i);
+            float[] c = (i < coords.length) ? coords[i] : new float[]{(i * 12.0f) - 12.0f, 0.0f, -15.0f};
+            ClusterNode.Role role = "PRIMARY".equalsIgnoreCase(cn.role()) ? ClusterNode.Role.PRIMARY : ClusterNode.Role.SECONDARY;
+            String host = cn.host();
+            int port = cn.restPort();
 
-        // Servidor 3: Nodo Réplica Secundaria B (Inicia como Fuera de Servicio para alerta visual)
-        ServerNode3D n3 = new ServerNode3D("node-03", "node-03-replica", host, basePort + 2, ClusterNode.Role.SECONDARY, 14.0f, 0.0f, -12.0f);
-        n3.setRaftState(ClusterNode.RaftState.FOLLOWER);
-        n3.toggleOffline();
-        serverNodes.add(n3);
+            ServerNode3D node = new ServerNode3D(cn.id(), cn.id() + "-" + cn.role().toLowerCase(), host, port, role, c[0], c[1], c[2]);
+            if (cn.isLeader()) {
+                node.setRaftState(ClusterNode.RaftState.LEADER);
+            } else {
+                node.setRaftState(ClusterNode.RaftState.FOLLOWER);
+            }
+            if (i == 2) {
+                // Nodo 3 inicia en fuera de servicio para alertas preventivas
+                node.toggleOffline();
+            }
+            serverNodes.add(node);
+        }
+
+        String srcInfo = loader.getLoadedSource();
+        if (loader.isDockerComposeDetected()) {
+            this.lastPoliceEvent = "JettraStore Clúster cargado desde Docker Compose / jettra.config (" + serverNodes.size() + " nodos detectados).";
+        } else {
+            this.lastPoliceEvent = "JettraStore Clúster cargado desde: " + srcInfo + " (" + serverNodes.size() + " nodos).";
+        }
     }
 
     private void initZonesAndSessions() {
@@ -215,29 +235,18 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
 
     private void initClusterTraffic() {
         activeTraffic.clear();
-        // Camión 1: Replicación Raft entre node-01 y node-02
-        activeTraffic.add(new ClusterDataTraffic(
+        // Los canales de datos inician en reposo; solo transmiten cuando hay tráfico real entre nodos
+        ClusterDataTraffic tRaft = new ClusterDataTraffic(
             "traffic_raft_01_02", "Tráfico-Replicación-Raft", ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
             "node-01", "node-02", "Replicación de Logs Raft (Consenso Quórum)", 4_500_000L, 8.5f
-        ));
+        );
+        activeTraffic.add(tRaft);
 
-        // Camión 2: Tráfico Multimodelo Facturas
-        activeTraffic.add(new ClusterDataTraffic(
+        ClusterDataTraffic tOffload = new ClusterDataTraffic(
             "traffic_facturas", "Tráfico-Facturación-Cluster", ClusterDataTraffic.TrafficType.RING_OFFLOAD,
             "node-01", "node-02", "Offload Anillo Dinámico: 25,000 Facturas", 2_800_000L, 4.2f
-        ));
-
-        // Camión 3: Tráfico Médico / Hospital
-        activeTraffic.add(new ClusterDataTraffic(
-            "traffic_salud", "Tráfico-Salud-LSM", ClusterDataTraffic.TrafficType.SSTABLE_COMPACTION,
-            "node-02", "node-01", "Compactación SSTables Pacientes & UCI", 1_900_000L, 3.1f
-        ));
-
-        // Camión 4: Streaming Sensores Ambientales
-        activeTraffic.add(new ClusterDataTraffic(
-            "traffic_ambiental", "Tráfico-Ambiental-Stream", ClusterDataTraffic.TrafficType.VECTOR_SYNC,
-            "node-01", "node-02", "Sync Vectores Clima & TimeSeries IoT", 3_600_000L, 5.8f
-        ));
+        );
+        activeTraffic.add(tOffload);
     }
 
     public synchronized void switchConnection(ConnectionProfile profile) {
@@ -502,21 +511,15 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
             }
         }
 
-        // C. CAMIONES: Lotes de datos movidos por la tasa de objetos en tiempo real
-        int desiredBatches = (remoteActiveTrafficBatches > 0) ? remoteActiveTrafficBatches : 3;
-        while (activeTraffic.size() < desiredBatches) {
-            int num = activeTraffic.size() + 1;
-            activeTraffic.add(new ClusterDataTraffic(
-                "traffic_batch_" + num, "Tráfico-Lote-" + num, ClusterDataTraffic.TrafficType.RING_OFFLOAD,
-                "node-01", "node-02", "Lote en tránsito #" + num, 2_500_000L, 4.0f + num
-            ));
-        }
-        while (activeTraffic.size() > desiredBatches && activeTraffic.size() > 2) {
-            activeTraffic.remove(activeTraffic.size() - 1);
-        }
-        for (ClusterDataTraffic tr : activeTraffic) {
-            long batchSize = (processedObjectsPerSecond / Math.max(1, activeTraffic.size())) * 3;
-            tr.setPayloadSummary("Batch " + String.format("%,d", batchSize) + " objetos | " + tr.getTrafficType().name());
+        // C. CAMIONES: Solo transmiten cuando hay intercambio activo entre nodos en línea
+        if (processedObjectsPerSecond > 0 && totalEvaluations % 4 == 0) {
+            ServerNode3D leader = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.PRIMARY && n.isOnline()).findFirst().orElse(null);
+            ServerNode3D follower = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.SECONDARY && n.isOnline()).findFirst().orElse(null);
+            if (leader != null && follower != null && !isTransferActiveBetween(leader.getId(), follower.getId())) {
+                long batchSize = (processedObjectsPerSecond * 2);
+                triggerNodeTransfer(leader.getId(), follower.getId(), ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
+                    "Replicación Raft: " + String.format("%,d", batchSize) + " ops", batchSize, 8.5f);
+            }
         }
 
         // D. PERROS: Agentes JettraPolice reaccionan a la carga del servidor
@@ -635,7 +638,59 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
     public List<UserZoneGroup> getUserZones() { return userZones; }
     public List<JettraLiveSession> getLiveSessions() { return liveSessions; }
     public List<JettraPoliceAgent> getActivePoliceAgents() { return activePoliceAgents; }
-    public List<ClusterDataTraffic> getActiveTraffic() { return activeTraffic; }
+    public synchronized List<ClusterDataTraffic> getActiveTraffic() {
+        List<ClusterDataTraffic> transmittingOnly = new ArrayList<>();
+        for (ClusterDataTraffic t : activeTraffic) {
+            if (t.isTransmitting()) {
+                transmittingOnly.add(t);
+            }
+        }
+        return transmittingOnly;
+    }
+
+    public synchronized boolean isTransferActiveBetween(String srcId, String tgtId) {
+        for (ClusterDataTraffic t : activeTraffic) {
+            if (t.isTransmitting()) {
+                if ((t.getSourceNodeId().equalsIgnoreCase(srcId) && t.getTargetNodeId().equalsIgnoreCase(tgtId)) ||
+                    (t.getSourceNodeId().equalsIgnoreCase(tgtId) && t.getTargetNodeId().equalsIgnoreCase(srcId))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public synchronized float getTransferProgressBetween(String srcId, String tgtId) {
+        for (ClusterDataTraffic t : activeTraffic) {
+            if (t.isTransmitting()) {
+                if (t.getSourceNodeId().equalsIgnoreCase(srcId) && t.getTargetNodeId().equalsIgnoreCase(tgtId)) {
+                    return t.getProgress();
+                } else if (t.getSourceNodeId().equalsIgnoreCase(tgtId) && t.getTargetNodeId().equalsIgnoreCase(srcId)) {
+                    return 1.0f - t.getProgress();
+                }
+            }
+        }
+        return 0.0f;
+    }
+
+    public synchronized void triggerNodeTransfer(String srcId, String tgtId, ClusterDataTraffic.TrafficType type, String payloadSummary, long bytes, float speedMbps) {
+        ServerNode3D src = getNodeById(srcId);
+        ServerNode3D tgt = getNodeById(tgtId);
+        if (src == null || tgt == null || !src.isOnline() || !tgt.isOnline()) {
+            return;
+        }
+
+        for (ClusterDataTraffic t : activeTraffic) {
+            if (t.getSourceNodeId().equalsIgnoreCase(srcId) && t.getTargetNodeId().equalsIgnoreCase(tgtId)) {
+                t.triggerTransfer(srcId, tgtId, payloadSummary, bytes, speedMbps);
+                return;
+            }
+        }
+        String id = "traffic_" + srcId + "_" + tgtId + "_" + System.currentTimeMillis();
+        ClusterDataTraffic nt = new ClusterDataTraffic(id, "Tráfico-" + srcId + "->" + tgtId, type, srcId, tgtId, payloadSummary, bytes, speedMbps);
+        nt.triggerTransfer(srcId, tgtId, payloadSummary, bytes, speedMbps);
+        activeTraffic.add(nt);
+    }
 
     public ServerNode3D getNodeById(String id) {
         for (ServerNode3D n : serverNodes) {

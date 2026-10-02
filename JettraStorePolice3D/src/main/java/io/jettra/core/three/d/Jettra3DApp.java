@@ -4,6 +4,9 @@ import java.util.*;
 import io.jettra.core.three.d.explorer.EngineIndexInfo;
 import io.jettra.core.three.d.explorer.RecordVersion;
 import io.jettra.core.three.d.explorer.RecordFieldInfo;
+import io.jettra.core.three.d.backup.BackupManager;
+import io.jettra.core.three.d.backup.BackupSnapshot;
+import io.jettra.core.three.d.config.ClusterConfigLoader;
 
 import static com.raylib.Raylib.*;
 import com.raylib.Color;
@@ -118,6 +121,16 @@ public class Jettra3DApp {
     private int explorerActiveInputFocus = 0; // 0: ninguno, 1: filtro rápido, 2: buscador JQL/SQL
 
     // Operaciones CRUD de Registros (Agregar, Editar, Eliminar)
+    // Panel de Respaldos y Restauración (Backup & Restore)
+    private boolean showBackupModal = false;
+    private int backupActiveTab = 0; // 0: CREAR, 1: RESTAURAR
+    private String backupSelectedDb = "example_factura_db";
+    private String backupSelectedEngine = "MULTIMODEL_SNAPSHOT";
+    private String backupSelectedAlgo = "ZSTD_SIMD";
+    private String backupSelectedSnapshotId = "BKP-FAC-20261001-0800";
+    private String backupTargetRestoreDb = "example_factura_db";
+    private boolean backupOverwrite = true;
+
     // Visualizador de Registros Multimodelo adaptado por Engine
     private boolean showRecordViewModal = false;
     private int recordViewScroll = 0;
@@ -295,10 +308,22 @@ public class Jettra3DApp {
             }
         }
 
+        // Atajo 'B': Abrir / Cerrar Panel de Respaldos y Restauración
+        if (isKeyPressed(KEY_B)) {
+            showBackupModal = !showBackupModal;
+        }
+
         // Atajo 'E': Abrir / Cerrar Explorador Multimodelo de Motores y Registros
         if (isKeyPressed(KEY_E)) {
             showEngineExplorerModal = !showEngineExplorerModal;
-            if (showEngineExplorerModal) {
+            if (showBackupModal) {
+            if (isKeyPressed(KEY_ESCAPE)) {
+                showBackupModal = false;
+            }
+            return;
+        }
+
+        if (showEngineExplorerModal) {
                 openEngineExplorerModal(selectedDatabase != null ? selectedDatabase.getId() : "example_factura_db");
             }
         }
@@ -2361,22 +2386,31 @@ public class Jettra3DApp {
         if (policeMonitor == null) return;
         List<ServerNode3D> nodes = policeMonitor.getServerNodes();
 
-        // 1. Líneas de haz de datos del anillo Raft
+        // 1. Líneas de transmisión de datos entre nodos: SOLO se muestran activas cuando hay transmisión real
         for (int i = 0; i < nodes.size(); i++) {
             ServerNode3D current = nodes.get(i);
             ServerNode3D next = nodes.get((i + 1) % nodes.size());
             Vector3 startPos = new Vector3().x(current.getX()).y(0.3f).z(current.getZ());
             Vector3 endPos = new Vector3().x(next.getX()).y(0.3f).z(next.getZ());
 
-            boolean ringActive = current.isOnline() && next.isOnline();
-            Color lineColor = ringActive ? fade(SKYBLUE, 0.7f) : fade(RED, 0.45f);
-            drawLine3D(startPos, endPos, lineColor);
+            boolean bothOnline = current.isOnline() && next.isOnline();
+            boolean isTransmitting = bothOnline && policeMonitor.isTransferActiveBetween(current.getId(), next.getId());
 
-            if (ringActive) {
-                float progress = (worldTime * 0.8f + (i * 0.33f)) % 1.0f;
+            if (isTransmitting) {
+                // Haz de luz y pulso activo solo durante transmisión real de datos entre nodos
+                Color lineColor = fade(GOLD, 0.90f);
+                drawLine3D(startPos, endPos, lineColor);
+
+                float progress = policeMonitor.getTransferProgressBetween(current.getId(), next.getId());
                 float px = current.getX() + (next.getX() - current.getX()) * progress;
                 float pz = current.getZ() + (next.getZ() - current.getZ()) * progress;
-                drawSphere(new Vector3().x(px).y(0.35f).z(pz), 0.22f, GOLD);
+                drawSphere(new Vector3().x(px).y(0.38f).z(pz), 0.30f, LIME);
+            } else if (!bothOnline) {
+                // Enlace interrumpido / nodo desconectado
+                drawLine3D(startPos, endPos, fade(RED, 0.25f));
+            } else {
+                // Enlace en reposo (sin transmisión activa de datos entre estos nodos)
+                drawLine3D(startPos, endPos, fade(DARKGRAY, 0.20f));
             }
         }
 
@@ -5013,4 +5047,233 @@ public class Jettra3DApp {
             showExplorerQueryHelp = false;
         }
     }
+
+
+    // =========================================================================
+    // PANEL DE RESPALDOS Y RESTAURACIÓN (BACKUP & RESTORE)
+    // =========================================================================
+    private void drawBackupModal(int sw, int sh) {
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.80f));
+
+        int mw = 940;
+        int mh = 560;
+        int mx = (sw - mw) / 2;
+        int my = (sh - mh) / 2;
+
+        drawRectangle(mx, my, mw, mh, new Color().r((byte)16).g((byte)22).b((byte)36).a((byte)255));
+        drawRectangleLines(mx, my, mw, mh, GOLD);
+
+        // Barra de Título
+        drawRectangle(mx, my, mw, 45, new Color().r((byte)24).g((byte)32).b((byte)50).a((byte)255));
+        drawLine(mx, my + 45, mx + mw, my + 45, GOLD);
+
+        drawLegibleText("💾 PANEL DE RESPALDOS Y RESTAURACIÓN (BACKUP & RESTORE)", mx + 16, my + 14, 13, GOLD);
+        drawLegibleText("JettraStore Zero-Set Archiving Engine (Compresión SIMD + Verificación SHA-256)", mx + 490, my + 16, 10, SKYBLUE);
+
+        // Botón Cerrar (X)
+        Rectangle closeBtnRec = new Rectangle().x(mx + mw - 36).y(my + 10).width(26).height(26);
+        boolean closeHover = checkCollisionPointRec(getMousePosition(), closeBtnRec);
+        drawRectangleRounded(closeBtnRec, 0.2f, 4, closeHover ? RED : DARKGRAY);
+        drawLegibleText("X", (int)closeBtnRec.x() + 8, (int)closeBtnRec.y() + 5, 14, RAYWHITE);
+        if (closeHover && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            showBackupModal = false;
+            return;
+        }
+
+        // Pestañas: [ 💾 CREAR RESPALDO ] / [ ♻️ RESTAURAR RESPALDO ]
+        int tabY = my + 54;
+        Rectangle tabCrear = new Rectangle().x(mx + 20).y(tabY).width(220).height(26);
+        boolean tCrearHov = checkCollisionPointRec(getMousePosition(), tabCrear);
+        drawRectangleRounded(tabCrear, 0.2f, 4, (backupActiveTab == 0) ? fade(GOLD, 0.85f) : (tCrearHov ? fade(SKYBLUE, 0.5f) : fade(DARKGRAY, 0.4f)));
+        drawLegibleText("💾 CREAR RESPALDO", (int)tabCrear.x() + 24, (int)tabCrear.y() + 6, 11, (backupActiveTab == 0) ? BLACK : RAYWHITE);
+        if (tCrearHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            backupActiveTab = 0;
+        }
+
+        Rectangle tabRestaurar = new Rectangle().x(mx + 250).y(tabY).width(240).height(26);
+        boolean tRestHov = checkCollisionPointRec(getMousePosition(), tabRestaurar);
+        drawRectangleRounded(tabRestaurar, 0.2f, 4, (backupActiveTab == 1) ? fade(GOLD, 0.85f) : (tRestHov ? fade(SKYBLUE, 0.5f) : fade(DARKGRAY, 0.4f)));
+        drawLegibleText("♻️ RESTAURAR RESPALDO", (int)tabRestaurar.x() + 24, (int)tabRestaurar.y() + 6, 11, (backupActiveTab == 1) ? BLACK : RAYWHITE);
+        if (tRestHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            backupActiveTab = 1;
+        }
+
+        // Feedback / Notificación
+        BackupManager bm = BackupManager.getInstance();
+        if (bm.getBackupFeedbackTimer() > 0) {
+            bm.decrementFeedbackTimer(0.016f);
+            drawLegibleText(bm.getLastBackupFeedback(), mx + 505, tabY + 6, 10, LIME);
+        }
+
+        drawLine(mx + 20, my + 88, mx + mw - 20, my + 88, fade(GRAY, 0.35f));
+
+        if (backupActiveTab == 0) {
+            drawCreateBackupView(mx + 20, my + 98, mw - 40, mh - 110, bm);
+        } else {
+            drawRestoreBackupView(mx + 20, my + 98, mw - 40, mh - 110, bm);
+        }
+    }
+
+    private void drawCreateBackupView(int bx, int by, int bw, int bh, BackupManager bm) {
+        drawLegibleText("SELECCIÓN DE ORIGEN Y CONFIGURACIÓN DEL RESPALDO:", bx, by, 11, GOLD);
+
+        // 1. Selector de Base de Datos
+        drawLegibleText("Base de Datos a Respaldar:", bx, by + 24, 10, SKYBLUE);
+        String[] dbs = {"example_factura_db", "samples_hostipal_db", "samples_ambiental_db", "system_metadata_db"};
+        int dbX = bx;
+        for (String db : dbs) {
+            boolean isSel = backupSelectedDb.equalsIgnoreCase(db);
+            Rectangle r = new Rectangle().x(dbX).y(by + 42).width(210).height(24);
+            boolean hov = checkCollisionPointRec(getMousePosition(), r);
+            drawRectangleRounded(r, 0.2f, 4, isSel ? fade(BLUE, 0.8f) : (hov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.3f)));
+            drawRectangleRoundedLines(r, 0.2f, 4, isSel ? GOLD : DARKGRAY);
+            drawLegibleText("🗄️ " + db, dbX + 8, by + 47, 10, isSel ? GOLD : RAYWHITE);
+            if (hov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                backupSelectedDb = db;
+            }
+            dbX += 220;
+        }
+
+        // 2. Selector de Motor o Snapshot Multimodelo Completo
+        drawLegibleText("Alcance del Respaldo (Engine):", bx, by + 80, 10, SKYBLUE);
+        String[] engines = {"MULTIMODEL_SNAPSHOT", "DOCUMENT", "JAVA_RECORD", "GRAPH", "VECTOR"};
+        int engX = bx;
+        for (String eng : engines) {
+            boolean isSel = backupSelectedEngine.equalsIgnoreCase(eng);
+            Rectangle r = new Rectangle().x(engX).y(by + 98).width(168).height(24);
+            boolean hov = checkCollisionPointRec(getMousePosition(), r);
+            drawRectangleRounded(r, 0.2f, 4, isSel ? fade(PURPLE, 0.8f) : (hov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.3f)));
+            drawRectangleRoundedLines(r, 0.2f, 4, isSel ? GOLD : DARKGRAY);
+            drawLegibleText(eng, engX + 8, by + 103, 9, isSel ? GOLD : RAYWHITE);
+            if (hov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                backupSelectedEngine = eng;
+            }
+            engX += 176;
+        }
+
+        // 3. Algoritmo de Compresión
+        drawLegibleText("Algoritmo de Compresión y Empaquetado:", bx, by + 136, 10, SKYBLUE);
+        String[] algos = {"ZSTD_SIMD", "LZ4_PANAMA", "GZIP", "RAW_ZEROSET"};
+        int algX = bx;
+        for (String al : algos) {
+            boolean isSel = backupSelectedAlgo.equalsIgnoreCase(al);
+            Rectangle r = new Rectangle().x(algX).y(by + 154).width(210).height(24);
+            boolean hov = checkCollisionPointRec(getMousePosition(), r);
+            drawRectangleRounded(r, 0.2f, 4, isSel ? fade(GREEN, 0.8f) : (hov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.3f)));
+            drawRectangleRoundedLines(r, 0.2f, 4, isSel ? GOLD : DARKGRAY);
+            String desc = al.equals("ZSTD_SIMD") ? " (Alto Ratio 3.4x)" : (al.equals("LZ4_PANAMA") ? " (Ultra Rápido)" : "");
+            drawLegibleText("📦 " + al + desc, algX + 8, by + 159, 10, isSel ? BLACK : RAYWHITE);
+            if (hov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                backupSelectedAlgo = al;
+            }
+            algX += 220;
+        }
+
+        // 4. Panel de Estimación y Parámetros
+        int cardY = by + 196;
+        Rectangle estBox = new Rectangle().x(bx).y(cardY).width(bw).height(170);
+        drawRectangleRounded(estBox, 0.1f, 4, new Color().r((byte)12).g((byte)16).b((byte)28).a((byte)255));
+        drawRectangleRoundedLines(estBox, 0.1f, 4, GOLD);
+
+        drawLegibleText("📊 ESTIMACIÓN TÉCNICA DEL SNAPSHOT:", bx + 14, cardY + 12, 11, GOLD);
+        drawLegibleText("• Base de Datos Destino: " + backupSelectedDb.toUpperCase(), bx + 14, cardY + 34, 10, RAYWHITE);
+        drawLegibleText("• Alcance: " + backupSelectedEngine + " | Modo: Streaming Zero-Set Off-Heap", bx + 14, cardY + 54, 10, SKYBLUE);
+        drawLegibleText("• Destino Físico: ~/jettra/backups/" + backupSelectedDb + "_snapshot.jbk", bx + 14, cardY + 74, 10, LIGHTGRAY);
+        drawLegibleText("• Integridad: Criptográfico SHA-256 generado al vuelo con punteros Panama FFM.", bx + 14, cardY + 94, 10, LIME);
+        drawLegibleText("• Tolerancia a Fallos: Compatible con restauración en caliente sin reiniciar el clúster.", bx + 14, cardY + 114, 10, YELLOW);
+        drawLegibleText("• Cero Presión GC: Serialización binaria directa en memoria nativa sin copias al heap.", bx + 14, cardY + 134, 10, SKYBLUE);
+
+        // Botón de Ejecución
+        int execY = by + bh - 50;
+        if (guiButton(bx, execY, 280, 36, "💾 EJECUTAR RESPALDO AHORA", GREEN)) {
+            bm.createBackup(backupSelectedDb, backupSelectedEngine, backupSelectedAlgo, null);
+            if (policeMonitor != null) {
+                policeMonitor.triggerNodeTransfer("node-01", "node-02", ClusterDataTraffic.TrafficType.SSTABLE_COMPACTION,
+                    "Creando Respaldo: " + backupSelectedDb, 350_000_000L, 9.5f);
+            }
+        }
+    }
+
+    private void drawRestoreBackupView(int bx, int by, int bw, int bh, BackupManager bm) {
+        drawLegibleText("LISTA DE RESPALDOS DISPONIBLES EN EL ALMACENAMIENTO:", bx, by, 11, GOLD);
+
+        List<BackupSnapshot> snaps = bm.getSnapshots();
+        int tableY = by + 22;
+
+        // Encabezados
+        drawRectangle(bx, tableY, bw, 24, new Color().r((byte)24).g((byte)32).b((byte)52).a((byte)255));
+        drawRectangleLines(bx, tableY, bw, 24, DARKGRAY);
+        drawLegibleText("ID SNAPSHOT", bx + 6, tableY + 5, 9, GOLD);
+        drawLegibleText("BASE DE DATOS", bx + 170, tableY + 5, 9, GOLD);
+        drawLegibleText("ALCANCE", bx + 320, tableY + 5, 9, GOLD);
+        drawLegibleText("FECHA", bx + 450, tableY + 5, 9, GOLD);
+        drawLegibleText("OBJETOS", bx + 570, tableY + 5, 9, GOLD);
+        drawLegibleText("TAMAÑO", bx + 650, tableY + 5, 9, GOLD);
+        drawLegibleText("COMPRESIÓN", bx + 730, tableY + 5, 9, GOLD);
+        drawLegibleText("ESTADO", bx + 830, tableY + 5, 9, GOLD);
+
+        int rowY = tableY + 28;
+        int rowH = 26;
+        for (BackupSnapshot s : snaps) {
+            boolean isSel = backupSelectedSnapshotId.equalsIgnoreCase(s.id());
+            Rectangle r = new Rectangle().x(bx).y(rowY).width(bw).height(rowH);
+            boolean hov = checkCollisionPointRec(getMousePosition(), r);
+
+            drawRectangleRounded(r, 0.1f, 4, isSel ? fade(BLUE, 0.7f) : (hov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.25f)));
+            drawRectangleRoundedLines(r, 0.1f, 4, isSel ? GOLD : fade(GRAY, 0.3f));
+
+            drawLegibleText("🏷️ " + s.id(), bx + 6, rowY + 6, 9, isSel ? GOLD : RAYWHITE);
+            drawLegibleText(s.databaseName(), bx + 170, rowY + 6, 9, SKYBLUE);
+            drawLegibleText(s.engineType(), bx + 320, rowY + 6, 9, LIME);
+            drawLegibleText(s.timestamp(), bx + 450, rowY + 6, 9, LIGHTGRAY);
+            drawLegibleText(String.format("%,d", s.totalObjects()), bx + 570, rowY + 6, 9, RAYWHITE);
+            drawLegibleText(s.getFormattedSize(), bx + 650, rowY + 6, 9, YELLOW);
+            drawLegibleText(s.compressionAlgo() + " (" + String.format("%.1f", s.compressionRatio()) + "x)", bx + 730, rowY + 6, 9, MAGENTA);
+            drawLegibleText(s.status(), bx + 830, rowY + 6, 9, LIME);
+
+            if (hov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                backupSelectedSnapshotId = s.id();
+                backupTargetRestoreDb = s.databaseName();
+            }
+            rowY += rowH + 4;
+        }
+
+        // Panel de Opciones de Restauración
+        int optY = by + bh - 130;
+        drawRectangle(bx, optY, bw, 120, new Color().r((byte)12).g((byte)16).b((byte)28).a((byte)255));
+        drawRectangleLines(bx, optY, bw, 120, GOLD);
+
+        drawLegibleText("PARÁMETROS DE RESTAURACIÓN:", bx + 14, optY + 10, 10, GOLD);
+        drawLegibleText("Snapshot Seleccionado: " + backupSelectedSnapshotId + " | Restaurar hacia Base de Datos:", bx + 14, optY + 30, 10, SKYBLUE);
+
+        // Selector rápido de BD destino
+        int rdbX = bx + 14;
+        String[] rdbs = {"example_factura_db", "samples_hostipal_db", "samples_ambiental_db", "system_metadata_db"};
+        for (String rdb : rdbs) {
+            boolean isSel = backupTargetRestoreDb.equalsIgnoreCase(rdb);
+            Rectangle r = new Rectangle().x(rdbX).y(optY + 48).width(190).height(22);
+            boolean hov = checkCollisionPointRec(getMousePosition(), r);
+            drawRectangleRounded(r, 0.2f, 3, isSel ? fade(BLUE, 0.8f) : fade(BLACK, 0.3f));
+            drawRectangleRoundedLines(r, 0.2f, 3, isSel ? GOLD : DARKGRAY);
+            drawLegibleText("🗄️ " + rdb, rdbX + 6, optY + 52, 9, isSel ? GOLD : RAYWHITE);
+            if (hov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                backupTargetRestoreDb = rdb;
+            }
+            rdbX += 200;
+        }
+
+        // Botones de Acción
+        if (guiButton(bx + 14, optY + 80, 260, 30, "♻️ RESTAURAR SNAPSHOT AHORA", LIME)) {
+            bm.restoreBackup(backupSelectedSnapshotId, backupTargetRestoreDb, backupOverwrite);
+            if (policeMonitor != null) {
+                policeMonitor.triggerNodeTransfer("node-02", "node-01", ClusterDataTraffic.TrafficType.SSTABLE_COMPACTION,
+                    "Restaurando Respaldo: " + backupSelectedSnapshotId, 380_000_000L, 9.5f);
+            }
+        }
+
+        if (guiButton(bx + 290, optY + 80, 200, 30, "🗑️ ELIMINAR SNAPSHOT", RED)) {
+            bm.deleteSnapshot(backupSelectedSnapshotId);
+        }
+    }
+
 }
