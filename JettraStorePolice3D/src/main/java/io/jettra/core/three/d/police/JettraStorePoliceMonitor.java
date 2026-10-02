@@ -64,6 +64,10 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
     private volatile long processedObjectsTotal = 8_250_000L;
     private volatile long processedObjectsPerSecond = 34_800L;
     private volatile int activeTransactions = 11;
+    private volatile int remoteActiveSessions = 0;
+    private volatile int remoteActiveTrafficBatches = 0;
+    private volatile int remoteActivePoliceAgents = 0;
+    private volatile int remoteActiveZones = 0;
 
     private final String[][] sessionCandidates = {
         {"usr_pos_caja_04", "192.168.1.55", "example_factura_db", "INSERT INTO facturas (POS-Caja 4)"},
@@ -290,7 +294,7 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
     private boolean pollServerTelemetryNonBlocking() {
         String host = (currentProfile != null) ? currentProfile.getHost() : "127.0.0.1";
         int configuredPort = (currentProfile != null) ? currentProfile.getPort() : 8765;
-        int[] portsToTry = new int[]{configuredPort, 8765, 9091};
+        int[] portsToTry = new int[]{8080, configuredPort, 8765, 9091};
 
         for (int p : portsToTry) {
             try {
@@ -328,7 +332,23 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
             if (iops != null && iops > 0) {
                 this.processedObjectsPerSecond = iops;
             }
-            this.lastPoliceEvent = "Métricas en tiempo real recibidas de JettraStore Server (REST Health).";
+            Long sessions = extractJsonLong(json, "active_sessions");
+            if (sessions != null && sessions > 0) {
+                this.remoteActiveSessions = sessions.intValue();
+            }
+            Long batches = extractJsonLong(json, "active_traffic_batches");
+            if (batches != null && batches > 0) {
+                this.remoteActiveTrafficBatches = batches.intValue();
+            }
+            Long dogs = extractJsonLong(json, "active_police_agents");
+            if (dogs != null && dogs > 0) {
+                this.remoteActivePoliceAgents = dogs.intValue();
+            }
+            Long zones = extractJsonLong(json, "active_zones");
+            if (zones != null && zones > 0) {
+                this.remoteActiveZones = zones.intValue();
+            }
+            this.lastPoliceEvent = "Métricas en tiempo real recibidas de JettraStore Server (REST Health :8080).";
         } catch (Exception ignored) {}
     }
 
@@ -456,21 +476,20 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
      * de los objetos procesados y throughput del servidor en tiempo real.
      */
     private void synchronizeEntitiesWithServerWorkload(double satPercent) {
-        // A. PERSONAS: Corresponden a las sesiones concurrentes de procesamiento en el servidor
-        int desiredSessions = Math.min(22, Math.max(8, (int)(processedObjectsPerSecond / 2800)));
-        if (liveSessions.size() < desiredSessions) {
-            int candidateIdx = (int)(totalEvaluations % sessionCandidates.length);
+        // A. PERSONAS: Corresponden a las sesiones concurrentes de procesamiento en el servidor en tiempo real
+        int desiredSessions = (remoteActiveSessions > 0)
+            ? remoteActiveSessions
+            : Math.min(22, Math.max(8, (int)(processedObjectsPerSecond / 2800)));
+
+        while (liveSessions.size() < desiredSessions) {
+            int candidateIdx = (int)((totalEvaluations + liveSessions.size()) % sessionCandidates.length);
             String[] cand = sessionCandidates[candidateIdx];
             String dynUser = cand[0] + "_" + (liveSessions.size() + 1);
             addLiveUserSession(dynUser, cand[1], cand[2], cand[3]);
-        } else if (liveSessions.size() > desiredSessions && liveSessions.size() > 8) {
-            // Remover una sesión completada
-            for (JettraLiveSession s : liveSessions) {
-                if (s.getProgress() > 0.85f && !s.getUsername().startsWith("usr_facturacion_01")) {
-                    removeLiveUserSession(s.getSessionId());
-                    break;
-                }
-            }
+        }
+        while (liveSessions.size() > desiredSessions && liveSessions.size() > 4) {
+            JettraLiveSession last = liveSessions.get(liveSessions.size() - 1);
+            removeLiveUserSession(last.getSessionId());
         }
 
         // B. EDIFICIOS: Sincronizar sesiones en cada zona geográfica
@@ -483,19 +502,31 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         }
 
         // C. CAMIONES: Lotes de datos movidos por la tasa de objetos en tiempo real
+        int desiredBatches = (remoteActiveTrafficBatches > 0) ? remoteActiveTrafficBatches : 3;
+        while (activeTraffic.size() < desiredBatches) {
+            int num = activeTraffic.size() + 1;
+            activeTraffic.add(new ClusterDataTraffic(
+                "traffic_batch_" + num, "Tráfico-Lote-" + num, ClusterDataTraffic.TrafficType.RING_OFFLOAD,
+                "node-01", "node-02", "Lote en tránsito #" + num, 2_500_000L, 4.0f + num
+            ));
+        }
+        while (activeTraffic.size() > desiredBatches && activeTraffic.size() > 2) {
+            activeTraffic.remove(activeTraffic.size() - 1);
+        }
         for (ClusterDataTraffic tr : activeTraffic) {
             long batchSize = (processedObjectsPerSecond / Math.max(1, activeTraffic.size())) * 3;
             tr.setPayloadSummary("Batch " + String.format("%,d", batchSize) + " objetos | " + tr.getTrafficType().name());
         }
 
         // D. PERROS: Agentes JettraPolice reaccionan a la carga del servidor
+        int desiredDogs = (remoteActivePoliceAgents > 0) ? remoteActivePoliceAgents : 4;
         boolean hasOmega = activePoliceAgents.stream().anyMatch(a -> a.getId().equals("k9_omega"));
-        if ((satPercent > 70.0 || processedObjectsPerSecond > 45000L) && !hasOmega) {
+        if ((satPercent > 70.0 || processedObjectsPerSecond > 45000L || desiredDogs > 4) && !hasOmega) {
             activePoliceAgents.add(new JettraPoliceAgent(
                 "k9_omega", "JettraPolice-K9-Omega", JettraPoliceAgent.PoliceRole.HEAP_SENTINEL,
-                "node-01", "🚨 Vigilante de Carga Masiva: Desplegado por alta ingesta de objetos"
+                "node-01", "🚨 Vigilante Centinela: Desplegado por alta ingesta de objetos en tiempo real"
             ));
-        } else if (satPercent < 65.0 && processedObjectsPerSecond < 40000L && hasOmega) {
+        } else if (satPercent < 65.0 && processedObjectsPerSecond < 40000L && desiredDogs <= 4 && hasOmega) {
             activePoliceAgents.removeIf(a -> a.getId().equals("k9_omega"));
         }
     }

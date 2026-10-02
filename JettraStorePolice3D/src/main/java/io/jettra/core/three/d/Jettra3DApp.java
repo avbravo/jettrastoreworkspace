@@ -1501,37 +1501,54 @@ public class Jettra3DApp {
         drawText("JETTRA CORE", sw - 190, 20, 20, GOLD);
         drawText("JAVA 25 EDITION", sw - 190, 45, 10, SKYBLUE);
 
-        // Buttons
-        if (guiButton(sw - 190, 70, 180, 26, "🔌 CONEXIONES", GOLD)) {
+        // Buttons organizados y alineados sin solapamientos
+        int by = 65;
+        int bh = 24;
+        int bGap = 4;
+
+        if (guiButton(sw - 190, by, 180, bh, "🔌 CONEXIONES", GOLD)) {
             showConnectionModal = !showConnectionModal;
             if (showConnectionModal) {
                 loadSelectedProfileIntoForm();
             }
         }
+        by += bh + bGap; // 93
 
-        if (guiButton(sw - 190, 100, 180, 26, "👥 USUARIOS", SKYBLUE)) {
+        if (guiButton(sw - 190, by, 180, bh, "👥 USUARIOS", SKYBLUE)) {
             showUserManagerModal = !showUserManagerModal;
             if (showUserManagerModal) {
                 initUserFormWithSelection();
             }
         }
+        by += bh + bGap; // 121
 
-        if (guiButton(sw - 190, 130, 180, 26, "🌳 ENGINES / DATOS", LIME)) {
+        if (guiButton(sw - 190, by, 180, bh, "🌳 EXPLORADOR ENGINES", LIME)) {
             showEngineExplorerModal = !showEngineExplorerModal;
             if (showEngineExplorerModal) {
                 openEngineExplorerModal(selectedDatabase != null ? selectedDatabase.getId() : "example_factura_db");
             }
         }
+        by += bh + bGap; // 149
 
-        if (guiButton(sw - 190, 160, 180, 26, "RESET JETTRASTORE", RED)) {
+        if (guiButton(sw - 190, by, 180, bh, "🖥️ CLÚSTER JETTRA", SKYBLUE)) {
+            if (selectedServerNode == null && policeMonitor != null && !policeMonitor.getServerNodes().isEmpty()) {
+                selectedServerNode = policeMonitor.getServerNodes().get(0);
+            }
+            showNodeInspectorModal = !showNodeInspectorModal;
+        }
+        by += bh + bGap; // 177
+
+        if (guiButton(sw - 190, by, 180, bh, "🔄 RESET JETTRASTORE", RED)) {
             resetWorldWithJettraStore();
         }
+        by += bh + bGap; // 205
 
-        if (guiButton(sw - 190, 145, 180, 28, "SAVE STATE", LIME)) {
+        if (guiButton(sw - 190, by, 180, bh, "💾 SAVE STATE", LIME)) {
             saveWorldState();
         }
+        by += bh + bGap; // 233
 
-        if (guiButton(sw - 190, 180, 180, 28, "CONFIGURACIÓN", BLUE)) {
+        if (guiButton(sw - 190, by, 180, bh, "⚙️ CONFIGURACIÓN", BLUE)) {
             showConfigModal = !showConfigModal;
             if (showConfigModal) {
                 initCamera();
@@ -1541,57 +1558,53 @@ public class Jettra3DApp {
                 cameraLocked = false;
             }
         }
+        by += bh + bGap; // 261
 
-        if (guiButton(sw - 190, 200, 180, 30, directorMode ? "DIRECTOR: ON" : "DIRECTOR: OFF", directorMode ? ORANGE : GRAY)) {
+        if (guiButton(sw - 190, by, 180, bh, directorMode ? "DIRECTOR: ON" : "DIRECTOR: OFF", directorMode ? ORANGE : GRAY)) {
             directorMode = !directorMode;
             if (directorMode) followMode = true;
         }
+        by += bh + bGap; // 289
 
-        // --- NEW BUTTONS ---
-        if (guiButton(sw - 190, 240, 180, 25, isAnchored ? "PLANE: LOCKED" : "PLANE: UNLOCKED", isAnchored ? RED : GRAY)) {
+        if (guiButton(sw - 190, by, 88, bh, isAnchored ? "PLN: LOCK" : "PLN: FREE", isAnchored ? RED : GRAY)) {
             isAnchored = !isAnchored;
         }
-
-        if (guiButton(sw - 190, 270, 180, 25, "CENTER MAP", DARKGRAY)) {
+        if (guiButton(sw - 98, by, 88, bh, "CENTER MAP", DARKGRAY)) {
             initCamera();
             followMode = false;
             cameraLocked = false;
         }
+        by += bh + bGap; // 317
 
-        if (guiButton(sw - 190, 305, 180, 30, showChat ? "CERRAR CHAT" : "ABRIR CHAT", PURPLE)) {
+        if (guiButton(sw - 190, by, 180, bh, showChat ? "CERRAR CHAT" : "ABRIR CHAT", PURPLE)) {
             showChat = !showChat;
         }
+        by += bh + bGap; // 345
 
-        if (guiButton(sw - 190, 345, 85, 25, "ZOOM +", GRAY)) {
+        if (guiButton(sw - 190, by, 88, bh, "ZOOM +", GRAY)) {
             camera.fovy(Math.max(5, camera.fovy() - 5));
         }
-
-        if (guiButton(sw - 100, 345, 85, 25, "ZOOM -", GRAY)) {
+        if (guiButton(sw - 98, by, 88, bh, "ZOOM -", GRAY)) {
             camera.fovy(Math.min(120, camera.fovy() + 5));
         }
+        by += bh + bGap; // 373
 
-        if (guiButton(sw - 190, 330, 180, 25, voiceEnabled ? "🔊 VOZ: ACTIVA" : "🔇 VOZ: MUTE", voiceEnabled ? LIME : RED)) {
+        if (guiButton(sw - 190, by, 180, bh, voiceEnabled ? "🔊 VOZ: ACTIVA" : "🔇 VOZ: MUTE", voiceEnabled ? LIME : RED)) {
             voiceEnabled = !voiceEnabled;
             JettraVoiceNarrator.getInstance().setEnabled(voiceEnabled);
             triggerWorldEvent("Voz " + (voiceEnabled ? "activada" : "desactivada"), 200, 200, 0);
         }
+        by += bh + bGap; // 401
 
-        if (guiButton(sw - 190, 365, 85, 30, sfxEnabled ? "SFX: ON" : "SFX: OFF", sfxEnabled ? LIME : RED)) {
+        if (guiButton(sw - 190, by, 88, bh, sfxEnabled ? "SFX: ON" : "SFX: OFF", sfxEnabled ? LIME : RED)) {
             sfxEnabled = !sfxEnabled;
             worldEvents.add(new WorldEvent("Efectos " + (sfxEnabled ? "activados" : "desactivados"), worldTime, 100, 255, 100));
         }
-
-        if (guiButton(sw - 100, 365, 85, 30, "SALIR", DARKGRAY)) {
+        if (guiButton(sw - 98, by, 88, bh, "SALIR", DARKGRAY)) {
             closeWindow();
             System.exit(0);
         }
-
-        if (guiButton(sw - 190, 405, 180, 28, "CLÚSTER JETTRA", SKYBLUE)) {
-            if (selectedServerNode == null && policeMonitor != null && !policeMonitor.getServerNodes().isEmpty()) {
-                selectedServerNode = policeMonitor.getServerNodes().get(0);
-            }
-            showNodeInspectorModal = !showNodeInspectorModal;
-        }
+        by += bh + bGap; // 429
 
         // Selected Info
         int infoY = 445;

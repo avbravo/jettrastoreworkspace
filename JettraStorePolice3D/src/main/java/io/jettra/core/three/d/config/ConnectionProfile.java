@@ -37,6 +37,7 @@ public class ConnectionProfile {
         this.isDefault = isDefault;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getHost() {
         if (url == null || url.isEmpty()) return "127.0.0.1";
         String clean = url.replaceFirst("^[a-zA-Z0-9_+.-]+://", "");
@@ -49,6 +50,7 @@ public class ConnectionProfile {
         return clean;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public int getPort() {
         if (url == null || url.isEmpty()) return 9091;
         String clean = url.replaceFirst("^[a-zA-Z0-9_+.-]+://", "");
