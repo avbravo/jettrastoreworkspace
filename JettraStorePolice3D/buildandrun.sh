@@ -14,4 +14,4 @@ fi
 
 # 2. Ejecución
 echo "[2/2] Iniciando JettraStorePolice3D..."
-mvn exec:java
+mvn exec:exec
