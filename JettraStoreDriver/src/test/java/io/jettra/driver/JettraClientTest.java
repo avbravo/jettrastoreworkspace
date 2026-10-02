@@ -9,6 +9,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import io.jettra.driver.listener.JettraPoliceEventListener;
+import io.jettra.store.core.StreamResponse;
+import io.jettra.store.police.JettraPoliceNotification;
 
 import static io.jettra.test.core.JettraAssert.*;
 
@@ -87,4 +93,60 @@ public class JettraClientTest {
             assertEquals(1, agg.totalGroups());
         }
     }
+
+    @Test
+    @DisplayName("Debe gestionar streaming por chunks y notificaciones de JettraPolice Sentinel")
+    public void testSentinelNotificationAndChunkStreaming() {
+        try (JettraClient client = JettraClient.connect("127.0.0.1", 9091, "admin", "admin-jettra")) {
+            JettraDatabase db = client.getDatabase("test_stream_db");
+            var engine = db.getDocumentEngine("streaming_test_docs");
+            for (int i = 0; i < 250; i++) {
+                engine.insert("doc_" + i, Map.of("index", i, "data", "valor_" + i));
+            }
+
+            AtomicBoolean sentinelFired = new AtomicBoolean(false);
+            AtomicReference<JettraPoliceNotification> notificationRef = new AtomicReference<>();
+
+            JettraPoliceEventListener listener = n -> {
+                sentinelFired.set(true);
+                notificationRef.set(n);
+            };
+            client.addPoliceEventListener(listener);
+
+            // Probar streamFindAll
+            StreamResponse<Map<String, Object>> stream = client.streamFindAll("test_stream_db", "streaming_test_docs");
+            assertNotNull(stream);
+            assertTrue(stream.getSafeBatchSize() > 0);
+
+            AtomicInteger chunkCount = new AtomicInteger(0);
+            AtomicInteger recordCount = new AtomicInteger(0);
+
+            stream.forEachChunk(chunk -> {
+                chunkCount.incrementAndGet();
+                recordCount.addAndGet(chunk.size());
+                assertTrue(chunk.size() <= stream.getSafeBatchSize());
+            });
+
+            assertTrue(chunkCount.get() >= 1);
+            assertTrue(recordCount.get() >= 100);
+
+            // Probar findAll transparente
+            var all = client.findAll("test_stream_db", "streaming_test_docs");
+            assertNotNull(all);
+            assertTrue(all.size() >= 100);
+
+            // Probar notificación directa y desacoplada
+            JettraPoliceNotification sample = JettraPoliceNotification.of(
+                "TEST_SCAN", "streaming_test_docs", 250, 100, 45.0, 1024, "Prueba Sentinel");
+            client.dispatchPoliceEvent(sample);
+
+            assertTrue(sentinelFired.get());
+            assertNotNull(notificationRef.get());
+            assertEquals("TEST_SCAN", notificationRef.get().operation());
+            assertEquals(100, notificationRef.get().safeBatchSize());
+
+            client.removePoliceEventListener(listener);
+        }
+    }
+
 }

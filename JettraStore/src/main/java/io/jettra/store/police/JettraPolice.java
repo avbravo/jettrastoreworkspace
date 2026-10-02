@@ -44,6 +44,8 @@ public final class JettraPolice implements Runnable {
     private final AtomicBoolean active = new AtomicBoolean(true);
     private final List<PoliceAlert> alerts = new CopyOnWriteArrayList<>();
     private final List<Consumer<PoliceDecision>> decisionListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<JettraPoliceNotification>> notificationListeners = new CopyOnWriteArrayList<>();
+    private volatile JettraPoliceNotification lastNotification;
 
     private long intervalMs = 500;
     private double ramWarningThreshold = 75.0;  // % de saturación de Heap para advertencia
@@ -137,6 +139,18 @@ public final class JettraPolice implements Runnable {
             );
 
             notifyListeners(decision);
+
+            JettraPoliceNotification notification = JettraPoliceNotification.of(
+                operation,
+                collection,
+                estimatedRecords,
+                enforcedLimit,
+                saturationPercent,
+                availableMemory / (1024 * 1024),
+                rationale
+            );
+            emitNotification(notification);
+
             return decision;
         }
 
@@ -170,6 +184,31 @@ public final class JettraPolice implements Runnable {
                 listener.accept(decision);
             } catch (Exception ignored) {}
         }
+    }
+
+    public void addNotificationListener(Consumer<JettraPoliceNotification> listener) {
+        notificationListeners.add(listener);
+    }
+
+    public void removeNotificationListener(Consumer<JettraPoliceNotification> listener) {
+        notificationListeners.remove(listener);
+    }
+
+    public void emitNotification(JettraPoliceNotification notification) {
+        this.lastNotification = notification;
+        for (Consumer<JettraPoliceNotification> listener : notificationListeners) {
+            try {
+                listener.accept(notification);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public JettraPoliceNotification getLastNotification() {
+        return lastNotification;
+    }
+
+    public void clearLastNotification() {
+        this.lastNotification = null;
     }
 
     private void runPreventiveChecks() {

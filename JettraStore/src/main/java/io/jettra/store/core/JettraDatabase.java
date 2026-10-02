@@ -142,6 +142,14 @@ public final class JettraDatabase implements AutoCloseable {
         return documentEngines.computeIfAbsent(name, n -> new DocumentEngine(n, this));
     }
 
+    public StreamResponse<Map<String, Object>> streamCollection(String collectionName) {
+        return getDocumentEngine(collectionName).streamAll();
+    }
+
+    public StreamResponse<Map<String, Object>> streamCollection(String collectionName, int limit) {
+        return getDocumentEngine(collectionName).streamAll(limit);
+    }
+
     public VectorEngine getVectorEngine(String name, int dimensions) {
         return vectorEngines.computeIfAbsent(name, k -> new VectorEngine(k, dimensions));
     }

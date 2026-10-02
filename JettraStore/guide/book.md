@@ -44,6 +44,7 @@
     - [10.2 Reglas Preventivas y Acciones Mitigadoras](#102-reglas-preventivas-y-acciones-mitigadoras)
     - [10.3 Activación y Configuración (`jettrapolice.active`)](#103-activación-y-configuración-jettrapoliceactive)
     - [10.4 Supervisión Predictiva de Heap y Prevención Autónoma Anti-OOM](#104-supervisión-predictiva-de-heap-y-prevención-autónoma-anti-oom)
+    - [10.5 Protocolo de Streaming por Chunks y Metadatos de Notificación (Sentinel)](#105-protocolo-de-streaming-por-chunks-y-metadatos-de-notificación-sentinel)
 11. [Capacidades Nativas de Backup y Restore](#11-capacidades-nativas-de-backup-y-restore)
     - [11.1 Procedimiento de Respaldo Hot-Snapshot](#111-procedimiento-de-respaldo-hot-snapshot)
     - [11.2 Procedimiento de Restauración Consistente](#112-procedimiento-de-restauración-consistente)
@@ -463,6 +464,144 @@ jettrapolice.interval.ms = 500
 # Umbral de advertencia de memoria RAM (porcentaje)
 jettrapolice.ram.warning.threshold = 75
 ```
+
+### 10.5 Protocolo de Streaming por Chunks y Metadatos de Notificación (Sentinel)
+
+Para evitar la saturación de memoria (*Heap Space*) cuando clientes o interfaces gráficas ejecutan operaciones masivas sobre colecciones de gran tamaño (e.g., `findAll()`, consultas JQL no restringidas o sentencias `SELECT *` sin cláusula `LIMIT`), `JettraStore` implementa un protocolo de comunicación basado en **Streaming por Chunks + Metadatos de Notificación de Sentinel**.
+
+#### 10.5.1 Estructura de Metadatos: `JettraPoliceNotification`
+Cuando el algoritmo predictivo de `JettraPolice` determina que una lectura masiva amenaza la estabilidad del Heap, genera un registro inmutable `JettraPoliceNotification` con los detalles diagnósticos de la intervención:
+* `operation`: Identificador de la consulta en ejecución (ej. `SQL_SELECT`, `DOCUMENT_STREAM_ALL`).
+* `targetCollection`: Nombre de la colección o bucket evaluado.
+* `estimatedTotalRecords`: Cantidad total de registros presentes en la colección.
+* `safeBatchSize`: Tamaño de lote seguro calculado adaptativamente (ej. 100 registros por lote).
+* `heapUsagePercent`: Porcentaje de saturación del Heap JVM al momento de la intervención.
+* `availableMemoryMb`: Memoria disponible restante en Megabytes.
+* `warningMessage`: Razón explícita y advertencia técnica del Sentinel.
+* `timestamp`: Marca temporal instantánea de la activación.
+* `forcedLazyPagination`: Bandera booleana que confirma que la paginación defensiva fue forzada de forma autónoma.
+
+#### 10.5.2 Flujo Continuo: `StreamResponse<T>`
+En el núcleo del motor (`DocumentEngine.streamAll()`, `JettraDatabase.streamCollection()`), los datos se leen y transmiten mediante `StreamResponse<T>`:
+1. **Partición en Bloques Seguros:** La consulta se fragmenta en lotes de tamaño seguro (por defecto 100 registros).
+2. **Liberación Iterativa para Garbage Collector (GC):** Cada chunk procesado es vaciado y dereferenciado de inmediato al iterar (`forEachChunk()`), permitiendo al recolector de basura (ZGC Generational en Java 25) recuperar memoria entre lote y lote sin retener la totalidad de los datos en el Heap.
+3. **Entrega Transparente:** Provee adaptadores para iteración por lotes (`forEachChunk()`), iteración elemento a elemento (`forEachRecord()`), acumulación segura (`collectAll()`) y Streams de Java 25 (`stream()`).
+
+```java
+// Ejemplo de consumo en servidor o extensiones internas
+try (StreamResponse<Map<String, Object>> stream = database.streamCollection("clientes", 10000)) {
+    if (stream.isSentinelActivated()) {
+        System.out.println("Sentinel activo: Lote seguro de " + stream.getSafeBatchSize() + " registros.");
+    }
+    stream.forEachChunk(chunk -> {
+        // Procesa el lote de registros de forma aislada
+        procesarLote(chunk);
+        // Al terminar la lambda, el chunk queda libre para recolección inmediata por el GC
+    });
+}
+```
+
+#### 10.5.3 Sistema Desacoplado de Eventos: `JettraPoliceEventListener`
+Para permitir que cualquier cliente gráfico (`JettraStoreFX`), consola de comandos (`JettraStoreShell`) o aplicación de negocio reciba notificaciones inmediatas del Sentinel sin alterar las firmas existentes de sus llamadas (`findAll()`, `sql()`, `jql()`), el driver (`JettraStoreDriver`) expone una interfaz funcional desacoplada:
+
+```java
+package io.jettra.driver.listener;
+
+import io.jettra.store.police.JettraPoliceNotification;
+
+@FunctionalInterface
+public interface JettraPoliceEventListener {
+    void onSentinelActivated(JettraPoliceNotification notification);
+}
+```
+
+#### 10.5.4 Ejemplo Completo de Referencia en `JettraStoreExample`
+
+El proyecto de ejemplos oficial `JettraStoreExample` incluye una demostración integral implementada en la clase **`io.jettra.examples.store.police.AntiOomStreamingSentinelExample`**, accesible mediante `JettraStoreExampleApp`:
+
+```java
+package io.jettra.examples.store.police;
+
+import io.jettra.driver.listener.JettraPoliceEventListener;
+import io.jettra.examples.store.driver.JettraDriver;
+import io.jettra.examples.store.util.ConsoleColor;
+import io.jettra.store.core.StorageMode;
+import io.jettra.store.core.StreamResponse;
+import io.jettra.store.engine.models.DocumentEngine;
+import io.jettra.store.engine.query.JettraSQLProcessor;
+import io.jettra.store.police.JettraPoliceNotification;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+public class AntiOomStreamingSentinelExample {
+
+    public static void run(JettraDriver driver) {
+        ConsoleColor.printHeader("13. PROTECCIÓN ANTI-OOM: SENTINEL, STREAMING POR CHUNKS Y LISTENERS");
+
+        String dbName = "streaming_sentinel_db";
+        driver.getDatabase(dbName, StorageMode.JVM_RAM);
+
+        // 1. Registro del Listener Desacoplado
+        AtomicBoolean sentinelNotified = new AtomicBoolean(false);
+        AtomicReference<JettraPoliceNotification> lastNotifRef = new AtomicReference<>();
+
+        JettraPoliceEventListener listener = notification -> {
+            sentinelNotified.set(true);
+            lastNotifRef.set(notification);
+            System.out.printf("🛡️ [SENTINEL ACTIVADO] Operación: %s | Colección: %s%n",
+                notification.operation(), notification.targetCollection());
+            System.out.printf("   Lote seguro forzado: %d | Heap: %.1f%% | RAM libre: %d MB%n",
+                notification.safeBatchSize(), notification.heapUsagePercent(), notification.availableMemoryMb());
+        };
+
+        driver.addPoliceEventListener(listener);
+
+        // 2. Poblado de colección masiva de prueba (500 documentos)
+        DocumentEngine catalog = driver.getDocumentEngine(dbName, "catalogo_masivo");
+        for (int i = 1; i <= 500; i++) {
+            catalog.insert("item_" + i, Map.of(
+                "sku", "SKU-2026-" + i,
+                "nombre", "Sensor Industrial Modelo #" + i,
+                "precio", 49.99 + (i * 0.5),
+                "stock", i * 10
+            ));
+        }
+
+        // 3. Streaming por Chunks Seguro (StreamResponse<T>)
+        try (StreamResponse<Map<String, Object>> stream = driver.streamFindAll(dbName, "catalogo_masivo")) {
+            System.out.printf("Batch Seguro: %d | Sentinel Activo: %b%n",
+                stream.getSafeBatchSize(), stream.isSentinelActivated());
+
+            AtomicInteger chunkNum = new AtomicInteger(1);
+            // forEachChunk libera explícitamente cada lote para el Garbage Collector
+            stream.forEachChunk(chunk -> {
+                System.out.printf("  • Chunk #%02d recibido con %d registros.%n",
+                    chunkNum.getAndIncrement(), chunk.size());
+            });
+        }
+
+        // 4. Consumo Transparente mediante findAll() sin alterar firmas
+        List<Map<String, Object>> all = driver.findAll(dbName, "catalogo_masivo");
+        System.out.println("driver.findAll() recuperó: " + all.size() + " registros.");
+
+        // 5. Activación Automática de Sentinel en Consultas SQL no acotadas
+        JettraSQLProcessor.QueryResult sqlRes = driver.sql(dbName, "SELECT * FROM catalogo_masivo");
+        System.out.println("SQL Diagnóstico: " + sqlRes.message());
+        System.out.println("Intervención Sentinel Confirmada: " + sentinelNotified.get());
+
+        // Limpieza del listener
+        driver.removePoliceEventListener(listener);
+    }
+}
+```
+
+#### 10.5.5 Impacto en la Arquitectura de Clientes UX
+* **En `JettraStoreShell` (CLI):** Al detectar la notificación de Sentinel, imprime un marco de alerta con el porcentaje de saturación del Heap y la memoria restante, y renderiza los datos progresivamente por bloques para evitar saturar el búfer de la terminal.
+* **En `JettraStoreFX` (GUI):** Captura el evento desacoplado para desplegar un Toast flotante animado (`FadeTransition`), actualiza la barra de estado en ámbar y alimenta la `TableView` por bloques de 50 registros para mantener la interfaz a 60 fps sin microcongelamientos.
 
 ---
 

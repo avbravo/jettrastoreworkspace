@@ -246,9 +246,45 @@ System.out.println("Total procesado con 0% impacto en Heap: " + totalProcesados)
 
 ---
 
-## 8. Integración con el Centinela Autónomo `JettraPolice`
+## 8. Integración con el Centinela Autónomo `JettraPolice` y Streaming Anti-OOM
 
-El driver expone métodos directos para comunicarse con el subsistema de telemetría y prevención de saturación de memoria **`JettraPolice`**:
+El driver expone métodos directos para comunicarse con el subsistema de telemetría, streaming por chunks y prevención de saturación de memoria **`JettraPolice`**:
+
+### 8.1 Sistema Desacoplado de Eventos Sentinel (`JettraPoliceEventListener`)
+Para mantener el código de negocio del cliente completamente limpio y desacoplado, cualquier aplicación cliente (como `JettraShell` o interfaces gráficas como `JettraStoreFX`) puede registrar un listener de eventos sin alterar las firmas de los métodos existentes (`findAll()`, `sql()`, `jql()`):
+
+```java
+// Registrar listener desacoplado para recibir notificaciones del Sentinel
+client.addPoliceEventListener(notification -> {
+    System.out.printf("🛡️ [Sentinel Activo] Operación: %s sobre %s%n", 
+        notification.operation(), notification.targetCollection());
+    System.out.printf("   Lote seguro forzado: %d registros | Heap: %.1f%% (%d MB libres)%n",
+        notification.safeBatchSize(), notification.heapUsagePercent(), notification.availableMemoryMb());
+    System.out.printf("   Diagnóstico: %s%n", notification.warningMessage());
+});
+```
+
+### 8.2 Streaming por Chunks (`StreamResponse<T>`) y Consumo Transparente
+Cuando el cliente invoca operaciones masivas, el driver consume el flujo continuo de bloques seguros provenientes de `JettraStore`:
+
+```java
+// Opción A: Streaming directo por chunks (vaciado y dereferenciado de memoria entre bloques)
+try (StreamResponse<Map<String, Object>> stream = client.streamFindAll("example_factura_db", "clientes")) {
+    if (stream.isSentinelActivated()) {
+        System.out.println("Anti-OOM Sentinel activado: Lote seguro de " + stream.getSafeBatchSize());
+    }
+    stream.forEachChunk(chunk -> {
+        System.out.printf("Procesando lote seguro de %d registros...%n", chunk.size());
+        // Al terminar de procesar el lote, queda disponible de inmediato para el Garbage Collector
+    });
+}
+
+// Opción B: Consumo transparente unificado (compatibilidad absoluta con findAll)
+List<Map<String, Object>> allRecords = client.findAll("example_factura_db", "clientes");
+System.out.printf("Recuperados %d registros de forma segura sin desbordar el Heap.%n", allRecords.size());
+```
+
+### 8.3 Evaluación Predictiva y Auditoría
 
 ```java
 // 1. Evaluar si una consulta masiva agotaría el Heap antes de ejecutarla

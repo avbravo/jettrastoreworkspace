@@ -19,7 +19,12 @@ import javafx.scene.SubScene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import io.jettra.driver.listener.JettraPoliceEventListener;
+import io.jettra.store.police.JettraPoliceNotification;
+import io.jettra.store.core.StreamResponse;
+import javafx.animation.FadeTransition;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -83,6 +88,7 @@ public class JettraStoreFXApp extends Application {
     private Label diskDetailLabel;
     private Label systemStatsLabel;
     private TextArea resourceHistoryArea;
+    private StackPane rootContainer;
     private boolean autoRefreshMetrics = true;
     private long lastMetricsTick = 0;
 
@@ -139,7 +145,8 @@ public class JettraStoreFXApp extends Application {
         };
         timer.start();
 
-        Scene scene = new Scene(root, 1260, 820);
+        this.rootContainer = new StackPane(root);
+        Scene scene = new Scene(rootContainer, 1260, 820);
         primaryStage.setScene(scene);
         primaryStage.show();
 
@@ -171,6 +178,7 @@ public class JettraStoreFXApp extends Application {
             this.activePort = port;
             this.activeUser = user;
             this.client = JettraClient.connect(host, port, user, pass);
+            this.client.addPoliceEventListener(this::handlePoliceSentinelEvent);
             this.isConnected = true;
             this.activeRole = "SUPER_ADMIN";
 
@@ -2057,6 +2065,44 @@ public class JettraStoreFXApp extends Application {
         return tab;
     }
 
+    private void showToast(String message, String colorHex) {
+        Platform.runLater(() -> {
+            if (rootContainer == null) return;
+            Label toast = new Label(message);
+            toast.setWrapText(true);
+            toast.setMaxWidth(420);
+            toast.setStyle(String.format(
+                "-fx-background-color: %s; -fx-text-fill: white; -fx-font-weight: bold; " +
+                "-fx-padding: 10 16 10 16; -fx-background-radius: 8; -fx-font-size: 11px; " +
+                "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.6), 10, 0, 0, 4);",
+                colorHex
+            ));
+            StackPane.setAlignment(toast, Pos.TOP_RIGHT);
+            StackPane.setMargin(toast, new Insets(65, 25, 0, 0));
+            rootContainer.getChildren().add(toast);
+
+            FadeTransition ft = new FadeTransition(Duration.millis(4000), toast);
+            ft.setFromValue(1.0);
+            ft.setToValue(0.0);
+            ft.setOnFinished(e -> rootContainer.getChildren().remove(toast));
+            ft.play();
+        });
+    }
+
+    private void handlePoliceSentinelEvent(JettraPoliceNotification notification) {
+        Platform.runLater(() -> {
+            String alertMsg = String.format("🛡️ [Sentinel Activo] Lote seguro: %d filas (Heap: %.1f%%, %d MB libres)",
+                notification.safeBatchSize(), notification.heapUsagePercent(), notification.availableMemoryMb());
+            if (statusBarLabel != null) {
+                statusBarLabel.setText(alertMsg);
+                statusBarLabel.setStyle("-fx-text-fill: #F59E0B; -fx-font-weight: bold; -fx-font-size: 11px;");
+            }
+            showToast("🛡️ JettraPolice Sentinel (Anti-OOM):\n" + notification.warningMessage(), "#D97706");
+            logStatus(String.format("JettraPolice Sentinel: Operación '%s' sobre '%s' optimizada con streaming seguro.",
+                notification.operation(), notification.targetCollection()));
+        });
+    }
+
     private void executeQuickExplorerQuery(String query) {
         if (client == null || !isConnected) {
             logStatus("[ERROR] Debe conectarse a un nodo antes de consultar.");
@@ -2079,7 +2125,21 @@ public class JettraStoreFXApp extends Application {
                 }
 
                 Platform.runLater(() -> {
-                    recordsTable.setItems(items);
+                    recordsTable.setItems(FXCollections.observableArrayList());
+                    recordCountBadge.setText("Recibiendo streaming...");
+                });
+
+                // Alimentar la tabla de manera incremental por chunks para mantener la fluidez
+                int chunkSize = 50;
+                for (int i = 0; i < items.size(); i += chunkSize) {
+                    final int startIdx = i;
+                    final int endIdx = Math.min(items.size(), i + chunkSize);
+                    Platform.runLater(() -> {
+                        recordsTable.getItems().addAll(items.subList(startIdx, endIdx));
+                    });
+                }
+
+                Platform.runLater(() -> {
                     recordCountBadge.setText("Resultados: " + items.size());
                     lblExplorerPageStatus.setText(String.format("Consulta: %d filas (%d ms)", items.size(), elapsed));
                     logStatus(String.format("Consulta ejecutada: '%s' -> %d filas en %d ms", query, items.size(), elapsed));

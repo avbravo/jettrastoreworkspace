@@ -1,6 +1,9 @@
 package io.jettra.shell;
 
 import io.jettra.driver.JettraClient;
+import io.jettra.driver.listener.JettraPoliceEventListener;
+import io.jettra.store.core.StreamResponse;
+import io.jettra.store.police.JettraPoliceNotification;
 import io.jettra.driver.config.JettraClientConfig;
 import io.jettra.store.backup.BackupManager;
 import io.jettra.store.cluster.ClusterNode;
@@ -34,6 +37,24 @@ public final class JettraStoreShellApp implements AutoCloseable {
     private boolean lazyLoad = true;
     private boolean showReferences = true;
     private int pageSize = 20;
+    private volatile JettraPoliceNotification lastSentinelNotification = null;
+
+    private void registerSentinelListener() {
+        if (this.client != null) {
+            this.client.addPoliceEventListener(notification -> {
+                this.lastSentinelNotification = notification;
+                System.out.println();
+                System.out.println("╔══════════════════════════════════════════════════════════════════════════════╗");
+                System.out.println("║ 🛡️  [JETTRAPOLICE SENTINEL - PROTECCIÓN PREVENTIVA DE MEMORIA HEAP]         ║");
+                System.out.println("╠══════════════════════════════════════════════════════════════════════════════╣");
+                System.out.printf("║  Operación: %-15s | Colección: %-32s║%n", notification.operation(), notification.targetCollection());
+                System.out.printf("║  Total Estimado: %-10d | Lote Seguro (Batch): %-23d║%n", notification.estimatedTotalRecords(), notification.safeBatchSize());
+                System.out.printf("║  Saturación Heap: %5.1f%%        | RAM Disponible: %-19s║%n", notification.heapUsagePercent(), notification.availableMemoryMb() + " MB");
+                System.out.println("║  Estrategia: Streaming por chunks activado para prevenir OutOfMemory.        ║");
+                System.out.println("╚══════════════════════════════════════════════════════════════════════════════╝");
+            });
+        }
+    }
 
     // Estado de Paginación Interactiva de Consultas
     private String lastPagedBaseQuery = null;
@@ -61,6 +82,7 @@ public final class JettraStoreShellApp implements AutoCloseable {
         this.currentHost = "127.0.0.1";
         this.currentPort = 9091;
         if (this.client != null) {
+            registerSentinelListener();
             this.client.getDatabase(currentDatabase);
         }
     }
@@ -636,6 +658,7 @@ Seleccione una conexión para iniciar:
             this.client = JettraClient.connect(host, port, user, pass);
             this.authenticated = true;
             this.currentUser = user;
+            registerSentinelListener();
             var claims = client.getSecurityManager().validateToken(client.getSessionToken());
             this.currentRole = claims.role();
             this.client.getDatabase(currentDatabase);
@@ -1444,10 +1467,15 @@ Seleccione una conexión para iniciar:
 
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("=== JETTRASQL RESULTADO (%d ms) ===\n", elapsed));
-        if (res.message().contains("[JettraPolice SENTINEL")) {
+        if (res.message().contains("[JettraPolice SENTINEL") || lastSentinelNotification != null) {
             sb.append("🛡️  [JETTRAPOLICE SENTINEL: INTERVENCIÓN PREVENTIVA DE MEMORIA HEAP]\n");
-            sb.append("   Estrategia: Streaming perezoso (Lazy Load) con distribución por lotes seguros.\n");
+            sb.append("   Estrategia: Streaming por chunks seguro (Anti-OOM) con recolección de basura iterativa.\n");
             sb.append("   Diagnóstico: ").append(res.message()).append("\n");
+            if (lastSentinelNotification != null) {
+                sb.append(String.format("   Lote seguro: %d registros | Heap: %.1f%% | RAM libre: %d MB\n",
+                    lastSentinelNotification.safeBatchSize(), lastSentinelNotification.heapUsagePercent(), lastSentinelNotification.availableMemoryMb()));
+            }
+            sb.append("   Recepción progresiva: Prototipo de stream procesado en bloques para proteger terminal y heap.\n");
         } else {
             sb.append("Mensaje: ").append(res.message()).append("\n");
         }
@@ -2479,17 +2507,30 @@ Seleccione una conexión para iniciar:
             StringBuilder sb = new StringBuilder();
             sb.append(String.format("=== REGISTROS DE DOCUMENT BUCKET '%s' (Mostrando %d de %d) ===\n",
                 unitName, Math.min((int) docEngine.count(), limit), docEngine.count()));
+
+            // Streaming por Chunks interactivo con protección Anti-OOM
+            StreamResponse<Map<String, Object>> stream = client.streamFindAll(currentDatabase, unitName, limit);
+            if (stream.isSentinelActivated() || lastSentinelNotification != null) {
+                sb.append("🛡️  [JETTRAPOLICE SENTINEL: STREAMING POR CHUNKS ACTIVADO]\n");
+                sb.append(String.format("   Partición defensiva en lotes de %d registros para evitar OOM.\n", stream.getSafeBatchSize()));
+            }
+
             int idx = 1;
-            for (Map<String, Object> doc : docEngine) {
-                if (idx > limit) break;
-                sb.append(String.format("  [%02d] _id: %-15s -> %s\n", idx++, doc.getOrDefault("_id", "?"), doc));
-                if (showReferences) {
-                    for (var entry : doc.entrySet()) {
-                        if (entry.getKey().startsWith("_ref_") || String.valueOf(entry.getValue()).contains("::")) {
-                            sb.append(String.format("       ↳ Ref [%s]: %s\n", entry.getKey(), resolveReference(db, String.valueOf(entry.getValue()))));
+            int chunkIndex = 1;
+            for (List<Map<String, Object>> chunk : stream) {
+                sb.append(String.format("--- [Chunk #%d: %d registro(s) recibidos progresivamente] ---\n", chunkIndex++, chunk.size()));
+                for (Map<String, Object> doc : chunk) {
+                    if (idx > limit) break;
+                    sb.append(String.format("  [%02d] _id: %-15s -> %s\n", idx++, doc.getOrDefault("_id", "?"), doc));
+                    if (showReferences) {
+                        for (var entry : doc.entrySet()) {
+                            if (entry.getKey().startsWith("_ref_") || String.valueOf(entry.getValue()).contains("::")) {
+                                sb.append(String.format("       ↳ Ref [%s]: %s\n", entry.getKey(), resolveReference(db, String.valueOf(entry.getValue()))));
+                            }
                         }
                     }
                 }
+                if (idx > limit) break;
             }
             return sb.toString();
         }

@@ -1,6 +1,9 @@
 package io.jettra.store.engine.models;
 
 import io.jettra.collections.map.UnifiedMap;
+import io.jettra.store.core.StreamResponse;
+import io.jettra.store.police.JettraPolice;
+import io.jettra.store.police.JettraPoliceNotification;
 
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -89,6 +92,67 @@ public final class DocumentEngine implements Iterable<Map<String, Object>> {
      */
     public List<Map<String, Object>> findAll() {
         return new LazyDocumentList();
+    }
+
+    /**
+     * Protocolo de streaming por chunks y lotes seguros (Anti-OOM) con metadatos de Sentinel.
+     * Procesa consultas masivas particionándolas en bloques seguros (ej. 100 registros),
+     * liberando referencias entre lote y lote para que el Garbage Collector recoja la memoria.
+     */
+    public StreamResponse<Map<String, Object>> streamAll() {
+        return streamAll(0);
+    }
+
+    public StreamResponse<Map<String, Object>> streamAll(int requestedLimit) {
+        long totalRecords = count();
+        var policeDecision = JettraPolice.getInstance().evaluateHeapSafety(
+            "DOCUMENT_STREAM_ALL", collectionName, totalRecords, requestedLimit, 512L);
+
+        int batchSize = policeDecision.interventionRequired() 
+            ? Math.max(10, policeDecision.recommendedPageSize()) 
+            : (requestedLimit > 0 ? Math.min(requestedLimit, 100) : 100);
+
+        final long maxToRead = (requestedLimit > 0) 
+            ? Math.min(requestedLimit, totalRecords) 
+            : (policeDecision.interventionRequired() ? policeDecision.enforcedLimit() : totalRecords);
+
+        JettraPoliceNotification notification = policeDecision.interventionRequired() 
+            ? JettraPolice.getInstance().getLastNotification() 
+            : null;
+
+        Iterator<List<Map<String, Object>>> chunkIterator = new Iterator<>() {
+            private long readCount = 0;
+            private Iterator<Map<String, Object>> innerIterator = null;
+
+            @Override
+            public boolean hasNext() {
+                if (readCount >= maxToRead) {
+                    return false;
+                }
+                if (innerIterator == null) {
+                    innerIterator = DocumentEngine.this.iterator();
+                }
+                return innerIterator.hasNext();
+            }
+
+            @Override
+            public List<Map<String, Object>> next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                List<Map<String, Object>> chunk = new ArrayList<>(batchSize);
+                while (innerIterator.hasNext() && chunk.size() < batchSize && readCount < maxToRead) {
+                    Map<String, Object> doc = innerIterator.next();
+                    if (doc != null) {
+                        chunk.add(doc);
+                        readCount++;
+                    }
+                }
+                return chunk;
+            }
+        };
+
+        return new StreamResponse<>(notification, batchSize, maxToRead, chunkIterator, null);
     }
 
     /**

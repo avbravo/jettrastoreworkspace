@@ -11,7 +11,12 @@ import com.jettra.memory.engine.StorageMetrics;
 import io.jettra.store.police.JettraPolice;
 import io.jettra.store.core.JettraStoreConfig;
 import io.jettra.store.engine.query.JettraSQLProcessor;
+import io.jettra.driver.listener.JettraPoliceEventListener;
+import io.jettra.store.core.StreamResponse;
+import io.jettra.store.police.JettraPoliceNotification;
 import io.jettra.store.security.JettraSecurityManager;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +30,8 @@ public final class JettraClient implements AutoCloseable {
     private final String sessionToken;
     private final JettraSecurityManager securityManager = new JettraSecurityManager();
     private final DynamicRingEngine ringEngine = new DynamicRingEngine("node-01", 0.85, 0.45);
+    private final List<JettraPoliceEventListener> policeListeners = new CopyOnWriteArrayList<>();
+    private final Consumer<JettraPoliceNotification> policeNotificationListener;
 
     public JettraClient(JettraClientConfig config) {
         this.config = config;
@@ -34,6 +41,9 @@ public final class JettraClient implements AutoCloseable {
         // Registrar nodos pares iniciales del cluster Raft
         this.ringEngine.registerPeer(new ClusterNode("node-02", "192.168.1.102", 9091, ClusterNode.Role.SECONDARY));
         this.ringEngine.registerPeer(new ClusterNode("node-03", "192.168.1.103", 9091, ClusterNode.Role.SECONDARY));
+
+        this.policeNotificationListener = this::dispatchPoliceEvent;
+        JettraPolice.getInstance().addNotificationListener(this.policeNotificationListener);
     }
 
     public static JettraClient connect(String host, int port, String user, String pass) {
@@ -227,6 +237,52 @@ public final class JettraClient implements AutoCloseable {
     /**
      * Acceso al centinela supervisor de estabilidad y telemetría de memoria.
      */
+    public void addPoliceEventListener(JettraPoliceEventListener listener) {
+        if (listener != null) {
+            policeListeners.add(listener);
+        }
+    }
+
+    public void removePoliceEventListener(JettraPoliceEventListener listener) {
+        policeListeners.remove(listener);
+    }
+
+    public void dispatchPoliceEvent(JettraPoliceNotification notification) {
+        if (notification != null) {
+            for (JettraPoliceEventListener listener : policeListeners) {
+                try {
+                    listener.onSentinelActivated(notification);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Retorna un flujo continuo de chunks de documentos procesados de forma segura
+     * particionados en lotes liberables para Garbage Collection, con metadatos de Sentinel.
+     */
+    public StreamResponse<Map<String, Object>> streamFindAll(String databaseName, String collectionName) {
+        return streamFindAll(databaseName, collectionName, 0);
+    }
+
+    public StreamResponse<Map<String, Object>> streamFindAll(String databaseName, String collectionName, int limit) {
+        JettraDatabase db = getDatabase(databaseName);
+        StreamResponse<Map<String, Object>> stream = db.streamCollection(collectionName, limit);
+        if (stream.isSentinelActivated()) {
+            dispatchPoliceEvent(stream.getNotification());
+        }
+        return stream;
+    }
+
+    /**
+     * Recupera todos los documentos de una colección consumiendo de forma transparente
+     * el flujo de chunks del servidor y ensamblándolos progresivamente para proteger el Heap.
+     */
+    public List<Map<String, Object>> findAll(String databaseName, String collectionName) {
+        StreamResponse<Map<String, Object>> stream = streamFindAll(databaseName, collectionName);
+        return stream.collectAll();
+    }
+
     public io.jettra.store.police.JettraPolice getPolice() {
         return io.jettra.store.police.JettraPolice.getInstance();
     }
@@ -418,6 +474,7 @@ public final class JettraClient implements AutoCloseable {
 
     @Override
     public void close() {
+        JettraPolice.getInstance().removeNotificationListener(this.policeNotificationListener);
         for (JettraDatabase db : databases.values()) {
             try {
                 db.close();

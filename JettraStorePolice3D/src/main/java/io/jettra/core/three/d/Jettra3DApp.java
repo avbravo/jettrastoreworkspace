@@ -146,6 +146,7 @@ public class Jettra3DApp {
 
     // Timer de sincronización dinámica de entidades con telemetría del servidor en tiempo real
     private float entitySyncTimer = 0f;
+    private boolean innerPanelLocked = false;
     private String formConnId = "";
     private String formConnName = "JettraStore Local Master";
     private String formConnUrl = "tcp://127.0.0.1:8765";
@@ -460,7 +461,7 @@ public class Jettra3DApp {
         }
 
         float wheel = getMouseWheelMove();
-        if (wheel != 0) {
+        if (wheel != 0 && !(worldMode == WorldMode.INNER_NODE_WORLD && innerPanelLocked)) {
             camera.fovy(camera.fovy() - wheel * 2);
             if (camera.fovy() < 5) camera.fovy(5);
             if (camera.fovy() > 120) camera.fovy(120);
@@ -2741,6 +2742,47 @@ public class Jettra3DApp {
         boolean hoverToggle = checkCollisionPointRec(getMousePosition(), toggleBtn);
         drawRectangleRounded(toggleBtn, 0.2f, 4, hoverToggle ? WHITE : tColor);
         drawLegibleText(tText, px + 35, cy + 8, 11, hoverToggle ? BLACK : WHITE);
+
+        // --- PANEL DE CONTROL PEQUEÑO DEL MUNDO INTERIOR: BLOQUEAR, ACERCAR, ALEJAR, SALIR ---
+        int ctrlX = px;
+        int ctrlY = py + ph + 12;
+        int ctrlW = pw;
+        int ctrlH = 68;
+
+        drawRectangleRounded(new Rectangle().x(ctrlX).y(ctrlY).width(ctrlW).height(ctrlH), 0.15f, 6,
+            fade(new Color().r((byte)15).g((byte)20).b((byte)35).a((byte)255), 0.94f));
+        drawRectangleRoundedLines(new Rectangle().x(ctrlX).y(ctrlY).width(ctrlW).height(ctrlH), 0.15f, 6,
+            innerPanelLocked ? RED : GOLD);
+
+        drawLegibleText("🕹️ CONTROL DE PANEL Y NAVEGACIÓN", ctrlX + 12, ctrlY + 8, 10, innerPanelLocked ? RED : GOLD);
+        if (innerPanelLocked) {
+            drawLegibleText("🔒 [BLOQUEADO]", ctrlX + ctrlW - 100, ctrlY + 8, 10, RED);
+        }
+
+        // Botón 1: Bloquear / Desbloquear panel
+        String lockText = innerPanelLocked ? "🔒 FIJO" : "🔓 BLOQUEAR";
+        Color lockColor = innerPanelLocked ? RED : SKYBLUE;
+        if (guiButton(ctrlX + 10, ctrlY + 26, 85, 28, lockText, lockColor)) {
+            innerPanelLocked = !innerPanelLocked;
+            worldEvents.add(new WorldEvent(
+                "Panel de Mundo Interior: " + (innerPanelLocked ? "BLOQUEADO" : "DESBLOQUEADO"),
+                worldTime, innerPanelLocked ? 255 : 50, innerPanelLocked ? 50 : 255, 100));
+        }
+
+        // Botón 2: Acercar
+        if (guiButton(ctrlX + 100, ctrlY + 26, 82, 28, "🔍+ ACERCAR", BLUE)) {
+            camera.fovy(Math.max(10.0f, camera.fovy() - 5.0f));
+        }
+
+        // Botón 3: Alejar
+        if (guiButton(ctrlX + 187, ctrlY + 26, 82, 28, "🔍- ALEJAR", BLUE)) {
+            camera.fovy(Math.min(95.0f, camera.fovy() + 5.0f));
+        }
+
+        // Botón 4: Salir
+        if (guiButton(ctrlX + 274, ctrlY + 26, 96, 28, "🚪 SALIR", RED)) {
+            startExitTransition();
+        }
 
         // 3. Resumen de Bases de Datos Flotantes (Proyectadas en 2D sobre los pedestales)
         for (DatabaseInfo3D db : expandedNode.getDatabases()) {

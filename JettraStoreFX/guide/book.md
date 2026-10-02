@@ -115,9 +115,35 @@ Para manejar colecciones masivas de datos (como los 200,000 clientes o 1,000,000
 
 ---
 
-## 10. Auditoría de Seguridad y Prevención Anti-OOM con JettraPolice
+## 10. Auditoría de Seguridad, Sentinel Anti-OOM y Streaming Visual con JettraPolice
 
-Desde la barra de acciones de bases de datos, el botón **`🛡️ Police`** despliega el Centro de Auditoría de Estabilidad:
+### 10.1 Recepción Desacoplada de Eventos Sentinel (`JettraPoliceEventListener`)
+Al conectarse con cualquier nodo del clúster, `JettraStoreFX` registra un listener de eventos sobre el driver (`client.addPoliceEventListener(...)`) para enterarse de forma transparente cuando el Sentinel interviene en consultas masivas:
+
+```java
+client.addPoliceEventListener(notification -> {
+    Platform.runLater(() -> {
+        // Actualizar barra de estado con mensaje ámbar de advertencia
+        statusBarLabel.setText(String.format("🛡️ [Sentinel Activo] Lote seguro: %d filas (Heap: %.1f%%, %d MB libres)",
+            notification.safeBatchSize(), notification.heapUsagePercent(), notification.availableMemoryMb()));
+        statusBarLabel.setStyle("-fx-text-fill: #F59E0B; -fx-font-weight: bold; -fx-font-size: 11px;");
+        // Desplegar notificación flotante Toast
+        showToast("🛡️ JettraPolice Sentinel (Anti-OOM):\n" + notification.warningMessage(), "#D97706");
+    });
+});
+```
+
+### 10.2 Notificaciones Flotantes Toast y Barra de Estado
+* **Toast Emergente Dinámico:** Cuando una consulta o escaneo amenaza con agotar la memoria Heap de la JVM, aparece en la esquina superior derecha un Toast flotante animado (`FadeTransition`) informando el diagnóstico de seguridad.
+* **Barra de Estado Proactiva:** La barra inferior destaca en color ámbar el tamaño del lote seguro adoptado y la memoria libre restante.
+
+### 10.3 Alimentación Incremental de Componentes Visuales (`TableView`)
+Para preservar la fluidez total de la interfaz gráfica a 60 fps durante consultas masivas sobre colecciones de cientos de miles de registros:
+* La recepción de resultados se consume en streaming por bloques seguros (`chunks` de 50 a 100 filas).
+* Cada bloque se añade progresivamente al modelo `ObservableList` de la `TableView` mediante `Platform.runLater`, evitando bloqueos del hilo de renderizado de JavaFX (JavaFX Application Thread).
+
+### 10.4 Centro de Auditoría de Estabilidad (Botón `🛡️ Police`)
+Desde la barra de acciones de bases de datos, el botón **`🛡️ Police`** despliega el diálogo de auditoría de estabilidad:
 * **Indicador en Tiempo Real de Saturación de Heap:** Barra visual con código de colores (Verde < 60%, Ámbar 60-80%, Rojo > 80%).
 * **Historial de Intervenciones:** Listado cronológico de alertas preventivas (ej. `HEAP_EXHAUSTION_PREVENTED`, `CRITICAL_RAM_PRESSURE`).
 * **Botón de Inserción Masiva 3M:** Carga en segundo plano la base de datos de ejemplo `example_factura_db` con 3,000,000 de objetos multimodelo conectados mediante JettraRef sin bloquear la interfaz.
