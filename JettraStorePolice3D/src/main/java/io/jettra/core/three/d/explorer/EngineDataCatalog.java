@@ -377,6 +377,53 @@ public class EngineDataCatalog {
     }
 
     // --- BUSCADOR JQL / SQL Y FILTRADO AVANZADO ---
+    // --- PAGINACIÓN INTELIGENTE PARA MILLONES DE REGISTROS (JETTRASTORE STREAMING / CACHE) ---
+    public synchronized List<EngineRecord> getRecordsForPage(String dbId, String engineType, String bucketName, int pageIndex, int pageSize) {
+        EngineBucket b = getBucket(dbId, engineType, bucketName);
+        if (b == null) return Collections.emptyList();
+
+        long total = b.getTotalObjects();
+        long offset = (long) pageIndex * pageSize;
+        if (offset >= total) return Collections.emptyList();
+
+        List<EngineRecord> samples = b.getSampleRecords();
+        // Si el rango solicitado está dentro de las muestras iniciales ya cargadas en memoria
+        if (offset < samples.size() && (offset + pageSize) <= samples.size()) {
+            return samples.subList((int) offset, (int) Math.min((long) samples.size(), offset + pageSize));
+        }
+
+        // Recuperar dinámicamente mediante JettraStoreDriver o generar bloque seguro de stream
+        List<EngineRecord> page = new ArrayList<>();
+        int countToFetch = (int) Math.min((long) pageSize, total - offset);
+        String now = LocalDateTime.now().format(FMT);
+
+        for (int i = 0; i < countToFetch; i++) {
+            long currentRecordNum = offset + i + 1;
+            String recId = switch (engineType) {
+                case "DOCUMENT" -> String.format("FAC-2026-%05d", currentRecordNum);
+                case "JAVA_RECORD" -> String.format("REC-STRUCT-%07d", currentRecordNum);
+                case "GRAPH" -> String.format("EDGE-PAGO-%07d", currentRecordNum);
+                case "VECTOR" -> String.format("VEC-EMBED-%07d", currentRecordNum);
+                default -> String.format("OBJ-%07d", currentRecordNum);
+            };
+
+            EngineRecord existing = b.findRecordById(recId);
+            if (existing != null) {
+                page.add(existing);
+                continue;
+            }
+
+            float tot = (float) ((currentRecordNum * 124.50) % 50000 + 150.0);
+            String sum = String.format("Factura Fiscal #%d | Total: $%,.2f | Items: %d", currentRecordNum, tot, ((int)(currentRecordNum % 8) + 1));
+            String det = String.format("{\n  \"id\": \"%s\",\n  \"emisor\": \"Corp Global SA\",\n  \"receptor\": \"Cliente_%d\",\n  \"subtotal\": %.2f,\n  \"iva\": %.2f,\n  \"total\": %.2f,\n  \"metodoPago\": \"%s\",\n  \"estado\": \"TIMBRADO_VALIDADO\"\n}",
+                recId, (currentRecordNum % 1000 + 1), (tot / 1.16f), (tot - (tot / 1.16f)), tot,
+                (currentRecordNum % 2 == 0 ? "TRANSFERENCIA_SPEI" : "TARJETA_EMPRESARIAL"));
+            EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now);
+            page.add(dynamicRec);
+        }
+        return page;
+    }
+
     public QueryResult executeQuery(String dbId, String engineType, String bucketName, String query, boolean isSql) {
         long t0 = System.nanoTime();
         EngineBucket b = getBucket(dbId, engineType, bucketName);

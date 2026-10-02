@@ -100,5 +100,6 @@ public class EngineBucket {
     public String getBucketName() { return bucketName; }
     public String getDescription() { return description; }
     public synchronized long getTotalObjects() { return totalObjects; }
+    public synchronized void setTotalObjects(long totalObjects) { this.totalObjects = totalObjects; }
     public synchronized List<EngineRecord> getSampleRecords() { return Collections.unmodifiableList(new ArrayList<>(sampleRecords)); }
 }

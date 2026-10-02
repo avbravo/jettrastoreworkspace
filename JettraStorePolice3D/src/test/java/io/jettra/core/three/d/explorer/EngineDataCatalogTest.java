@@ -141,4 +141,33 @@ public class EngineDataCatalogTest {
         EngineDataCatalog.QueryResult allRes = catalog.executeQuery(db, engine, bucket, "", false);
         assertEquals(25, allRes.records().size());
     }
+
+    @Test
+    @DisplayName("Debe paginar millones de registros (1,000,025) de forma lazy sin saturar memoria")
+    public void testMillionRecordsPagination() {
+        EngineDataCatalog catalog = new EngineDataCatalog();
+        String db = "example_factura_db";
+        String engine = "DOCUMENT";
+        String bucket = "facturas";
+
+        EngineBucket b = catalog.getBucket(db, engine, bucket);
+        assertNotNull(b);
+        assertEquals(1_000_025L, b.getTotalObjects(), "El total de registros debe ser 1,000,025");
+
+        // Página 0 (Primeros 5 registros)
+        List<EngineRecord> page0 = catalog.getRecordsForPage(db, engine, bucket, 0, 5);
+        assertEquals(5, page0.size());
+        assertEquals("FAC-2026-00001", page0.get(0).getId());
+
+        // Página 1000 (Registros del medio)
+        List<EngineRecord> page1000 = catalog.getRecordsForPage(db, engine, bucket, 1000, 5);
+        assertEquals(5, page1000.size());
+        assertTrue(page1000.get(0).getId().contains("FAC-2026-"));
+
+        // Última página (200,004 -> registros finales hasta 1,000,025)
+        int lastPageIndex = (int)(b.getTotalObjects() / 5) - 1; // 200005 páginas -> índice 200004
+        List<EngineRecord> lastPage = catalog.getRecordsForPage(db, engine, bucket, lastPageIndex, 5);
+        assertEquals(5, lastPage.size());
+        assertEquals("FAC-2026-1000025", lastPage.get(4).getId());
+    }
 }

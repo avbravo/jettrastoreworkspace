@@ -146,7 +146,7 @@ public class Jettra3DApp {
 
     // Timer de sincronización dinámica de entidades con telemetría del servidor en tiempo real
     private float entitySyncTimer = 0f;
-    private boolean innerPanelLocked = false;
+    private boolean innerPanelLocked = true;
     private String formConnId = "";
     private String formConnName = "JettraStore Local Master";
     private String formConnUrl = "tcp://127.0.0.1:8765";
@@ -225,9 +225,18 @@ public class Jettra3DApp {
         initAudioDevice();
         initSfx();
 
-        mainFont = loadFont("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
-        if (mainFont != null) {
-            setTextureFilter(mainFont.texture(), 1); // 1 = FILTER_TRILINEAR
+        try {
+            int count = 512;
+            java.nio.IntBuffer codepoints = java.nio.IntBuffer.allocate(count);
+            for (int i = 0; i < count; i++) {
+                codepoints.put(i, 32 + i);
+            }
+            mainFont = loadFontEx("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 22, codepoints, count);
+            if (mainFont != null && mainFont.glyphCount() > 0) {
+                setTextureFilter(mainFont.texture(), 1); // 1 = FILTER_TRILINEAR
+            }
+        } catch (Exception e) {
+            mainFont = loadFont("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
         }
 
         initCamera();
@@ -659,7 +668,7 @@ public class Jettra3DApp {
 
         if (worldMode == WorldMode.INNER_NODE_WORLD) {
             innerWorldTime += dt;
-            if (!cameraLocked) {
+            if (!cameraLocked && !innerPanelLocked) {
                 updateCamera(camera, CAMERA_FREE);
             }
             if (expandedNode != null) {
@@ -1473,20 +1482,68 @@ public class Jettra3DApp {
         drawSphere(new Vector3().x(0).y(0).z(0), 0.25f, GOLD);
     }
 
+    private String cleanTextForDisplay(String text) {
+        if (text == null || text.isEmpty()) return "";
+        return text
+            .replace("🌳", "[ENGINES] ")
+            .replace("🗄️", "[DB] ")
+            .replace("🗄", "[DB] ")
+            .replace("📦", "[OBJ] ")
+            .replace("⚙️", "[IDX] ")
+            .replace("⚙", "[IDX] ")
+            .replace("🔍", "[BUSCAR] ")
+            .replace("➕", "[+] ")
+            .replace("✏️", "[EDIT] ")
+            .replace("✏", "[EDIT] ")
+            .replace("🗑️", "[ELIM] ")
+            .replace("🗑", "[ELIM] ")
+            .replace("⏪", "[VERS] ")
+            .replace("💾", "[GUARDAR] ")
+            .replace("📍", ">> ")
+            .replace("🔑", "[ID] ")
+            .replace("🏢", "[SEDE] ")
+            .replace("🏥", "[HOSP] ")
+            .replace("🌿", "[IOT] ")
+            .replace("🏛️", "[DATA] ")
+            .replace("🏛", "[DATA] ")
+            .replace("🚚", "[TRAFICO] ")
+            .replace("🐾", "[K9] ")
+            .replace("🚨", "[ALERTA] ")
+            .replace("🛡️", "[POLICE] ")
+            .replace("🛡", "[POLICE] ")
+            .replace("🔊", "[VOZ] ")
+            .replace("🔇", "[MUTE] ")
+            .replace("🔌", "[CONN] ")
+            .replace("👥", "[USERS] ")
+            .replace("🔄", "[RESET] ")
+            .replace("🎯", "[MAP] ")
+            .replace("💬", "[CHAT] ")
+            .replace("❓", "(?) ")
+            .replace("ℹ️", "(i) ")
+            .replace("ℹ", "(i) ")
+            .replace("🗖", "[MAX]")
+            .replace("🗗", "[MIN]")
+            .replace("⟲", "<==");
+    }
+
     private void drawLegibleText(String text, int x, int y, int fontSize, Color color) {
+        if (text == null || text.isEmpty()) return;
+        String clean = cleanTextForDisplay(text);
         if (mainFont != null) {
-            drawTextEx(mainFont, text, new Vector2().x(x).y(y), (float)fontSize, 1.0f, color);
+            drawTextEx(mainFont, clean, new Vector2().x(x).y(y), (float)fontSize, 1.0f, color);
         } else {
-            drawText(text, x, y, fontSize, color);
+            drawText(clean, x, y, fontSize, color);
         }
     }
 
     private int measureLegibleText(String text, int fontSize) {
+        if (text == null || text.isEmpty()) return 0;
+        String clean = cleanTextForDisplay(text);
         if (mainFont != null) {
-            Vector2 size = measureTextEx(mainFont, text, (float)fontSize, 1.0f);
+            Vector2 size = measureTextEx(mainFont, clean, (float)fontSize, 1.0f);
             return (int)size.x();
         } else {
-            return measureText(text, fontSize);
+            return measureText(clean, fontSize);
         }
     }
 
@@ -2772,13 +2829,13 @@ public class Jettra3DApp {
             drawLegibleText("🔒 [BLOQUEADO]", ctrlX + ctrlW - 100, ctrlY + 8, 10, RED);
         }
 
-        // Botón 1: Bloquear / Desbloquear panel
-        String lockText = innerPanelLocked ? "🔒 FIJO" : "🔓 BLOQUEAR";
+        // Botón 1: Bloquear / Desbloquear plano cartesiano y panel
+        String lockText = innerPanelLocked ? "DESBLOQUEAR" : "BLOQUEAR";
         Color lockColor = innerPanelLocked ? RED : SKYBLUE;
-        if (guiButton(ctrlX + 10, ctrlY + 26, 85, 28, lockText, lockColor)) {
+        if (guiButton(ctrlX + 10, ctrlY + 26, 115, 28, lockText, lockColor)) {
             innerPanelLocked = !innerPanelLocked;
             worldEvents.add(new WorldEvent(
-                "Panel de Mundo Interior: " + (innerPanelLocked ? "BLOQUEADO" : "DESBLOQUEADO"),
+                "Plano Cartesiano de Mundo Interior: " + (innerPanelLocked ? "BLOQUEADO" : "DESBLOQUEADO"),
                 worldTime, innerPanelLocked ? 255 : 50, innerPanelLocked ? 50 : 255, 100));
         }
 
@@ -3887,40 +3944,83 @@ public class Jettra3DApp {
             }
         }
 
-        // 3. Obtención y Paginación de Registros (Considerando búsqueda y filtro)
-        List<EngineRecord> sourceList;
-        if (explorerHasActiveQuery) {
-            sourceList = explorerFilteredRecords;
+        // 3. Obtención y Paginación de Registros (Paginando hasta 1,000,025 registros)
+        EngineBucket currentBucket = catalog.getBucket(selectedExplorerDb, selectedEngineType, selectedBucketName);
+        long bucketTotalObjects = (currentBucket != null) ? currentBucket.getTotalObjects() : 0L;
+
+        List<EngineRecord> pageRecords;
+        int totalPages;
+        long displayTotalRecords;
+
+        if (explorerHasActiveQuery || !explorerFilterText.isEmpty()) {
+            List<EngineRecord> sourceList = explorerHasActiveQuery ? explorerFilteredRecords : (currentBucket != null ? currentBucket.getSampleRecords() : Collections.emptyList());
+            if (!explorerFilterText.isEmpty()) {
+                String lowerFlt = explorerFilterText.toLowerCase();
+                sourceList = sourceList.stream()
+                    .filter(r -> r.getId().toLowerCase().contains(lowerFlt) || r.getSummary().toLowerCase().contains(lowerFlt) || r.getDetails().toLowerCase().contains(lowerFlt))
+                    .toList();
+            }
+            displayTotalRecords = sourceList.size();
+            totalPages = Math.max(1, (int) Math.ceil((double) displayTotalRecords / (double) explorerPageSize));
+            int startIdx = Math.max(0, explorerPageIndex * explorerPageSize);
+            int endIdx = Math.min((int)displayTotalRecords, startIdx + explorerPageSize);
+            pageRecords = (startIdx < displayTotalRecords) ? sourceList.subList(startIdx, endIdx) : Collections.emptyList();
         } else {
-            sourceList = catalog.getBucket(selectedExplorerDb, selectedEngineType, selectedBucketName) != null
-                ? catalog.getBucket(selectedExplorerDb, selectedEngineType, selectedBucketName).getSampleRecords()
-                : Collections.emptyList();
+            displayTotalRecords = bucketTotalObjects;
+            totalPages = Math.max(1, (int) Math.ceil((double) bucketTotalObjects / (double) explorerPageSize));
+            pageRecords = catalog.getRecordsForPage(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
         }
 
-        if (!explorerFilterText.isEmpty()) {
-            String lowerFlt = explorerFilterText.toLowerCase();
-            sourceList = sourceList.stream()
-                .filter(r -> r.getId().toLowerCase().contains(lowerFlt) || r.getSummary().toLowerCase().contains(lowerFlt) || r.getDetails().toLowerCase().contains(lowerFlt))
-                .toList();
-        }
-
-        int totalRecs = sourceList.size();
-        int totalPages = Math.max(1, (int) Math.ceil((double) totalRecs / (double) explorerPageSize));
-        int startIdx = Math.max(0, explorerPageIndex * explorerPageSize);
-        int endIdx = Math.min(totalRecs, startIdx + explorerPageSize);
-        List<EngineRecord> pageRecords = (startIdx < totalRecs) ? sourceList.subList(startIdx, endIdx) : Collections.emptyList();
-
-        // Barra de Paginación
+        // Barra de Paginación Rápida Multirango
         int pageBarY = my + 142;
-        if (guiButton(col2X, pageBarY, 90, 22, "◄ ANTERIOR", (explorerPageIndex > 0) ? SKYBLUE : DARKGRAY)) {
-            if (explorerPageIndex > 0) explorerPageIndex--;
+        int pbx = col2X;
+
+        // Botón Inicio |◄
+        if (guiButton(pbx, pageBarY, 32, 22, "|◄", (explorerPageIndex > 0) ? SKYBLUE : DARKGRAY)) {
+            explorerPageIndex = 0;
+            if (!pageRecords.isEmpty()) selectedExplorerRecord = pageRecords.get(0);
         }
+        pbx += 36;
 
-        String pageInfo = "Pág " + (explorerPageIndex + 1) + " / " + totalPages + " (" + totalRecs + " registros)";
-        drawLegibleText(pageInfo, col2X + 105, pageBarY + 4, 11, RAYWHITE);
+        // Botón Anterior ◄
+        if (guiButton(pbx, pageBarY, 74, 22, "◄ ANT", (explorerPageIndex > 0) ? SKYBLUE : DARKGRAY)) {
+            if (explorerPageIndex > 0) {
+                explorerPageIndex--;
+                pageRecords = catalog.getRecordsForPage(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
+                if (!pageRecords.isEmpty()) selectedExplorerRecord = pageRecords.get(0);
+            }
+        }
+        pbx += 78;
 
-        if (guiButton(col2X + 260, pageBarY, 90, 22, "SIGUIENTE ►", (explorerPageIndex + 1 < totalPages) ? SKYBLUE : DARKGRAY)) {
-            if (explorerPageIndex + 1 < totalPages) explorerPageIndex++;
+        // Etiqueta de Página
+        String pageInfo = String.format("Página %,d / %,d (%,d registros)", (explorerPageIndex + 1), totalPages, displayTotalRecords);
+        drawLegibleText(pageInfo, pbx + 6, pageBarY + 4, 11, RAYWHITE);
+        int labelWidth = measureLegibleText(pageInfo, 11) + 14;
+        pbx += Math.max(170, labelWidth);
+
+        // Botón Siguiente ►
+        if (guiButton(pbx, pageBarY, 74, 22, "SIG ►", (explorerPageIndex + 1 < totalPages) ? SKYBLUE : DARKGRAY)) {
+            if (explorerPageIndex + 1 < totalPages) {
+                explorerPageIndex++;
+                pageRecords = catalog.getRecordsForPage(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
+                if (!pageRecords.isEmpty()) selectedExplorerRecord = pageRecords.get(0);
+            }
+        }
+        pbx += 78;
+
+        // Botón +100 Páginas
+        if (guiButton(pbx, pageBarY, 60, 22, "+100►", (explorerPageIndex + 100 < totalPages) ? GOLD : DARKGRAY)) {
+            explorerPageIndex = Math.min(totalPages - 1, explorerPageIndex + 100);
+            pageRecords = catalog.getRecordsForPage(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
+            if (!pageRecords.isEmpty()) selectedExplorerRecord = pageRecords.get(0);
+        }
+        pbx += 64;
+
+        // Botón Fin ►|
+        if (guiButton(pbx, pageBarY, 32, 22, "►|", (explorerPageIndex + 1 < totalPages) ? SKYBLUE : DARKGRAY)) {
+            explorerPageIndex = totalPages - 1;
+            pageRecords = catalog.getRecordsForPage(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
+            if (!pageRecords.isEmpty()) selectedExplorerRecord = pageRecords.get(0);
         }
 
         // 4. Lista de Registros (Cards)

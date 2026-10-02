@@ -91,6 +91,7 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         initPoliceAgents();
         initClusterTraffic();
         initClient();
+        pollServerTelemetryNonBlocking();
         startScheduler();
     }
 
