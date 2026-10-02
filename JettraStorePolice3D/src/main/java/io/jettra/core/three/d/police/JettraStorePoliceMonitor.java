@@ -423,18 +423,46 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         // 2. Sincronizar correspondencia física en tiempo real de Personas, Edificios, Camiones y Perros
         synchronizeEntitiesWithServerWorkload(satPercent);
 
+        boolean isAnyRemoteRunning = gotRemoteMetrics;
+        if (!isAnyRemoteRunning) {
+            for (ServerNode3D n : serverNodes) {
+                if (checkNodeReachable(n)) {
+                    isAnyRemoteRunning = true;
+                    break;
+                }
+            }
+        }
+
         for (ServerNode3D node : serverNodes) {
+            node.setHeapMaxMb(node.getRole() == ClusterNode.Role.PRIMARY ? maxRam : Math.max(1, maxRam / 2));
+            node.setCpuCores(cpuCores);
+            node.setPanamaDirectMemMb(node.getRole() == ClusterNode.Role.PRIMARY ? 128 : 64);
+            node.setMemTableMb(node.getRole() == ClusterNode.Role.PRIMARY ? 128 : 64);
+
             if (!node.isSimulatedOffline()) {
-                boolean reachable = gotRemoteMetrics || checkSocketPing(node.getHost(), node.getPort());
-                if (!reachable && !node.getId().equals("node-01")) {
-                    node.setOnline(false);
-                    node.setStatus(ClusterNode.NodeStatus.OFFLINE);
-                    node.setStatusMessage("FUERA DE SERVICIO (Sin respuesta en puerto " + node.getPort() + ")");
+                if (isAnyRemoteRunning) {
+                    boolean reachable = checkNodeReachable(node);
+                    if (reachable) {
+                        node.setOnline(true);
+                        node.setStatus(ClusterNode.NodeStatus.RUNNING);
+                        node.setStatusMessage("EN LÍNEA (Quórum Raft Activo)");
+                        node.setLastHeartbeat(System.currentTimeMillis());
+                    } else {
+                        node.setOnline(false);
+                        node.setStatus(ClusterNode.NodeStatus.OFFLINE);
+                        node.setStatusMessage("FUERA DE SERVICIO (Sin respuesta en " + node.getHost() + ":" + node.getPort() + ")");
+                    }
                 } else {
-                    node.setOnline(true);
-                    node.setStatus(ClusterNode.NodeStatus.RUNNING);
-                    node.setStatusMessage("EN LÍNEA (Quórum Raft Activo)");
-                    node.setLastHeartbeat(System.currentTimeMillis());
+                    if (node.getId().equals("node-03")) {
+                        node.setOnline(false);
+                        node.setStatus(ClusterNode.NodeStatus.OFFLINE);
+                        node.setStatusMessage("FUERA DE SERVICIO (Simulado)");
+                    } else {
+                        node.setOnline(true);
+                        node.setStatus(ClusterNode.NodeStatus.RUNNING);
+                        node.setStatusMessage("EN LÍNEA (Local)");
+                        node.setLastHeartbeat(System.currentTimeMillis());
+                    }
                 }
             }
 
@@ -513,17 +541,24 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         }
 
         // C. CAMIONES: Solo transmiten cuando hay intercambio activo entre nodos en línea
-        long batchSize = (processedObjectsPerSecond * 2);
-        for (ClusterDataTraffic tr : activeTraffic) {
-            tr.updateBatch(batchSize, 8.5f, "Batch " + String.format("%,d", batchSize) + " objetos | " + tr.getTrafficType());
-        }
-        if (processedObjectsPerSecond > 0 && totalEvaluations % 4 == 0) {
-            ServerNode3D leader = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.PRIMARY && n.isOnline()).findFirst().orElse(null);
-            ServerNode3D follower = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.SECONDARY && n.isOnline()).findFirst().orElse(null);
-            if (leader != null && follower != null && !isTransferActiveBetween(leader.getId(), follower.getId())) {
-                batchSize = (processedObjectsPerSecond * 2);
-                triggerNodeTransfer(leader.getId(), follower.getId(), ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
-                    "Replicación Raft: " + String.format("%,d", batchSize) + " ops", batchSize, 8.5f);
+        ServerNode3D leader = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.PRIMARY && n.isOnline()).findFirst().orElse(null);
+        ServerNode3D follower = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.SECONDARY && n.isOnline()).findFirst().orElse(null);
+
+        if (leader != null && follower != null) {
+            long batchSize = (processedObjectsPerSecond * 2);
+            for (ClusterDataTraffic tr : activeTraffic) {
+                tr.updateBatch(batchSize, 8.5f, "Batch " + String.format("%,d", batchSize) + " objetos | " + tr.getTrafficType());
+            }
+            if (processedObjectsPerSecond > 0 && totalEvaluations % 4 == 0) {
+                if (!isTransferActiveBetween(leader.getId(), follower.getId())) {
+                    triggerNodeTransfer(leader.getId(), follower.getId(), ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
+                        "Batch Replicación Raft: " + String.format("%,d", batchSize) + " ops", batchSize, 8.5f);
+                }
+            }
+        } else {
+            for (ClusterDataTraffic tr : activeTraffic) {
+                tr.setTransmitting(false);
+                tr.updateBatch(0, 0f, "Batch 0 ops | En Espera: 1 solo nodo activo en clúster");
             }
         }
 
@@ -615,6 +650,55 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
             if (z.getZoneId().equalsIgnoreCase(zoneId)) return z;
         }
         return userZones.isEmpty() ? null : userZones.get(0);
+    }
+
+    private boolean checkNodeReachable(ServerNode3D node) {
+        if (node == null) return false;
+        String host = node.getHost();
+        int port = node.getPort();
+
+        try {
+            URI uri = URI.create("http://" + host + ":" + port + "/api/v1/health");
+            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(150);
+            conn.setReadTimeout(150);
+            conn.setRequestProperty("Connection", "close");
+            if (conn.getResponseCode() == 200) {
+                return true;
+            }
+        } catch (Exception ignored) {}
+
+        if (checkSocketPing(host, port)) {
+            return true;
+        }
+
+        if (node.getId().equalsIgnoreCase("node-01") && port != 8080) {
+            try {
+                URI uri = URI.create("http://" + host + ":8080/api/v1/health");
+                HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(150);
+                conn.setReadTimeout(150);
+                conn.setRequestProperty("Connection", "close");
+                if (conn.getResponseCode() == 200) {
+                    return true;
+                }
+            } catch (Exception ignored) {}
+            if (checkSocketPing(host, 8080)) {
+                return true;
+            }
+        }
+
+        int nodeIdx = 1;
+        for (int i = 0; i < serverNodes.size(); i++) {
+            if (serverNodes.get(i).getId().equalsIgnoreCase(node.getId())) {
+                nodeIdx = i + 1;
+                break;
+            }
+        }
+        int grpcPort = 9090 + nodeIdx;
+        return checkSocketPing(host, grpcPort);
     }
 
     private boolean checkSocketPing(String host, int port) {

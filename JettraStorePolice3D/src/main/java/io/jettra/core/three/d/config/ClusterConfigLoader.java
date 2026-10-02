@@ -156,19 +156,7 @@ public class ClusterConfigLoader {
             } catch (Exception ignored) {}
         }
 
-        // 3. Comprobar existencia de docker-compose.yml
-        String[] composeFiles = {
-            "docker-compose.yml",
-            "../docker-compose.yml",
-            "../../jettrastoreworkspace/jettrastoreworkspace/docker-compose.yml",
-            "/home/avbravo/NetBeansProjects/jettrastack_local/jettrastoreworkspace/jettrastoreworkspace/docker-compose.yml"
-        };
-        for (String cf : composeFiles) {
-            if (new File(cf).exists()) {
-                // Hay definición de docker compose presente
-                return true;
-            }
-        }
+        // Docker Compose solo se considera activo si los puertos de los contenedores están respondiendo
         return false;
     }
 
