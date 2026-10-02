@@ -227,7 +227,9 @@ public class Jettra3DApp {
 
         try {
             int count = 512;
-            java.nio.IntBuffer codepoints = java.nio.IntBuffer.allocate(count);
+            java.nio.IntBuffer codepoints = java.nio.ByteBuffer.allocateDirect(count * Integer.BYTES)
+                .order(java.nio.ByteOrder.nativeOrder())
+                .asIntBuffer();
             for (int i = 0; i < count; i++) {
                 codepoints.put(i, 32 + i);
             }
@@ -235,7 +237,7 @@ public class Jettra3DApp {
             if (mainFont != null && mainFont.glyphCount() > 0) {
                 setTextureFilter(mainFont.texture(), 1); // 1 = FILTER_TRILINEAR
             }
-        } catch (Exception e) {
+        } catch (Throwable t) {
             mainFont = loadFont("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
         }
 
