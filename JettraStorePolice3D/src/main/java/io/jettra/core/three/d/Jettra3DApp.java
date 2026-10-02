@@ -3,6 +3,7 @@ package io.jettra.core.three.d;
 import java.util.*;
 import io.jettra.core.three.d.explorer.EngineIndexInfo;
 import io.jettra.core.three.d.explorer.RecordVersion;
+import io.jettra.core.three.d.explorer.RecordFieldInfo;
 
 import static com.raylib.Raylib.*;
 import com.raylib.Color;
@@ -117,6 +118,11 @@ public class Jettra3DApp {
     private int explorerActiveInputFocus = 0; // 0: ninguno, 1: filtro rápido, 2: buscador JQL/SQL
 
     // Operaciones CRUD de Registros (Agregar, Editar, Eliminar)
+    // Visualizador de Registros Multimodelo adaptado por Engine
+    private boolean showRecordViewModal = false;
+    private int recordViewScroll = 0;
+    private List<RecordFieldInfo> formRecordFields = new ArrayList<>();
+
     private boolean showRecordOperationModal = false;
     private String recordOpMode = ""; // "ADD", "EDIT", "DELETE_CONFIRM"
     private String formRecordId = "";
@@ -327,6 +333,10 @@ public class Jettra3DApp {
         }
 
         if (showEngineExplorerModal) {
+            if (showRecordViewModal) {
+                if (isKeyPressed(KEY_ESCAPE)) showRecordViewModal = false;
+                return;
+            }
             if (showExplorerQueryHelp) {
                 if (isKeyPressed(KEY_ESCAPE)) showExplorerQueryHelp = false;
                 return;
@@ -3650,8 +3660,15 @@ public class Jettra3DApp {
 
     private void openEngineExplorerModal(String dbId) {
         // En el panel Explorador multimodelo solo debe mostrar la base de datos seleccionada
-        selectedExplorerDb = (dbId != null && !dbId.isBlank()) ? dbId : "example_factura_db";
+        if (selectedDatabase != null) {
+            selectedExplorerDb = selectedDatabase.getId();
+        } else if (dbId != null && !dbId.isBlank()) {
+            selectedExplorerDb = dbId;
+        } else {
+            selectedExplorerDb = "example_factura_db";
+        }
         selectedEngineType = "DOCUMENT";
+        showRecordViewModal = false;
         explorerActiveTab = 0;
         explorerFilterText = "";
         explorerSearchQuery = "";
@@ -3720,7 +3737,7 @@ public class Jettra3DApp {
 
         drawLegibleText("🌳 EXPLORADOR MULTIMODELO DE OBJETOS POR ENGINE", mx + 16, my + 10, 14, GOLD);
         // Exclusivamente la base de datos seleccionada
-        drawLegibleText("🗄️ BASE DE DATOS ACTIVA: [" + selectedExplorerDb.toUpperCase() + "]", mx + 16, my + 28, 10, SKYBLUE);
+        drawLegibleText("🗄️ BASE DE DATOS SELECCIONADA: [" + selectedExplorerDb.toUpperCase() + "]", mx + 16, my + 28, 10, SKYBLUE);
 
         // Ruta jerárquica: <nombre-base-datos><engine><bucket-contenedor><registro>
         String currentRecId = (selectedExplorerRecord != null) ? selectedExplorerRecord.getId() : "registro";
@@ -3838,7 +3855,9 @@ public class Jettra3DApp {
         }
 
         // Sub-modales superpuestos
-        if (showRecordOperationModal) {
+        if (showRecordViewModal) {
+            drawRecordViewModal(sw, sh);
+        } else if (showRecordOperationModal) {
             drawRecordOperationModal(sw, sh);
         } else if (showVersionHistoryModal) {
             drawVersionHistoryModal(sw, sh);
@@ -3904,27 +3923,32 @@ public class Jettra3DApp {
             showExplorerQueryHelp = true;
         }
 
-        // 2. Barra de Operaciones de Registro: Agregar, Editar, Eliminar, Restaurar Versiones
+        // 2. Barra de Operaciones de Registro: Ver, Agregar, Editar, Eliminar, Restaurar Versiones
         int opsBarY = my + 112;
-        int btnW = 110;
+        int btnW = 90;
+
+        // Botón VER (👁️ VISUALIZAR)
+        if (guiButton(col2X, opsBarY, btnW, 24, "👁️ VER", (selectedExplorerRecord != null) ? SKYBLUE : DARKGRAY)) {
+            if (selectedExplorerRecord != null) openViewRecordModal();
+        }
 
         // Botón AGREGAR
-        if (guiButton(col2X, opsBarY, btnW, 24, "➕ AGREGAR", GREEN)) {
+        if (guiButton(col2X + (btnW + 6), opsBarY, btnW, 24, "➕ AGREGAR", GREEN)) {
             openAddRecordModal();
         }
 
         // Botón EDITAR
-        if (guiButton(col2X + btnW + 8, opsBarY, btnW, 24, "✏️ EDITAR", (selectedExplorerRecord != null) ? SKYBLUE : DARKGRAY)) {
+        if (guiButton(col2X + (btnW + 6) * 2, opsBarY, btnW, 24, "✏️ EDITAR", (selectedExplorerRecord != null) ? SKYBLUE : DARKGRAY)) {
             if (selectedExplorerRecord != null) openEditRecordModal();
         }
 
         // Botón ELIMINAR
-        if (guiButton(col2X + (btnW + 8) * 2, opsBarY, btnW, 24, "🗑️ ELIMINAR", (selectedExplorerRecord != null) ? RED : DARKGRAY)) {
+        if (guiButton(col2X + (btnW + 6) * 3, opsBarY, btnW, 24, "🗑️ ELIMINAR", (selectedExplorerRecord != null) ? RED : DARKGRAY)) {
             if (selectedExplorerRecord != null) openDeleteRecordModal();
         }
 
         // Botón RESTAURAR VERSIONES
-        if (guiButton(col2X + (btnW + 8) * 3, opsBarY, 150, 24, "⏪ VERSIONES", (selectedExplorerRecord != null) ? GOLD : DARKGRAY)) {
+        if (guiButton(col2X + (btnW + 6) * 4, opsBarY, 130, 24, "⏪ VERSIONES", (selectedExplorerRecord != null) ? GOLD : DARKGRAY)) {
             if (selectedExplorerRecord != null) {
                 showVersionHistoryModal = true;
                 selectedVersionNumber = selectedExplorerRecord.getCurrentVersion();
@@ -3932,7 +3956,7 @@ public class Jettra3DApp {
         }
 
         // Filtro rápido de texto en resultados
-        int filterX = col2X + (btnW + 8) * 3 + 158;
+        int filterX = col2X + (btnW + 6) * 4 + 138;
         int filterW = col2W - (filterX - col2X);
         if (filterW > 80) {
             Rectangle fltRec = new Rectangle().x(filterX).y(opsBarY).width(filterW).height(24);
@@ -4050,6 +4074,15 @@ public class Jettra3DApp {
             if (snip.length() > 68) snip = snip.substring(0, 68) + "...";
             drawLegibleText(snip, col2X + 8, (int)rRec.y() + 20, 10, RAYWHITE);
 
+            Rectangle cardViewBtn = new Rectangle().x(col2X + col2W - 55).y((int)rRec.y() + 18).width(48).height(19);
+            boolean cvHov = checkCollisionPointRec(getMousePosition(), cardViewBtn);
+            drawRectangleRounded(cardViewBtn, 0.2f, 3, cvHov ? SKYBLUE : fade(DARKGRAY, 0.6f));
+            drawLegibleText("👁️ VER", (int)cardViewBtn.x() + 4, (int)cardViewBtn.y() + 3, 9, cvHov ? BLACK : RAYWHITE);
+            if (cvHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                selectedExplorerRecord = rec;
+                openViewRecordModal();
+            }
+
             if (rHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 selectedExplorerRecord = rec;
             }
@@ -4066,22 +4099,56 @@ public class Jettra3DApp {
             String formatTag = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + selectedExplorerRecord.getId() + ">";
             drawLegibleText("Esquema: " + formatTag + " | Versión: v" + selectedExplorerRecord.getCurrentVersion(), col2X + 10, inspY + 24, 10, SKYBLUE);
 
-            Color textColor = switch (selectedEngineType) {
-                case "DOCUMENT" -> LIME;
-                case "JAVA_RECORD" -> GOLD;
-                case "GRAPH" -> SKYBLUE;
-                case "VECTOR" -> new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255);
-                case "KEYVALUE" -> MAGENTA;
-                case "TIMESERIES" -> ORANGE;
-                case "GEOSPATIAL" -> GREEN;
-                case "COLUMNAR" -> YELLOW;
-                default -> RAYWHITE;
-            };
+            Rectangle inspViewBtn = new Rectangle().x(col2X + col2W - 170).y(inspY + 6).width(160).height(20);
+            boolean ivHov = checkCollisionPointRec(getMousePosition(), inspViewBtn);
+            drawRectangleRounded(inspViewBtn, 0.2f, 3, ivHov ? GOLD : fade(BLUE, 0.7f));
+            drawLegibleText("👁️ VER DETALLADO", (int)inspViewBtn.x() + 10, (int)inspViewBtn.y() + 4, 10, ivHov ? BLACK : RAYWHITE);
+            if (ivHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                openViewRecordModal();
+            }
 
-            String[] lines = selectedExplorerRecord.getDetails().split("\n");
-            int maxLines = explorerMaximized ? 10 : 5;
-            for (int li = 0; li < Math.min(maxLines, lines.length); li++) {
-                drawLegibleText(lines[li], col2X + 12, inspY + 42 + (li * 16), 10, textColor);
+            if ("JAVA_RECORD".equals(selectedEngineType)) {
+                List<RecordFieldInfo> rFields = selectedExplorerRecord.getRecordFields();
+                int itx = col2X + 10;
+                int ity = inspY + 40;
+                int itw = col2W - 20;
+                int ic1 = 140, ic2 = 90, ic3 = 150;
+                int ic4 = Math.max(120, itw - ic1 - ic2 - ic3);
+
+                drawRectangle(itx, ity, itw, 20, new Color().r((byte)22).g((byte)30).b((byte)50).a((byte)255));
+                drawRectangleLines(itx, ity, itw, 20, DARKGRAY);
+                drawLegibleText("PROPIEDAD", itx + 6, ity + 4, 9, GOLD);
+                drawLegibleText("TIPO", itx + ic1 + 6, ity + 4, 9, GOLD);
+                drawLegibleText("VALOR", itx + ic1 + ic2 + 6, ity + 4, 9, GOLD);
+                drawLegibleText("REGLAS JETTRARULES", itx + ic1 + ic2 + ic3 + 6, ity + 4, 9, GOLD);
+
+                int maxRows = explorerMaximized ? 7 : 4;
+                for (int fi = 0; fi < Math.min(maxRows, rFields.size()); fi++) {
+                    RecordFieldInfo rf = rFields.get(fi);
+                    int ry = ity + 22 + (fi * 18);
+                    drawRectangle(itx, ry, itw, 17, (fi % 2 == 0) ? fade(BLACK, 0.35f) : fade(DARKGRAY, 0.2f));
+                    drawLegibleText(rf.getProperty(), itx + 6, ry + 2, 9, SKYBLUE);
+                    drawLegibleText(rf.getType(), itx + ic1 + 6, ry + 2, 9, GOLD);
+                    drawLegibleText(rf.getValue(), itx + ic1 + ic2 + 6, ry + 2, 9, LIME);
+                    drawLegibleText("🛡️ " + rf.getJettraRules(), itx + ic1 + ic2 + ic3 + 6, ry + 2, 9, YELLOW);
+                }
+            } else {
+                Color textColor = switch (selectedEngineType) {
+                    case "DOCUMENT" -> LIME;
+                    case "GRAPH" -> SKYBLUE;
+                    case "VECTOR" -> new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255);
+                    case "KEYVALUE" -> MAGENTA;
+                    case "TIMESERIES" -> ORANGE;
+                    case "GEOSPATIAL" -> GREEN;
+                    case "COLUMNAR" -> YELLOW;
+                    default -> RAYWHITE;
+                };
+
+                String[] lines = selectedExplorerRecord.getDetails().split("\n");
+                int maxLines = explorerMaximized ? 10 : 5;
+                for (int li = 0; li < Math.min(maxLines, lines.length); li++) {
+                    drawLegibleText(lines[li], col2X + 12, inspY + 42 + (li * 16), 10, textColor);
+                }
             }
         } else {
             drawLegibleText("(Seleccione un registro arriba para inspeccionar su estructura)", col2X + 12, inspY + 40, 11, GRAY);
@@ -4155,13 +4222,24 @@ public class Jettra3DApp {
 
     // =========================================================================
     // SUB-MODAL 1: Operaciones CRUD por Registro adaptadas al Engine
-    // =========================================================================
+    private void openViewRecordModal() {
+        if (selectedExplorerRecord == null) return;
+        showRecordViewModal = true;
+        recordViewScroll = 0;
+    }
+
     private void openAddRecordModal() {
         recordOpMode = "ADD";
         formRecordId = generateIdForEngine(selectedEngineType);
         formRecordSummary = generateSummaryForEngine(selectedEngineType, formRecordId);
-        formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
         formRecordActiveField = 1;
+        if ("JAVA_RECORD".equals(selectedEngineType)) {
+            formRecordFields = RecordFieldInfo.createDefaultFacturaFields(System.currentTimeMillis() % 1000);
+            formRecordDetails = RecordFieldInfo.buildRecordDetails(selectedBucketName + "Record", formRecordFields);
+        } else {
+            formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
+            formRecordFields.clear();
+        }
         showRecordOperationModal = true;
     }
 
@@ -4172,6 +4250,14 @@ public class Jettra3DApp {
         formRecordSummary = selectedExplorerRecord.getSummary();
         formRecordDetails = selectedExplorerRecord.getDetails();
         formRecordActiveField = 2;
+        if ("JAVA_RECORD".equals(selectedEngineType)) {
+            formRecordFields = selectedExplorerRecord.getRecordFields();
+            if (formRecordFields.isEmpty()) {
+                formRecordFields = RecordFieldInfo.parseFromDetails(selectedExplorerRecord.getDetails(), selectedExplorerRecord.getSummary(), formRecordId);
+            }
+        } else {
+            formRecordFields.clear();
+        }
         showRecordOperationModal = true;
     }
 
@@ -4200,7 +4286,7 @@ public class Jettra3DApp {
     private String generateSummaryForEngine(String engine, String id) {
         return switch (engine) {
             case "DOCUMENT" -> "Documento JSON registrado en " + selectedBucketName;
-            case "JAVA_RECORD" -> "Instancia Java Record In-Memory Panama Struct";
+            case "JAVA_RECORD" -> "Instancia Java Record In-Memory Panama Struct (" + selectedBucketName + ")";
             case "GRAPH" -> "Arista topológica de grafo (" + id + ")";
             case "VECTOR" -> "Embedding vectorial multidimensional Cosine HD";
             case "KEYVALUE" -> "Par Clave-Valor en memoria nativa sin GC";
@@ -4214,7 +4300,7 @@ public class Jettra3DApp {
     private String applyTemplateForEngine(String engine, String bucket, String id) {
         return switch (engine) {
             case "DOCUMENT" -> "{\n  \"id\": \"" + id + "\",\n  \"emisor\": \"Corp Global SA\",\n  \"total\": 1250.00,\n  \"estado\": \"TIMBRADO_VALIDADO\"\n}";
-            case "JAVA_RECORD" -> "public record " + Character.toUpperCase(bucket.charAt(0)) + bucket.substring(1) + "Record(\n  long id,\n  String codigo,\n  double valor,\n  long offHeapOffset\n) {}";
+            case "JAVA_RECORD" -> "public record " + Character.toUpperCase(bucket.charAt(0)) + bucket.substring(1) + "Record(\n  long folio,\n  String itemSku,\n  double precio,\n  double tasaImpuesto,\n  long offHeapOffset\n) {\n  // Instancia Panama FFM\n}";
             case "GRAPH" -> "GraphEdge: {\n  \"sourceVertex\": \"VERTEX_SRC\",\n  \"targetVertex\": \"VERTEX_TGT\",\n  \"relationship\": \"CONECTA_A\",\n  \"weight\": 1.0\n}";
             case "VECTOR" -> "VectorEmbedding {\n  \"id\": \"" + id + "\",\n  \"dimensions\": 3,\n  \"coordinates\": [0.250, -0.750, 0.450],\n  \"metric\": \"COSINE\"\n}";
             case "KEYVALUE" -> "KeyValueEntry {\n  \"key\": \"" + id + "\",\n  \"value\": \"HASH_TOKEN_DATA\",\n  \"timeToLiveSeconds\": 3600\n}";
@@ -4228,19 +4314,18 @@ public class Jettra3DApp {
     private void drawRecordOperationModal(int sw, int sh) {
         drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
 
-        int dw = 640;
-        int dh = 480;
+        int dw = "JAVA_RECORD".equals(selectedEngineType) ? 780 : 660;
+        int dh = 520;
         int dx = (sw - dw) / 2;
         int dy = (sh - dh) / 2;
 
         drawRectangle(dx, dy, dw, dh, new Color().r((byte)20).g((byte)24).b((byte)38).a((byte)255));
         drawRectangleLines(dx, dy, dw, dh, GOLD);
 
-        String title = recordOpMode.equals("ADD") ? "➕ AGREGAR NUEVO REGISTRO"
-                     : (recordOpMode.equals("EDIT") ? "✏️ EDITAR REGISTRO" : "🗑️ CONFIRMAR ELIMINACIÓN");
+        String title = recordOpMode.equals("ADD") ? "➕ AGREGAR NUEVO REGISTRO (" + selectedEngineType + ")"
+                     : (recordOpMode.equals("EDIT") ? "✏️ EDITAR REGISTRO (" + selectedEngineType + ")" : "🗑️ CONFIRMAR ELIMINACIÓN");
         drawLegibleText(title, dx + 20, dy + 16, 14, GOLD);
 
-        // Header con formato: <nombre-base-datos><engine><bucket-contenedor><registro>
         String pathFmt = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + formRecordId + ">";
         drawLegibleText("ESQUEMA: " + pathFmt, dx + 20, dy + 36, 11, LIME);
 
@@ -4260,59 +4345,113 @@ public class Jettra3DApp {
         }
 
         // Formulario de Edición o Agregado
-        drawLegibleText("Identificador / ID (Clave primaria):", dx + 20, dy + 62, 10, SKYBLUE);
-        drawSimpleInputField(dx + 20, dy + 78, dw - 40, 26, formRecordId, formRecordActiveField == 1, false);
-        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 78).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        drawLegibleText("Identificador / ID (Clave primaria):", dx + 20, dy + 60, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 76, dw - 40, 24, formRecordId, formRecordActiveField == 1, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 76).width(dw - 40).height(24)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             formRecordActiveField = 1;
         }
 
-        drawLegibleText("Resumen / Metadatos rápidos:", dx + 20, dy + 112, 10, SKYBLUE);
-        drawSimpleInputField(dx + 20, dy + 128, dw - 40, 26, formRecordSummary, formRecordActiveField == 2, false);
-        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 128).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        drawLegibleText("Resumen / Metadatos rápidos:", dx + 20, dy + 104, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 120, dw - 40, 24, formRecordSummary, formRecordActiveField == 2, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 120).width(dw - 40).height(24)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             formRecordActiveField = 2;
         }
 
-        String payloadLabel = switch (selectedEngineType) {
-            case "DOCUMENT" -> "Payload Documento (Formato JSON):";
-            case "JAVA_RECORD" -> "Estructura Java Record Class (Panama In-Memory Struct):";
-            case "GRAPH" -> "Definición de Grafo (Vértice / Arista y Propiedades):";
-            case "VECTOR" -> "Embedding Vectorial (Coordenadas y Métrica Cosine):";
-            default -> "Contenido del Registro:";
-        };
-        drawLegibleText(payloadLabel, dx + 20, dy + 162, 10, GOLD);
+        // SECCIÓN ADAPTADA POR ENGINE
+        if ("JAVA_RECORD".equals(selectedEngineType)) {
+            drawLegibleText("📋 CAMPOS DEL RECORD Y VALIDACIONES JETTRARULES (In-Memory Panama Struct):", dx + 20, dy + 148, 10, GOLD);
 
-        // Editor multilinea
-        Rectangle boxRec = new Rectangle().x(dx + 20).y(dy + 178).width(dw - 40).height(190);
-        drawRectangleRounded(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? new Color().r((byte)10).g((byte)15).b((byte)28).a((byte)255) : new Color().r((byte)14).g((byte)18).b((byte)30).a((byte)255));
-        drawRectangleRoundedLines(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? GOLD : DARKGRAY);
-        if (checkCollisionPointRec(getMousePosition(), boxRec) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            formRecordActiveField = 3;
-        }
+            int tx = dx + 20;
+            int ty = dy + 166;
+            int tw = dw - 40;
+            int c1 = 140, c2 = 90, c3 = 160;
+            int c4 = tw - c1 - c2 - c3;
 
-        String[] dLines = formRecordDetails.split("\n");
-        for (int i = 0; i < Math.min(9, dLines.length); i++) {
-            drawLegibleText(dLines[i], dx + 28, dy + 186 + (i * 18), 11, LIME);
-        }
+            // Encabezado de tabla
+            drawRectangle(tx, ty, tw, 22, new Color().r((byte)28).g((byte)36).b((byte)56).a((byte)255));
+            drawRectangleLines(tx, ty, tw, 22, DARKGRAY);
+            drawLegibleText("PROPIEDAD", tx + 6, ty + 4, 10, GOLD);
+            drawLegibleText("TIPO", tx + c1 + 6, ty + 4, 10, GOLD);
+            drawLegibleText("VALOR", tx + c1 + c2 + 6, ty + 4, 10, GOLD);
+            drawLegibleText("REGLAS JETTRARULES", tx + c1 + c2 + c3 + 6, ty + 4, 10, GOLD);
 
-        // Botón Cargar Plantilla
-        if (guiButton(dx + 20, dy + 380, 180, 26, "📋 CARGAR PLANTILLA", PURPLE)) {
-            formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
+            int maxEditRows = 7;
+            for (int i = 0; i < Math.min(maxEditRows, formRecordFields.size()); i++) {
+                RecordFieldInfo rf = formRecordFields.get(i);
+                int ry = ty + 24 + (i * 22);
+                drawRectangle(tx, ry, tw, 20, (i % 2 == 0) ? fade(BLACK, 0.35f) : fade(DARKGRAY, 0.2f));
+
+                drawLegibleText(rf.getProperty(), tx + 6, ry + 4, 10, SKYBLUE);
+                drawLegibleText(rf.getType(), tx + c1 + 6, ry + 4, 10, GOLD);
+                drawLegibleText(rf.getValue(), tx + c1 + c2 + 6, ry + 4, 10, LIME);
+                drawLegibleText("🛡️ " + rf.getJettraRules(), tx + c1 + c2 + c3 + 6, ry + 4, 10, YELLOW);
+            }
+
+            int btnRowY = ty + 24 + (Math.min(maxEditRows, formRecordFields.size()) * 22) + 6;
+            if (guiButton(tx, btnRowY, 150, 24, "➕ AÑADIR CAMPO", BLUE)) {
+                int nextIdx = formRecordFields.size() + 1;
+                formRecordFields.add(new RecordFieldInfo("campo_" + nextIdx, "String", "valor_" + nextIdx, "@NotBlank @NotNull"));
+            }
+            if (formRecordFields.size() > 1 && guiButton(tx + 160, btnRowY, 140, 24, "🗑️ QUITAR CAMPO", RED)) {
+                formRecordFields.remove(formRecordFields.size() - 1);
+            }
+            if (guiButton(tx + 310, btnRowY, 200, 24, "🛡️ ADJUNTAR @DecimalMin", PURPLE)) {
+                if (!formRecordFields.isEmpty()) {
+                    RecordFieldInfo last = formRecordFields.get(formRecordFields.size() - 1);
+                    last.setJettraRules(last.getJettraRules() + " @DecimalMin(\"0.01\")");
+                }
+            }
+            if (guiButton(tx + 520, btnRowY, 210, 24, "📋 CARGAR PLANTILLA RECORD", DARKPURPLE)) {
+                formRecordFields = RecordFieldInfo.createDefaultFacturaFields(System.currentTimeMillis() % 1000);
+            }
+        } else {
+            String payloadLabel = switch (selectedEngineType) {
+                case "DOCUMENT" -> "Payload Documento (Formato JSON Estructurado):";
+                case "GRAPH" -> "Definición de Grafo (Vértices, Aristas y Propiedades):";
+                case "VECTOR" -> "Embedding Vectorial (Coordenadas y Métrica Cosine):";
+                case "KEYVALUE" -> "Par Clave-Valor en Memoria Nativa Directa:";
+                case "TIMESERIES" -> "Punto de Serie Temporal de Alta Precisión:";
+                case "GEOSPATIAL" -> "Coordenadas Espaciales Geoespaciales:";
+                case "COLUMNAR" -> "Definición de Chunk Columnar Comprimido:";
+                default -> "Contenido del Registro:";
+            };
+            drawLegibleText(payloadLabel, dx + 20, dy + 150, 10, GOLD);
+
+            Rectangle boxRec = new Rectangle().x(dx + 20).y(dy + 168).width(dw - 40).height(210);
+            drawRectangleRounded(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? new Color().r((byte)10).g((byte)15).b((byte)28).a((byte)255) : new Color().r((byte)14).g((byte)18).b((byte)30).a((byte)255));
+            drawRectangleRoundedLines(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? GOLD : DARKGRAY);
+            if (checkCollisionPointRec(getMousePosition(), boxRec) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                formRecordActiveField = 3;
+            }
+
+            String[] dLines = formRecordDetails.split("\n");
+            for (int i = 0; i < Math.min(10, dLines.length); i++) {
+                drawLegibleText(dLines[i], dx + 28, dy + 176 + (i * 18), 11, LIME);
+            }
+
+            if (guiButton(dx + 20, dy + 390, 180, 26, "📋 CARGAR PLANTILLA", PURPLE)) {
+                formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
+            }
         }
 
         // Botón Guardar
-        if (guiButton(dx + dw - 240, dy + 420, 110, 32, "💾 GUARDAR", GREEN)) {
+        int saveY = dy + dh - 46;
+        if (guiButton(dx + dw - 240, saveY, 110, 32, "💾 GUARDAR", GREEN)) {
+            if ("JAVA_RECORD".equals(selectedEngineType)) {
+                formRecordDetails = RecordFieldInfo.buildRecordDetails(selectedBucketName + "Record", formRecordFields);
+            }
             if (recordOpMode.equals("ADD")) {
-                EngineRecord newRec = new EngineRecord(formRecordId, selectedEngineType, selectedBucketName, formRecordSummary, formRecordDetails, null);
+                EngineRecord newRec = new EngineRecord(formRecordId, selectedEngineType, selectedBucketName, formRecordSummary, formRecordDetails, null, formRecordFields);
                 EngineDataCatalog.getInstance().addRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, newRec);
                 selectedExplorerRecord = newRec;
             } else {
-                EngineDataCatalog.getInstance().updateRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, formRecordId, formRecordSummary, formRecordDetails, "Edición manual por usuario");
+                EngineDataCatalog.getInstance().updateRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, formRecordId, formRecordSummary, formRecordDetails, "Edición de registro y reglas JettraRules", formRecordFields);
             }
             showRecordOperationModal = false;
         }
 
         // Botón Cancelar
-        if (guiButton(dx + dw - 120, dy + 420, 100, 32, "CANCELAR", DARKGRAY)) {
+        if (guiButton(dx + dw - 120, saveY, 100, 32, "CANCELAR", DARKGRAY)) {
             showRecordOperationModal = false;
         }
     }
@@ -4323,8 +4462,8 @@ public class Jettra3DApp {
     private void drawVersionHistoryModal(int sw, int sh) {
         drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
 
-        int dw = 720;
-        int dh = 500;
+        int dw = 860;
+        int dh = 520;
         int dx = (sw - dw) / 2;
         int dy = (sh - dh) / 2;
 
@@ -4337,7 +4476,7 @@ public class Jettra3DApp {
             drawLegibleText("Registro: " + pathFmt + " | Versión Actual: v" + selectedExplorerRecord.getCurrentVersion(), dx + 20, dy + 36, 11, SKYBLUE);
 
             List<RecordVersion> hist = selectedExplorerRecord.getVersionHistory();
-            int listW = 280;
+            int listW = 260;
             int vListY = dy + 68;
 
             drawLegibleText("VERSIONES DISPONIBLES (" + hist.size() + "):", dx + 20, vListY, 11, GOLD);
@@ -4353,7 +4492,7 @@ public class Jettra3DApp {
 
                 String vLabel = "v" + rv.version() + " " + (rv.version() == selectedExplorerRecord.getCurrentVersion() ? "[ACTUAL]" : "");
                 drawLegibleText(vLabel, dx + 26, vListY + 4, 11, isSelVer ? GOLD : RAYWHITE);
-                drawLegibleText(rv.timestamp(), dx + 120, vListY + 4, 9, LIGHTGRAY);
+                drawLegibleText(rv.timestamp(), dx + 110, vListY + 4, 9, LIGHTGRAY);
                 drawLegibleText(rv.operationNote(), dx + 26, vListY + 22, 10, SKYBLUE);
 
                 if (vHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -4362,25 +4501,54 @@ public class Jettra3DApp {
                 vListY += 52;
             }
 
-            // Vista previa de la versión seleccionada
-            int prevX = dx + listW + 35;
-            int prevW = dw - listW - 55;
-            drawLegibleText("DETALLE DE LA VERSIÓN SELECCIONADA (v" + selectedVersionNumber + "):", prevX, dy + 68, 11, GOLD);
+            // Vista previa adaptada según Engine
+            int prevX = dx + listW + 30;
+            int prevW = dw - listW - 50;
+            drawLegibleText("DETALLE DE LA VERSIÓN SELECCIONADA (v" + selectedVersionNumber + ") - ENGINE: " + selectedEngineType, prevX, dy + 68, 11, GOLD);
 
             RecordVersion targetRv = selectedExplorerRecord.getVersion(selectedVersionNumber);
-            Rectangle prevBox = new Rectangle().x(prevX).y(dy + 88).width(prevW).height(280);
+            Rectangle prevBox = new Rectangle().x(prevX).y(dy + 88).width(prevW).height(320);
             drawRectangleRounded(prevBox, 0.1f, 4, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)255));
             drawRectangleRoundedLines(prevBox, 0.1f, 4, GOLD);
 
             if (targetRv != null) {
                 drawLegibleText("Resumen: " + targetRv.summary(), prevX + 10, dy + 96, 10, RAYWHITE);
-                String[] pLines = targetRv.details().split("\n");
-                for (int i = 0; i < Math.min(12, pLines.length); i++) {
-                    drawLegibleText(pLines[i], prevX + 10, dy + 118 + (i * 18), 10, LIME);
+
+                if ("JAVA_RECORD".equals(selectedEngineType)) {
+                    List<RecordFieldInfo> vFields = targetRv.safeFields();
+                    if (vFields.isEmpty()) {
+                        vFields = RecordFieldInfo.parseFromDetails(targetRv.details(), targetRv.summary(), selectedExplorerRecord.getId());
+                    }
+                    int vtx = prevX + 10;
+                    int vty = dy + 118;
+                    int vtw = prevW - 20;
+                    int vc1 = 120, vc2 = 80, vc3 = 130;
+                    int vc4 = vtw - vc1 - vc2 - vc3;
+
+                    drawRectangle(vtx, vty, vtw, 22, new Color().r((byte)22).g((byte)30).b((byte)50).a((byte)255));
+                    drawLegibleText("PROPIEDAD", vtx + 6, vty + 4, 9, GOLD);
+                    drawLegibleText("TIPO", vtx + vc1 + 6, vty + 4, 9, GOLD);
+                    drawLegibleText("VALOR", vtx + vc1 + vc2 + 6, vty + 4, 9, GOLD);
+                    drawLegibleText("REGLAS JETTRARULES", vtx + vc1 + vc2 + vc3 + 6, vty + 4, 9, GOLD);
+
+                    for (int fi = 0; fi < Math.min(8, vFields.size()); fi++) {
+                        RecordFieldInfo rf = vFields.get(fi);
+                        int ry = vty + 24 + (fi * 20);
+                        drawRectangle(vtx, ry, vtw, 18, (fi % 2 == 0) ? fade(BLACK, 0.35f) : fade(DARKGRAY, 0.2f));
+                        drawLegibleText(rf.getProperty(), vtx + 6, ry + 2, 9, SKYBLUE);
+                        drawLegibleText(rf.getType(), vtx + vc1 + 6, ry + 2, 9, GOLD);
+                        drawLegibleText(rf.getValue(), vtx + vc1 + vc2 + 6, ry + 2, 9, LIME);
+                        drawLegibleText("🛡️ " + rf.getJettraRules(), vtx + vc1 + vc2 + vc3 + 6, ry + 2, 9, YELLOW);
+                    }
+                } else {
+                    String[] pLines = targetRv.details().split("\n");
+                    for (int i = 0; i < Math.min(13, pLines.length); i++) {
+                        drawLegibleText(pLines[i], prevX + 10, dy + 118 + (i * 18), 10, LIME);
+                    }
                 }
             }
 
-            if (guiButton(prevX, dy + 390, 220, 32, "⟲ RESTAURAR ESTA VERSIÓN", LIME)) {
+            if (guiButton(prevX, dy + 420, 240, 32, "⟲ RESTAURAR ESTA VERSIÓN", LIME)) {
                 if (targetRv != null) {
                     EngineDataCatalog.getInstance().restoreRecordVersion(
                         selectedExplorerDb, selectedEngineType, selectedBucketName, selectedExplorerRecord.getId(), targetRv.version()
@@ -4397,6 +4565,289 @@ public class Jettra3DApp {
     }
 
     // =========================================================================
+    // SUB-MODAL DEDICADO: Visualizador de Registro Adaptado por Engine
+    // =========================================================================
+    private void drawRecordViewModal(int sw, int sh) {
+        if (selectedExplorerRecord == null) {
+            showRecordViewModal = false;
+            return;
+        }
+
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
+
+        int dw = Math.min(980, sw - 40);
+        int dh = Math.min(620, sh - 40);
+        int dx = (sw - dw) / 2;
+        int dy = (sh - dh) / 2;
+
+        drawRectangle(dx, dy, dw, dh, new Color().r((byte)14).g((byte)18).b((byte)30).a((byte)255));
+        drawRectangleLines(dx, dy, dw, dh, GOLD);
+
+        // Barra de Título
+        drawRectangle(dx, dy, dw, 46, new Color().r((byte)22).g((byte)28).b((byte)46).a((byte)255));
+        drawLine(dx, dy + 46, dx + dw, dy + 46, GOLD);
+
+        drawLegibleText("👁️ VISUALIZADOR DE REGISTRO MULTIMODELO", dx + 20, dy + 12, 14, GOLD);
+
+        // Botón Cerrar (X)
+        Rectangle closeBtnRec = new Rectangle().x(dx + dw - 36).y(dy + 10).width(26).height(26);
+        boolean closeHover = checkCollisionPointRec(getMousePosition(), closeBtnRec);
+        drawRectangleRounded(closeBtnRec, 0.2f, 4, closeHover ? RED : DARKGRAY);
+        drawLegibleText("X", (int)closeBtnRec.x() + 8, (int)closeBtnRec.y() + 5, 14, RAYWHITE);
+        if (closeHover && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            showRecordViewModal = false;
+            return;
+        }
+
+        // Subheader de Metadatos
+        String pathFmt = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + selectedExplorerRecord.getId() + ">";
+        drawLegibleText("📍 ESQUEMA: " + pathFmt, dx + 20, dy + 56, 11, LIME);
+        drawLegibleText("Versión: v" + selectedExplorerRecord.getCurrentVersion() + " | Registro: " + selectedExplorerRecord.getId() + " | Timestamp: " + selectedExplorerRecord.getTimestamp(), dx + 20, dy + 74, 10, SKYBLUE);
+
+        // Badge de Engine
+        Rectangle badgeRec = new Rectangle().x(dx + dw - 180).y(dy + 56).width(160).height(24);
+        Color engColor = switch (selectedEngineType) {
+            case "DOCUMENT" -> LIME;
+            case "JAVA_RECORD" -> GOLD;
+            case "GRAPH" -> SKYBLUE;
+            case "VECTOR" -> new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255);
+            case "KEYVALUE" -> MAGENTA;
+            case "TIMESERIES" -> ORANGE;
+            case "GEOSPATIAL" -> GREEN;
+            case "COLUMNAR" -> YELLOW;
+            default -> RAYWHITE;
+        };
+        drawRectangleRounded(badgeRec, 0.2f, 4, fade(engColor, 0.25f));
+        drawRectangleRoundedLines(badgeRec, 0.2f, 4, engColor);
+        drawLegibleText("ENGINE: " + selectedEngineType, (int)badgeRec.x() + 10, (int)badgeRec.y() + 5, 10, engColor);
+
+        // ÁREA DE CONTENIDO ADAPTADA SEGÚN EL ENGINE SELECCIONADO
+        int contentY = dy + 100;
+        int contentW = dw - 40;
+        int contentH = dh - 160;
+
+        if ("JAVA_RECORD".equals(selectedEngineType)) {
+            drawJavaRecordView(dx + 20, contentY, contentW, contentH);
+        } else if ("DOCUMENT".equals(selectedEngineType)) {
+            drawDocumentJsonView(dx + 20, contentY, contentW, contentH);
+        } else if ("GRAPH".equals(selectedEngineType)) {
+            drawGraphView(dx + 20, contentY, contentW, contentH);
+        } else if ("VECTOR".equals(selectedEngineType)) {
+            drawVectorView(dx + 20, contentY, contentW, contentH);
+        } else if ("KEYVALUE".equals(selectedEngineType)) {
+            drawKeyValueView(dx + 20, contentY, contentW, contentH);
+        } else if ("TIMESERIES".equals(selectedEngineType)) {
+            drawTimeSeriesView(dx + 20, contentY, contentW, contentH);
+        } else if ("GEOSPATIAL".equals(selectedEngineType)) {
+            drawGeospatialView(dx + 20, contentY, contentW, contentH);
+        } else if ("COLUMNAR".equals(selectedEngineType)) {
+            drawColumnarView(dx + 20, contentY, contentW, contentH);
+        } else {
+            drawGenericView(dx + 20, contentY, contentW, contentH);
+        }
+
+        // BARRA INFERIOR DE ACCIONES RÁPIDAS
+        int bottomY = dy + dh - 48;
+        drawLine(dx, bottomY - 6, dx + dw, bottomY - 6, fade(GRAY, 0.3f));
+
+        if (guiButton(dx + 20, bottomY, 150, 32, "✏️ EDITAR", SKYBLUE)) {
+            showRecordViewModal = false;
+            openEditRecordModal();
+        }
+
+        if (guiButton(dx + 180, bottomY, 170, 32, "⏪ VERSIONES", GOLD)) {
+            showRecordViewModal = false;
+            showVersionHistoryModal = true;
+            selectedVersionNumber = selectedExplorerRecord.getCurrentVersion();
+        }
+
+        if (guiButton(dx + dw - 120, bottomY, 100, 32, "CERRAR", DARKGRAY)) {
+            showRecordViewModal = false;
+        }
+    }
+
+    // 1. Vista Adaptada: JAVA RECORD (Tabla de Propiedad, Tipo, Valor y Reglas JettraRules)
+    private void drawJavaRecordView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("📋 TABLA ESTRUCTURADA DE CAMPOS Y VALIDACIONES JETTRARULES (Zero-Set In-Memory Panama Struct):", cx, cy, 11, GOLD);
+
+        List<RecordFieldInfo> fields = selectedExplorerRecord.getRecordFields();
+        int ty = cy + 24;
+        int c1 = 150, c2 = 110, c3 = 190;
+        int c4 = cw - c1 - c2 - c3;
+
+        // Encabezado de la Tabla
+        drawRectangle(cx, ty, cw, 26, new Color().r((byte)22).g((byte)30).b((byte)52).a((byte)255));
+        drawRectangleLines(cx, ty, cw, 26, GOLD);
+        drawLegibleText("PROPIEDAD", cx + 8, ty + 6, 11, GOLD);
+        drawLegibleText("TIPO", cx + c1 + 8, ty + 6, 11, GOLD);
+        drawLegibleText("VALOR", cx + c1 + c2 + 8, ty + 6, 11, GOLD);
+        drawLegibleText("REGLAS JETTRARULES", cx + c1 + c2 + c3 + 8, ty + 6, 11, GOLD);
+
+        // Filas de la Tabla
+        int rowH = 26;
+        int currentY = ty + 28;
+        for (int i = 0; i < Math.min(8, fields.size()); i++) {
+            RecordFieldInfo f = fields.get(i);
+            Rectangle rRec = new Rectangle().x(cx).y(currentY).width(cw).height(rowH);
+            boolean rHov = checkCollisionPointRec(getMousePosition(), rRec);
+
+            drawRectangle(cx, currentY, cw, rowH, (i % 2 == 0) ? fade(BLACK, 0.35f) : fade(DARKGRAY, 0.2f));
+            if (rHov) drawRectangleLines(cx, currentY, cw, rowH, SKYBLUE);
+
+            drawLegibleText(f.getProperty(), cx + 8, currentY + 6, 11, SKYBLUE);
+            drawLegibleText(f.getType(), cx + c1 + 8, currentY + 6, 11, GOLD);
+            drawLegibleText(f.getValue(), cx + c1 + c2 + 8, currentY + 6, 11, LIME);
+            drawLegibleText("🛡️ " + f.getJettraRules(), cx + c1 + c2 + c3 + 8, currentY + 6, 11, YELLOW);
+
+            currentY += rowH + 2;
+        }
+
+        // Panel de información JettraRules
+        int infoY = currentY + 10;
+        int infoH = ch - (infoY - cy);
+        if (infoH > 60) {
+            drawRectangle(cx, infoY, cw, infoH, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)255));
+            drawRectangleLines(cx, infoY, cw, infoH, fade(GOLD, 0.6f));
+
+            drawLegibleText("🛡️ MOTOR DE REGLAS JETTRARULES (io.jettra.rules.validations):", cx + 12, infoY + 8, 10, GOLD);
+            drawLegibleText("• Reglas validadas: @NotNull, @NotBlank, @Min, @DecimalMin, @Pattern, @AssertTrue sin overhead de Garbage Collector.", cx + 12, infoY + 26, 10, LIGHTGRAY);
+            drawLegibleText("• Arquitectura: Estructura nativa Panama Foreign Function & Memory (FFM) mapeada directamente a heap nativo off-heap.", cx + 12, infoY + 44, 10, SKYBLUE);
+
+            if (infoH > 100) {
+                drawLegibleText("Código Java Record compilado:", cx + 12, infoY + 64, 10, RAYWHITE);
+                String codePreview = RecordFieldInfo.buildRecordDetails(selectedBucketName + "Record", fields);
+                String[] cLines = codePreview.split("\n");
+                for (int ci = 0; ci < Math.min(3, cLines.length); ci++) {
+                    drawLegibleText(cLines[ci], cx + 24, infoY + 82 + (ci * 16), 10, LIME);
+                }
+            }
+        }
+    }
+
+    // 2. Vista Adaptada: DOCUMENT (JSON Formateado y Resaltado)
+    private void drawDocumentJsonView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("📄 DOCUMENTO JSON OFF-HEAP ESTRUCTURADO (JSON Engine / UTF-8 Direct Memory):", cx, cy, 11, LIME);
+
+        Rectangle jsonBox = new Rectangle().x(cx).y(cy + 22).width(cw).height(ch - 30);
+        drawRectangleRounded(jsonBox, 0.1f, 4, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)255));
+        drawRectangleRoundedLines(jsonBox, 0.1f, 4, LIME);
+
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(18, lines.length); i++) {
+            String line = lines[i];
+            Color lineCol = RAYWHITE;
+            if (line.contains(":") && line.contains("\"")) {
+                lineCol = SKYBLUE;
+            } else if (line.contains("true") || line.contains("false")) {
+                lineCol = MAGENTA;
+            } else if (line.matches(".*\\d+.*")) {
+                lineCol = LIME;
+            }
+            drawLegibleText(String.format("%2d | %s", i + 1, line), cx + 14, cy + 34 + (i * 18), 11, lineCol);
+        }
+    }
+
+    // 3. Vista Adaptada: GRAPH (Topología Vértices y Aristas)
+    private void drawGraphView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("🕸️ TOPOLOGÍA DE GRAFO (ARISTAS, VÉRTICES Y PESOS):", cx, cy, 11, SKYBLUE);
+
+        int cardY = cy + 24;
+        Rectangle gBox = new Rectangle().x(cx).y(cardY).width(cw).height(120);
+        drawRectangleRounded(gBox, 0.15f, 4, new Color().r((byte)16).g((byte)22).b((byte)38).a((byte)255));
+        drawRectangleRoundedLines(gBox, 0.15f, 4, SKYBLUE);
+
+        // Diagrama visual: [ Vértice Origen ] ──( Relación )──> [ Vértice Destino ]
+        drawRectangleRounded(new Rectangle().x(cx + 20).y(cardY + 35).width(190).height(48), 0.2f, 4, fade(BLUE, 0.6f));
+        drawLegibleText("⚪ VÉRTICE ORIGEN", cx + 30, cardY + 42, 10, GOLD);
+        drawLegibleText("VERTEX_SRC_CLI", cx + 30, cardY + 60, 11, RAYWHITE);
+
+        drawLine(cx + 215, cardY + 59, cx + 465, cardY + 59, GOLD);
+        drawLegibleText("──[ EMITE_PAGO (Peso: 1.0) ]──►", cx + 225, cardY + 44, 11, YELLOW);
+
+        drawRectangleRounded(new Rectangle().x(cx + 470).y(cardY + 35).width(190).height(48), 0.2f, 4, fade(GREEN, 0.6f));
+        drawLegibleText("🟢 VÉRTICE DESTINO", cx + 480, cardY + 42, 10, GOLD);
+        drawLegibleText("VERTEX_TGT_FAC", cx + 480, cardY + 60, 11, RAYWHITE);
+
+        // Propiedades de la Arista
+        int detY = cardY + 130;
+        drawLegibleText("PROPIEDADES Y METADATOS DE LA ARISTA DE GRAFO:", cx, detY, 11, GOLD);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(8, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, detY + 20 + (i * 18), 10, SKYBLUE);
+        }
+    }
+
+    // 4. Vista Adaptada: VECTOR (Embeddings Cosine 3D/HD)
+    private void drawVectorView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("🧠 EMBEDDING VECTORIAL (Indexación Cosine 3D/HD HNSW):", cx, cy, 11, new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255));
+
+        int vBoxY = cy + 24;
+        Rectangle vBox = new Rectangle().x(cx).y(vBoxY).width(cw).height(100);
+        drawRectangleRounded(vBox, 0.15f, 4, new Color().r((byte)16).g((byte)26).b((byte)38).a((byte)255));
+        drawRectangleRoundedLines(vBox, 0.15f, 4, new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255));
+
+        drawLegibleText("DIMENSIONES: 3D / 768D | MÉTRICA DE DISTANCIA: COSINE SIMILARITY | ÍNDICE: HNSW", cx + 16, vBoxY + 14, 11, GOLD);
+        drawLegibleText("COORDENADAS: [ 0.2500, -0.7500, 0.4500 ] | CLUSTER ASIGNADO: Grupo_2", cx + 16, vBoxY + 36, 11, RAYWHITE);
+
+        // Barra de Similitud Visual
+        drawLegibleText("Similitud / Confianza: 98.5%", cx + 16, vBoxY + 60, 10, LIME);
+        Rectangle barBg = new Rectangle().x(cx + 180).y(vBoxY + 60).width(300).height(16);
+        drawRectangleRounded(barBg, 0.2f, 3, fade(DARKGRAY, 0.5f));
+        drawRectangleRounded(new Rectangle().x(cx + 180).y(vBoxY + 60).width(280).height(16), 0.2f, 3, LIME);
+
+        int detY = vBoxY + 112;
+        drawLegibleText("PAYLOAD RAW DEL EMBEDDING:", cx, detY, 11, GOLD);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(8, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, detY + 20 + (i * 18), 10, new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255));
+        }
+    }
+
+    // 5. Vista Adaptada: KEYVALUE
+    private void drawKeyValueView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("🔑 ENTRADA CLAVE-VALOR (Memoria Nativa Panama Direct Memory):", cx, cy, 11, MAGENTA);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(12, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, cy + 28 + (i * 20), 11, MAGENTA);
+        }
+    }
+
+    // 6. Vista Adaptada: TIMESERIES
+    private void drawTimeSeriesView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("⏱️ MUESTRA DE SERIE TEMPORAL (Resolución en Nanosegundos):", cx, cy, 11, ORANGE);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(12, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, cy + 28 + (i * 20), 11, ORANGE);
+        }
+    }
+
+    // 7. Vista Adaptada: GEOSPATIAL
+    private void drawGeospatialView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("🌍 COORDENADAS GEOESPACIALES (Índice Espacial R-Tree):", cx, cy, 11, GREEN);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(12, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, cy + 28 + (i * 20), 11, GREEN);
+        }
+    }
+
+    // 8. Vista Adaptada: COLUMNAR
+    private void drawColumnarView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("📊 CHUNK COLUMNAR COMPRIMIDO (ZSTD / SIMD Aggregations):", cx, cy, 11, YELLOW);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(12, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, cy + 28 + (i * 20), 11, YELLOW);
+        }
+    }
+
+    // 9. Vista Genérica
+    private void drawGenericView(int cx, int cy, int cw, int ch) {
+        drawLegibleText("📦 REGISTRO MULTIMODELO:", cx, cy, 11, RAYWHITE);
+        String[] lines = selectedExplorerRecord.getDetails().split("\n");
+        for (int i = 0; i < Math.min(12, lines.length); i++) {
+            drawLegibleText(lines[i], cx + 12, cy + 28 + (i * 18), 10, RAYWHITE);
+        }
+    }
+
     // SUB-MODAL 3: Administración de Índices (Crear, Editar, Eliminar)
     // =========================================================================
     private void openCreateIndexModal() {

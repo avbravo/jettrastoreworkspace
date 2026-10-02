@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * Representa un contenedor o bucket dentro de un engine multimodelo de JettraStore.
- * Gestiona registros paginados, auditoría de versiones e índices de acceso rápido.
+ * Gestiona registros paginados, auditoria de versiones e indices de acceso rapido.
  */
 public class EngineBucket {
     private final String engineType;
@@ -31,9 +31,13 @@ public class EngineBucket {
     }
 
     public synchronized boolean updateRecord(String id, String summary, String details, String note) {
+        return updateRecord(id, summary, details, note, null);
+    }
+
+    public synchronized boolean updateRecord(String id, String summary, String details, String note, List<RecordFieldInfo> fields) {
         EngineRecord rec = findRecordById(id);
         if (rec != null) {
-            rec.update(summary, details, note);
+            rec.update(summary, details, note, fields);
             return true;
         }
         return false;
@@ -62,7 +66,7 @@ public class EngineBucket {
         return null;
     }
 
-    // --- ADMINISTRACIÓN DE ÍNDICES ---
+    // --- ADMINISTRACION DE INDICES ---
     public synchronized List<EngineIndexInfo> getIndexes() {
         return Collections.unmodifiableList(new ArrayList<>(indexes));
     }

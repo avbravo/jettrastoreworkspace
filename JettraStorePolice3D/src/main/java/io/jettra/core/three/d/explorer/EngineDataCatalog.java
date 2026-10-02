@@ -104,10 +104,10 @@ public class EngineDataCatalog {
         bRecord.addIndex(new EngineIndexInfo("idx_record_sku", "JAVA_RECORD", "factura_records", "itemSku", "BTREE", false, 500_000L));
         for (int i = 1; i <= 15; i++) {
             String id = String.format("REC-STRUCT-%04d", i);
-            String sum = String.format("record FacturaItemRecord(folio=%d, itemSku='SKU-%d', precio=%.2f)", 1000 + i, i * 3, i * 15.75f);
-            String det = String.format("public record FacturaItemRecord(\n  long folio,\n  String itemSku,\n  double precio,\n  double tasaImpuesto,\n  long offHeapMemoryPointer\n) {\n  // Instancia Java 21 Panama FFM:\n  // folio = %d, itemSku = \"SKU-%d\", precio = %.2f, tasaImpuesto = 0.16, offset = 0x%08X\n}",
-                1000 + i, i * 3, i * 15.75f, i * 64);
-            bRecord.addRecord(new EngineRecord(id, "JAVA_RECORD", "factura_records", sum, det, now));
+            List<RecordFieldInfo> fields = RecordFieldInfo.createDefaultFacturaFields(i);
+            String sum = String.format("record FacturaItemRecord(folio=%d, itemSku='SKU-%d', precio=%.2f)", 1000 + i, i * 3, (i * 15.75f) % 500 + 10.0);
+            String det = RecordFieldInfo.buildRecordDetails("FacturaItemRecord", fields);
+            bRecord.addRecord(new EngineRecord(id, "JAVA_RECORD", "factura_records", sum, det, now, fields));
         }
         list.add(bRecord);
 
@@ -239,9 +239,9 @@ public class EngineDataCatalog {
         String[] schNames = {"FacturaSchemaV2", "PacienteClinicalSchema", "SensorAmbientalSchema", "RaftLogEntryRecord", "PoliceAuditRecord"};
         for (int i = 0; i < schNames.length; i++) {
             String sum = String.format("Esquema Registrado: '%s' | Versión 2.5 | Estado: ACTIVO", schNames[i]);
-            String det = String.format("public record %sRecord(\n  String schemaName,\n  double version,\n  int multimodelBuckets,\n  int raftTerm\n) {\n  // Definición In-Memory: schemaName=\"%s\", version=2.5, buckets=8, raftTerm=12\n}",
-                schNames[i], schNames[i]);
-            bSchemas.addRecord(new EngineRecord("SCH-" + (i + 1), "JAVA_RECORD", "schemas", sum, det, now));
+            List<RecordFieldInfo> sFields = RecordFieldInfo.createDefaultSchemaFields(schNames[i]);
+            String det = RecordFieldInfo.buildRecordDetails(schNames[i] + "Record", sFields);
+            bSchemas.addRecord(new EngineRecord("SCH-" + (i + 1), "JAVA_RECORD", "schemas", sum, det, now, sFields));
         }
         list.add(bSchemas);
 
@@ -322,9 +322,13 @@ public class EngineDataCatalog {
     }
 
     public synchronized boolean updateRecord(String dbId, String engineType, String bucketName, String id, String summary, String details, String note) {
+        return updateRecord(dbId, engineType, bucketName, id, summary, details, note, null);
+    }
+
+    public synchronized boolean updateRecord(String dbId, String engineType, String bucketName, String id, String summary, String details, String note, List<RecordFieldInfo> fields) {
         EngineBucket b = getBucket(dbId, engineType, bucketName);
         if (b != null) {
-            return b.updateRecord(id, summary, details, note);
+            return b.updateRecord(id, summary, details, note, fields);
         }
         return false;
     }
@@ -413,13 +417,37 @@ public class EngineDataCatalog {
                 continue;
             }
 
-            float tot = (float) ((currentRecordNum * 124.50) % 50000 + 150.0);
-            String sum = String.format("Factura Fiscal #%d | Total: $%,.2f | Items: %d", currentRecordNum, tot, ((int)(currentRecordNum % 8) + 1));
-            String det = String.format("{\n  \"id\": \"%s\",\n  \"emisor\": \"Corp Global SA\",\n  \"receptor\": \"Cliente_%d\",\n  \"subtotal\": %.2f,\n  \"iva\": %.2f,\n  \"total\": %.2f,\n  \"metodoPago\": \"%s\",\n  \"estado\": \"TIMBRADO_VALIDADO\"\n}",
-                recId, (currentRecordNum % 1000 + 1), (tot / 1.16f), (tot - (tot / 1.16f)), tot,
-                (currentRecordNum % 2 == 0 ? "TRANSFERENCIA_SPEI" : "TARJETA_EMPRESARIAL"));
-            EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now);
-            page.add(dynamicRec);
+            if ("JAVA_RECORD".equals(engineType)) {
+                List<RecordFieldInfo> fields = RecordFieldInfo.createDefaultFacturaFields(currentRecordNum);
+                String sum = String.format("record FacturaItemRecord(folio=%d, itemSku='SKU-%d', precio=%.2f)", 1000 + currentRecordNum, currentRecordNum * 3, ((currentRecordNum * 15.75) % 500 + 10.0));
+                String det = RecordFieldInfo.buildRecordDetails("FacturaItemRecord", fields);
+                EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now, fields);
+                page.add(dynamicRec);
+            } else if ("GRAPH".equals(engineType)) {
+                float w = (float)((currentRecordNum * 450.0) % 15000 + 50.0);
+                String sum = String.format("(Cliente_%d) ──[EMITE_PAGO $%,.2f]──> (Factura_%d)", currentRecordNum, w, currentRecordNum);
+                String det = String.format("GraphEdge: {\n  \"sourceVertex\": \"VERTEX_CLI_%d\",\n  \"targetVertex\": \"VERTEX_FAC_%d\",\n  \"relationship\": \"EMITE_PAGO\",\n  \"weight\": %.2f,\n  \"directSettlement\": true\n}", currentRecordNum, currentRecordNum, w);
+                EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now);
+                page.add(dynamicRec);
+            } else if ("VECTOR".equals(engineType)) {
+                float vx = (float)Math.sin(currentRecordNum * 0.45);
+                float vy = (float)Math.cos(currentRecordNum * 0.45);
+                float vz = (float)(Math.sin(currentRecordNum * 0.8) * 0.5);
+                float score = (float)Math.max(0.70, 0.985f - ((currentRecordNum % 100) * 0.002f));
+                String sum = String.format("Vector 3D [%.3f, %.3f, %.3f] | Cosine: %.4f | Cluster: Grupo_%d", vx, vy, vz, score, (currentRecordNum % 8));
+                String det = String.format("VectorEmbedding {\n  \"id\": \"%s\",\n  \"dimensions\": 3,\n  \"coordinates\": [%.4f, %.4f, %.4f],\n  \"metric\": \"COSINE\",\n  \"confidenceScore\": %.3f,\n  \"anomalyDetected\": %b\n}",
+                    recId, vx, vy, vz, score, (currentRecordNum % 50 == 0));
+                EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now);
+                page.add(dynamicRec);
+            } else {
+                float tot = (float) ((currentRecordNum * 124.50) % 50000 + 150.0);
+                String sum = String.format("Factura Fiscal #%d | Total: $%,.2f | Items: %d", currentRecordNum, tot, ((int)(currentRecordNum % 8) + 1));
+                String det = String.format("{\n  \"id\": \"%s\",\n  \"emisor\": \"Corp Global SA\",\n  \"receptor\": \"Cliente_%d\",\n  \"subtotal\": %.2f,\n  \"iva\": %.2f,\n  \"total\": %.2f,\n  \"metodoPago\": \"%s\",\n  \"estado\": \"TIMBRADO_VALIDADO\"\n}",
+                    recId, (currentRecordNum % 1000 + 1), (tot / 1.16f), (tot - (tot / 1.16f)), tot,
+                    (currentRecordNum % 2 == 0 ? "TRANSFERENCIA_SPEI" : "TARJETA_EMPRESARIAL"));
+                EngineRecord dynamicRec = new EngineRecord(recId, engineType, bucketName, sum, det, now);
+                page.add(dynamicRec);
+            }
         }
         return page;
     }
