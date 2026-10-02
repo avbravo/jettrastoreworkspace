@@ -113,10 +113,11 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
             ClusterConfigLoader.ConfiguredNode cn = cfgNodes.get(i);
             float[] c = (i < coords.length) ? coords[i] : new float[]{(i * 12.0f) - 12.0f, 0.0f, -15.0f};
             ClusterNode.Role role = "PRIMARY".equalsIgnoreCase(cn.role()) ? ClusterNode.Role.PRIMARY : ClusterNode.Role.SECONDARY;
-            String host = cn.host();
-            int port = cn.restPort();
+            String host = (i == 0 && currentProfile != null) ? currentProfile.getHost() : cn.host();
+            int port = (i == 0 && currentProfile != null) ? currentProfile.getPort() : cn.restPort();
 
-            ServerNode3D node = new ServerNode3D(cn.id(), cn.id() + "-" + cn.role().toLowerCase(), host, port, role, c[0], c[1], c[2]);
+            String suffix = "PRIMARY".equalsIgnoreCase(cn.role()) ? "master" : cn.role().toLowerCase();
+            ServerNode3D node = new ServerNode3D(cn.id(), cn.id() + "-" + suffix, host, port, role, c[0], c[1], c[2]);
             if (cn.isLeader()) {
                 node.setRaftState(ClusterNode.RaftState.LEADER);
             } else {
@@ -238,13 +239,13 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         // Los canales de datos inician en reposo; solo transmiten cuando hay tráfico real entre nodos
         ClusterDataTraffic tRaft = new ClusterDataTraffic(
             "traffic_raft_01_02", "Tráfico-Replicación-Raft", ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
-            "node-01", "node-02", "Replicación de Logs Raft (Consenso Quórum)", 4_500_000L, 8.5f
+            "node-01", "node-02", "Batch 4,500,000 objetos | RAFT_REPLICATION", 4_500_000L, 8.5f
         );
         activeTraffic.add(tRaft);
 
         ClusterDataTraffic tOffload = new ClusterDataTraffic(
             "traffic_facturas", "Tráfico-Facturación-Cluster", ClusterDataTraffic.TrafficType.RING_OFFLOAD,
-            "node-01", "node-02", "Offload Anillo Dinámico: 25,000 Facturas", 2_800_000L, 4.2f
+            "node-01", "node-02", "Batch 2,800,000 objetos | RING_OFFLOAD", 2_800_000L, 4.2f
         );
         activeTraffic.add(tOffload);
     }
@@ -512,11 +513,15 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
         }
 
         // C. CAMIONES: Solo transmiten cuando hay intercambio activo entre nodos en línea
+        long batchSize = (processedObjectsPerSecond * 2);
+        for (ClusterDataTraffic tr : activeTraffic) {
+            tr.updateBatch(batchSize, 8.5f, "Batch " + String.format("%,d", batchSize) + " objetos | " + tr.getTrafficType());
+        }
         if (processedObjectsPerSecond > 0 && totalEvaluations % 4 == 0) {
             ServerNode3D leader = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.PRIMARY && n.isOnline()).findFirst().orElse(null);
             ServerNode3D follower = serverNodes.stream().filter(n -> n.getRole() == ClusterNode.Role.SECONDARY && n.isOnline()).findFirst().orElse(null);
             if (leader != null && follower != null && !isTransferActiveBetween(leader.getId(), follower.getId())) {
-                long batchSize = (processedObjectsPerSecond * 2);
+                batchSize = (processedObjectsPerSecond * 2);
                 triggerNodeTransfer(leader.getId(), follower.getId(), ClusterDataTraffic.TrafficType.RAFT_REPLICATION,
                     "Replicación Raft: " + String.format("%,d", batchSize) + " ops", batchSize, 8.5f);
             }
@@ -639,6 +644,10 @@ public class JettraStorePoliceMonitor implements AutoCloseable {
     public List<JettraLiveSession> getLiveSessions() { return liveSessions; }
     public List<JettraPoliceAgent> getActivePoliceAgents() { return activePoliceAgents; }
     public synchronized List<ClusterDataTraffic> getActiveTraffic() {
+        return Collections.unmodifiableList(new ArrayList<>(activeTraffic));
+    }
+
+    public synchronized List<ClusterDataTraffic> getTransmittingTraffic() {
         List<ClusterDataTraffic> transmittingOnly = new ArrayList<>();
         for (ClusterDataTraffic t : activeTraffic) {
             if (t.isTransmitting()) {

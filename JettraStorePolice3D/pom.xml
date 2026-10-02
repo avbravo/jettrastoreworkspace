@@ -83,7 +83,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.4</version>
                 <configuration>
-                    <argLine>--enable-preview --enable-native-access=ALL-UNNAMED</argLine>
+                    <argLine>--enable-preview --enable-native-access=ALL-UNNAMED -XX:+UnlockExperimentalVMOptions -XX:+UseCompactObjectHeaders</argLine>
                 </configuration>
             </plugin>
 
@@ -97,6 +97,8 @@
                     <arguments>
                         <argument>--enable-preview</argument>
                         <argument>--enable-native-access=ALL-UNNAMED</argument>
+                        <argument>-XX:+UnlockExperimentalVMOptions</argument>
+                        <argument>-XX:+UseCompactObjectHeaders</argument>
                         <argument>-classpath</argument>
                         <classpath/>
                         <argument>io.jettra.core.three.d.Jettra3DApp</argument>
