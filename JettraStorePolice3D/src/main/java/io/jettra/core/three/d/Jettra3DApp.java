@@ -1,6 +1,8 @@
 package io.jettra.core.three.d;
 
-import java.util.List;
+import java.util.*;
+import io.jettra.core.three.d.explorer.EngineIndexInfo;
+import io.jettra.core.three.d.explorer.RecordVersion;
 
 import static com.raylib.Raylib.*;
 import com.raylib.Color;
@@ -93,6 +95,8 @@ public class Jettra3DApp {
 
     // --- EXPLORADOR DE OBJETOS POR ENGINE (ENGINE EXPLORER PANEL) ---
     private boolean showEngineExplorerModal = false;
+    private boolean explorerMaximized = false;
+    private int explorerActiveTab = 0; // 0: REGISTROS Y OBJETOS, 1: ADMINISTRACIÓN DE ÍNDICES
     private String selectedExplorerDb = "example_factura_db";
     private String selectedEngineType = "DOCUMENT";
     private String selectedBucketName = "facturas";
@@ -100,6 +104,48 @@ public class Jettra3DApp {
     private int explorerPageSize = 5;
     private Set<String> expandedEngines = new HashSet<>(Set.of("DOCUMENT", "GRAPH", "VECTOR"));
     private EngineRecord selectedExplorerRecord = null;
+
+    // Filtro y Buscador JettraQL / JettraSQL
+    private String explorerFilterText = "";
+    private String explorerSearchQuery = "";
+    private boolean explorerQueryIsSql = false; // false: JettraQL, true: JettraSQL
+    private boolean explorerHasActiveQuery = false;
+    private List<EngineRecord> explorerFilteredRecords = new ArrayList<>();
+    private String explorerQueryFeedback = "";
+    private float explorerQueryFeedbackTimer = 0f;
+    private boolean showExplorerQueryHelp = false;
+    private int explorerActiveInputFocus = 0; // 0: ninguno, 1: filtro rápido, 2: buscador JQL/SQL
+
+    // Operaciones CRUD de Registros (Agregar, Editar, Eliminar)
+    private boolean showRecordOperationModal = false;
+    private String recordOpMode = ""; // "ADD", "EDIT", "DELETE_CONFIRM"
+    private String formRecordId = "";
+    private String formRecordSummary = "";
+    private String formRecordDetails = "";
+    private int formRecordActiveField = 1; // 1: ID, 2: Summary, 3: Details
+    private String recordOpFeedback = "";
+    private float recordOpFeedbackTimer = 0f;
+
+    // Restauración de Versiones de Registro
+    private boolean showVersionHistoryModal = false;
+    private int selectedVersionNumber = -1;
+    private String versionHistoryFeedback = "";
+    private float versionHistoryFeedbackTimer = 0f;
+
+    // Administración de Índices
+    private boolean showIndexOpModal = false;
+    private String indexOpMode = ""; // "CREATE", "EDIT", "DROP_CONFIRM"
+    private String formIndexName = "";
+    private String formIndexField = "";
+    private String formIndexType = "BTREE";
+    private boolean formIndexUnique = false;
+    private int formIndexActiveField = 1; // 1: Name, 2: Field
+    private EngineIndexInfo selectedIndexInfo = null;
+    private String indexOpFeedback = "";
+    private float indexOpFeedbackTimer = 0f;
+
+    // Timer de sincronización dinámica de entidades con telemetría del servidor en tiempo real
+    private float entitySyncTimer = 0f;
     private String formConnId = "";
     private String formConnName = "JettraStore Local Master";
     private String formConnUrl = "tcp://127.0.0.1:8765";
@@ -266,6 +312,107 @@ public class Jettra3DApp {
             } else {
                 showChat = !showChat;
             }
+        }
+
+        if (showEngineExplorerModal) {
+            if (showExplorerQueryHelp) {
+                if (isKeyPressed(KEY_ESCAPE)) showExplorerQueryHelp = false;
+                return;
+            }
+            if (showVersionHistoryModal) {
+                if (isKeyPressed(KEY_ESCAPE)) showVersionHistoryModal = false;
+                return;
+            }
+            if (showRecordOperationModal) {
+                if (isKeyPressed(KEY_ESCAPE)) {
+                    showRecordOperationModal = false;
+                }
+                if (isKeyPressed(KEY_TAB)) {
+                    formRecordActiveField = (formRecordActiveField >= 3) ? 1 : formRecordActiveField + 1;
+                }
+                int key = getCharPressed();
+                while (key > 0) {
+                    if ((key >= 32) && (key <= 126)) {
+                        char c = (char) key;
+                        switch (formRecordActiveField) {
+                            case 1 -> formRecordId += c;
+                            case 2 -> formRecordSummary += c;
+                            case 3 -> formRecordDetails += c;
+                        }
+                    }
+                    key = getCharPressed();
+                }
+                if (isKeyPressed(KEY_BACKSPACE)) {
+                    switch (formRecordActiveField) {
+                        case 1 -> { if (!formRecordId.isEmpty()) formRecordId = formRecordId.substring(0, formRecordId.length() - 1); }
+                        case 2 -> { if (!formRecordSummary.isEmpty()) formRecordSummary = formRecordSummary.substring(0, formRecordSummary.length() - 1); }
+                        case 3 -> { if (!formRecordDetails.isEmpty()) formRecordDetails = formRecordDetails.substring(0, formRecordDetails.length() - 1); }
+                    }
+                }
+                if (isKeyPressed(KEY_ENTER) && formRecordActiveField == 3) {
+                    formRecordDetails += "\n";
+                }
+                return;
+            }
+            if (showIndexOpModal) {
+                if (isKeyPressed(KEY_ESCAPE)) {
+                    showIndexOpModal = false;
+                }
+                if (isKeyPressed(KEY_TAB)) {
+                    formIndexActiveField = (formIndexActiveField == 1) ? 2 : 1;
+                }
+                int key = getCharPressed();
+                while (key > 0) {
+                    if ((key >= 32) && (key <= 126)) {
+                        char c = (char) key;
+                        switch (formIndexActiveField) {
+                            case 1 -> formIndexName += c;
+                            case 2 -> formIndexField += c;
+                        }
+                    }
+                    key = getCharPressed();
+                }
+                if (isKeyPressed(KEY_BACKSPACE)) {
+                    switch (formIndexActiveField) {
+                        case 1 -> { if (!formIndexName.isEmpty()) formIndexName = formIndexName.substring(0, formIndexName.length() - 1); }
+                        case 2 -> { if (!formIndexField.isEmpty()) formIndexField = formIndexField.substring(0, formIndexField.length() - 1); }
+                    }
+                }
+                return;
+            }
+
+            if (isKeyPressed(KEY_ESCAPE)) {
+                showEngineExplorerModal = false;
+                return;
+            }
+
+            if (explorerActiveInputFocus == 1) { // Quick Filter
+                int key = getCharPressed();
+                while (key > 0) {
+                    if ((key >= 32) && (key <= 126)) {
+                        explorerFilterText += (char) key;
+                    }
+                    key = getCharPressed();
+                }
+                if (isKeyPressed(KEY_BACKSPACE) && !explorerFilterText.isEmpty()) {
+                    explorerFilterText = explorerFilterText.substring(0, explorerFilterText.length() - 1);
+                }
+            } else if (explorerActiveInputFocus == 2) { // Search Query (JQL/SQL)
+                int key = getCharPressed();
+                while (key > 0) {
+                    if ((key >= 32) && (key <= 126)) {
+                        explorerSearchQuery += (char) key;
+                    }
+                    key = getCharPressed();
+                }
+                if (isKeyPressed(KEY_BACKSPACE) && !explorerSearchQuery.isEmpty()) {
+                    explorerSearchQuery = explorerSearchQuery.substring(0, explorerSearchQuery.length() - 1);
+                }
+                if (isKeyPressed(KEY_ENTER)) {
+                    executeExplorerQuery();
+                }
+            }
+            return;
         }
 
         if (showConnectionModal) {
@@ -678,6 +825,12 @@ public class Jettra3DApp {
     }
 
     private void updateEntities(float dt) {
+        entitySyncTimer += dt;
+        if (entitySyncTimer >= 1.0f) {
+            entitySyncTimer = 0f;
+            syncDynamicEntitiesWithPoliceMonitor();
+        }
+
         // Telemetría y cinemática en tiempo real sincronizada con JettraStore
         if (policeMonitor != null) {
             // A. Personas (Usuarios conectados caminando entre sus edificios de zona y los nodos)
@@ -3272,9 +3425,130 @@ public class Jettra3DApp {
     // =========================================================================
     // IMPLEMENTACIÓN: EXPLORADOR MULTIMODELO POR ENGINE (ENGINE EXPLORER)
     // =========================================================================
+    private void syncDynamicEntitiesWithPoliceMonitor() {
+        if (policeMonitor == null) return;
+
+        // 1. Sincronizar Personas (Usuarios conectados en tiempo real procesando objetos)
+        Set<String> activeSessionNames = new HashSet<>();
+        for (JettraLiveSession session : policeMonitor.getLiveSessions()) {
+            activeSessionNames.add(session.getUsername());
+            HumanEntity person = findEntityByName(session.getUsername());
+            if (person == null) {
+                UserZoneGroup zone = policeMonitor.getZoneById(session.getZoneId());
+                ServerNode3D node = policeMonitor.getNodeById(session.getTargetNodeId());
+                HumanEntity u = new HumanEntity();
+                u.name = session.getUsername();
+                u.connectedDatabase = session.getDatabase();
+                u.connectionFacility = (zone != null) ? zone.getBuildingName() : "Sede Central";
+                u.targetServer = session.getTargetNodeId();
+                u.job = "Usuario Conectado (" + session.getClientIp() + ")";
+                u.action = "WALKING";
+                if (zone != null) {
+                    u.r = zone.getColorR(); u.g = zone.getColorG(); u.b = zone.getColorB();
+                    u.x = zone.getBuildingX() + (float)(Math.random() * 2 - 1);
+                    u.y = 0;
+                    u.z = zone.getBuildingZ() + (float)(Math.random() * 2 - 1);
+                }
+                if (node != null) {
+                    u.targetX = node.getX();
+                    u.targetZ = node.getZ();
+                }
+                u.currentThought = session.getCurrentOperation();
+                u.thoughtTimer = 5.0f;
+                entities.add(u);
+            }
+        }
+        entities.removeIf(e -> !e.isWolf && !e.isCar && !e.isPoliceOfficer && e.job != null && e.job.startsWith("Usuario Conectado") && !activeSessionNames.contains(e.name));
+
+        // 2. Sincronizar Perros (Agentes Caninos JettraPolice reactivos)
+        Set<String> activeAgentNames = new HashSet<>();
+        for (JettraPoliceAgent agent : policeMonitor.getActivePoliceAgents()) {
+            activeAgentNames.add(agent.getName());
+            HumanEntity dog = findEntityByName(agent.getName());
+            if (dog == null) {
+                HumanEntity k9 = new HumanEntity();
+                k9.name = agent.getName();
+                k9.isWolf = true;
+                k9.isPoliceK9 = true;
+                if (agent.getName().contains("Alpha")) k9.isJettraMascot = true;
+                k9.action = "PATROLLING";
+                ServerNode3D node = policeMonitor.getNodeById(agent.getTargetNodeId());
+                float nx = (node != null) ? node.getX() : 0f;
+                float nz = (node != null) ? node.getZ() : -8f;
+                k9.x = nx + 3.0f; k9.y = 0; k9.z = nz;
+                k9.targetX = nx; k9.targetZ = nz;
+                k9.r = 30; k9.g = 144; k9.b = 255;
+                k9.currentThought = agent.getCurrentMission();
+                k9.thoughtTimer = 6.0f;
+                entities.add(k9);
+            }
+        }
+        entities.removeIf(e -> e.isPoliceK9 && !activeAgentNames.contains(e.name));
+
+        // 3. Sincronizar Camiones (Tráfico y lotes de datos entre nodos del clúster)
+        Set<String> activeTrafficNames = new HashSet<>();
+        for (ClusterDataTraffic traffic : policeMonitor.getActiveTraffic()) {
+            activeTrafficNames.add(traffic.getName());
+            HumanEntity truck = findEntityByName(traffic.getName());
+            if (truck == null) {
+                HumanEntity tr = new HumanEntity();
+                tr.name = traffic.getName();
+                tr.isCar = true;
+                tr.action = "DRIVING";
+                ServerNode3D src = policeMonitor.getNodeById(traffic.getSourceNodeId());
+                ServerNode3D tgt = policeMonitor.getNodeById(traffic.getTargetNodeId());
+                float sx = (src != null) ? src.getX() : 0f;
+                float sz = (src != null) ? src.getZ() : -8f;
+                float tx = (tgt != null) ? tgt.getX() : 14f;
+                float tz = (tgt != null) ? tgt.getZ() : -8f;
+                tr.x = sx; tr.y = 0; tr.z = sz;
+                tr.targetX = tx; tr.targetZ = tz;
+                tr.dataPayload = traffic.getPayloadSummary();
+                tr.connectedDatabase = traffic.getSourceNodeId() + " -> " + traffic.getTargetNodeId();
+                tr.r = 255; tr.g = 180; tr.b = 40;
+                tr.currentThought = "🚚 " + traffic.getPayloadSummary();
+                tr.thoughtTimer = 5.0f;
+                entities.add(tr);
+            }
+        }
+        entities.removeIf(e -> e.isCar && !activeTrafficNames.contains(e.name));
+    }
+
+
+    private void drawSimpleInputField(int x, int y, int w, int h, String value, boolean isActive, boolean isPassword) {
+        Rectangle rec = new Rectangle().x(x).y(y).width(w).height(h);
+        Vector2 mouse = getMousePosition();
+        boolean hovered = checkCollisionPointRec(mouse, rec);
+
+        Color bg = isActive ? new Color().r((byte)30).g((byte)45).b((byte)75).a((byte)255)
+                            : (hovered ? new Color().r((byte)22).g((byte)28).b((byte)48).a((byte)255)
+                                       : new Color().r((byte)15).g((byte)20).b((byte)35).a((byte)255));
+
+        drawRectangleRounded(rec, 0.15f, 4, bg);
+        drawRectangleRoundedLines(rec, 0.15f, 4, isActive ? GOLD : (hovered ? SKYBLUE : DARKGRAY));
+
+        String display = (value != null) ? value : "";
+        if (isActive && ((int)(worldTime * 2) % 2 == 0)) {
+            display += "_";
+        }
+        drawLegibleText(display, x + 6, y + 6, 11, RAYWHITE);
+    }
+
     private void openEngineExplorerModal(String dbId) {
-        selectedExplorerDb = (dbId != null && !dbId.isEmpty()) ? dbId : "example_factura_db";
+        // En el panel Explorador multimodelo solo debe mostrar la base de datos seleccionada
+        selectedExplorerDb = (dbId != null && !dbId.isBlank()) ? dbId : "example_factura_db";
         selectedEngineType = "DOCUMENT";
+        explorerActiveTab = 0;
+        explorerFilterText = "";
+        explorerSearchQuery = "";
+        explorerHasActiveQuery = false;
+        explorerFilteredRecords.clear();
+        explorerActiveInputFocus = 0;
+        showRecordOperationModal = false;
+        showVersionHistoryModal = false;
+        showIndexOpModal = false;
+        showExplorerQueryHelp = false;
+
         List<EngineBucket> buckets = EngineDataCatalog.getInstance().getBucketsForDatabase(selectedExplorerDb);
         if (!buckets.isEmpty()) {
             selectedBucketName = buckets.get(0).getBucketName();
@@ -3286,25 +3560,67 @@ public class Jettra3DApp {
         showEngineExplorerModal = true;
     }
 
+    private void executeExplorerQuery() {
+        if (explorerSearchQuery == null || explorerSearchQuery.trim().isEmpty()) {
+            explorerHasActiveQuery = false;
+            explorerFilteredRecords.clear();
+            explorerQueryFeedback = "Filtro limpiado. Mostrando todos los registros del bucket.";
+            explorerQueryFeedbackTimer = 3.0f;
+            return;
+        }
+
+        EngineDataCatalog.QueryResult res = EngineDataCatalog.getInstance().executeQuery(
+            selectedExplorerDb, selectedEngineType, selectedBucketName, explorerSearchQuery, explorerQueryIsSql
+        );
+        explorerFilteredRecords = new ArrayList<>(res.records());
+        explorerHasActiveQuery = true;
+        explorerPageIndex = 0;
+        if (!explorerFilteredRecords.isEmpty()) {
+            selectedExplorerRecord = explorerFilteredRecords.get(0);
+        }
+        explorerQueryFeedback = res.summaryMessage();
+        explorerQueryFeedbackTimer = 5.0f;
+    }
+
     private void drawEngineExplorerModal() {
         int sw = getScreenWidth();
         int sh = getScreenHeight();
 
-        // Fondo oscurecido
-        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.75f));
+        // Fondo oscuro semitransparente
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.78f));
 
-        int mw = 940;
-        int mh = 580;
+        // Dimensiones con soporte de Zoom (Maximizar / Restaurar)
+        int mw = explorerMaximized ? (sw - 30) : 1060;
+        int mh = explorerMaximized ? (sh - 30) : 640;
         int mx = (sw - mw) / 2;
         int my = (sh - mh) / 2;
+        explorerPageSize = explorerMaximized ? 8 : 5;
 
+        // Marco del panel
         drawRectangle(mx, my, mw, mh, new Color().r((byte)16).g((byte)20).b((byte)32).a((byte)252));
         drawRectangleLines(mx, my, mw, mh, GOLD);
 
-        // Barra de Título
+        // Barra de Título (Header)
         drawRectangle(mx, my, mw, 45, new Color().r((byte)24).g((byte)30).b((byte)48).a((byte)255));
         drawLine(mx, my + 45, mx + mw, my + 45, GOLD);
-        drawLegibleText("🌳 EXPLORADOR MULTIMODELO DE OBJETOS POR ENGINE: [" + selectedExplorerDb.toUpperCase() + "]", mx + 20, my + 14, 16, GOLD);
+
+        drawLegibleText("🌳 EXPLORADOR MULTIMODELO DE OBJETOS POR ENGINE", mx + 16, my + 10, 14, GOLD);
+        // Exclusivamente la base de datos seleccionada
+        drawLegibleText("🗄️ BASE DE DATOS ACTIVA: [" + selectedExplorerDb.toUpperCase() + "]", mx + 16, my + 28, 10, SKYBLUE);
+
+        // Ruta jerárquica: <nombre-base-datos><engine><bucket-contenedor><registro>
+        String currentRecId = (selectedExplorerRecord != null) ? selectedExplorerRecord.getId() : "registro";
+        String hierarchyPath = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + currentRecId + ">";
+        drawLegibleText("📍 ESQUEMA: " + hierarchyPath, mx + 380, my + 14, 11, LIME);
+
+        // Botón Zoom (Maximizar / Minimizar)
+        Rectangle zoomBtnRec = new Rectangle().x(mx + mw - 70).y(my + 10).width(26).height(26);
+        boolean zoomHover = checkCollisionPointRec(getMousePosition(), zoomBtnRec);
+        drawRectangleRounded(zoomBtnRec, 0.2f, 4, zoomHover ? SKYBLUE : DARKGRAY);
+        drawLegibleText(explorerMaximized ? "🗗" : "🗖", (int)zoomBtnRec.x() + 6, (int)zoomBtnRec.y() + 5, 14, RAYWHITE);
+        if (zoomHover && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerMaximized = !explorerMaximized;
+        }
 
         // Botón Cerrar (X)
         Rectangle closeBtnRec = new Rectangle().x(mx + mw - 38).y(my + 10).width(26).height(26);
@@ -3316,44 +3632,51 @@ public class Jettra3DApp {
             return;
         }
 
-        // Pestañas superiores para cambiar de base de datos
-        int tabY = my + 52;
-        List<String> knownDbs = List.of("example_factura_db", "samples_hostipal_db", "samples_ambiental_db", "system_metadata_db");
-        int tabW = 215;
-        for (int ti = 0; ti < knownDbs.size(); ti++) {
-            String db = knownDbs.get(ti);
-            boolean isCurDb = db.equalsIgnoreCase(selectedExplorerDb);
-            Rectangle tabRec = new Rectangle().x(mx + 20 + ti * (tabW + 10)).y(tabY).width(tabW).height(24);
-            boolean tabHov = checkCollisionPointRec(getMousePosition(), tabRec);
-
-            drawRectangleRounded(tabRec, 0.2f, 4, isCurDb ? fade(GOLD, 0.85f) : (tabHov ? fade(SKYBLUE, 0.6f) : fade(DARKGRAY, 0.5f)));
-            drawRectangleRoundedLines(tabRec, 0.2f, 4, isCurDb ? WHITE : fade(WHITE, 0.3f));
-            drawLegibleText("🗄️ " + db, (int)tabRec.x() + 6, (int)tabRec.y() + 5, 10, isCurDb ? BLACK : RAYWHITE);
-
-            if (tabHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                openEngineExplorerModal(db);
-            }
+        // Pestañas Superiores de Vista: [ 📦 REGISTROS Y OBJETOS ] / [ ⚙️ ADMINISTRACIÓN DE ÍNDICES ]
+        int tabY = my + 50;
+        Rectangle tabRecs = new Rectangle().x(mx + 20).y(tabY).width(260).height(26);
+        boolean tabRecsHov = checkCollisionPointRec(getMousePosition(), tabRecs);
+        drawRectangleRounded(tabRecs, 0.2f, 4, (explorerActiveTab == 0) ? fade(GOLD, 0.85f) : (tabRecsHov ? fade(SKYBLUE, 0.5f) : fade(DARKGRAY, 0.4f)));
+        drawRectangleRoundedLines(tabRecs, 0.2f, 4, (explorerActiveTab == 0) ? WHITE : fade(WHITE, 0.3f));
+        drawLegibleText("📦 REGISTROS Y OBJETOS (CRUD)", (int)tabRecs.x() + 14, (int)tabRecs.y() + 6, 11, (explorerActiveTab == 0) ? BLACK : RAYWHITE);
+        if (tabRecsHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerActiveTab = 0;
         }
 
-        // Divisor vertical
-        int col1W = 320;
-        int col2X = mx + col1W + 20;
-        int col2W = mw - col1W - 40;
-        drawLine(mx + col1W + 10, my + 82, mx + col1W + 10, my + mh - 20, fade(GRAY, 0.4f));
+        Rectangle tabIdx = new Rectangle().x(mx + 290).y(tabY).width(280).height(26);
+        boolean tabIdxHov = checkCollisionPointRec(getMousePosition(), tabIdx);
+        drawRectangleRounded(tabIdx, 0.2f, 4, (explorerActiveTab == 1) ? fade(GOLD, 0.85f) : (tabIdxHov ? fade(SKYBLUE, 0.5f) : fade(DARKGRAY, 0.4f)));
+        drawRectangleRoundedLines(tabIdx, 0.2f, 4, (explorerActiveTab == 1) ? WHITE : fade(WHITE, 0.3f));
+        drawLegibleText("⚙️ ADMINISTRACIÓN DE ÍNDICES", (int)tabIdx.x() + 14, (int)tabIdx.y() + 6, 11, (explorerActiveTab == 1) ? BLACK : RAYWHITE);
+        if (tabIdxHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerActiveTab = 1;
+        }
 
-        // --- COLUMNA IZQUIERDA: ÁRBOL DE ENGINES (DOCUMENT, GRAPH, VECTOR, JAVA RECORD, ETC.) ---
-        drawLegibleText("MOTORES SOPORTADOS (ENGINES)", mx + 20, my + 85, 12, SKYBLUE);
+        // Feedback / Notificación de consulta si está activa
+        if (explorerQueryFeedbackTimer > 0) {
+            explorerQueryFeedbackTimer -= 0.016f;
+            drawLegibleText("ℹ️ " + explorerQueryFeedback, mx + 590, tabY + 7, 10, LIME);
+        }
+
+        // Layout de Columnas
+        int col1W = 270;
+        int col2X = mx + col1W + 18;
+        int col2W = mw - col1W - 36;
+        drawLine(mx + col1W + 8, my + 82, mx + col1W + 8, my + mh - 15, fade(GRAY, 0.4f));
 
         EngineDataCatalog catalog = EngineDataCatalog.getInstance();
+
+        // =====================================================================
+        // COLUMNA IZQUIERDA: Árbol de Motores (Engines) y Buckets
+        // =====================================================================
+        drawLegibleText("MOTORES DE " + selectedExplorerDb.toUpperCase(), mx + 20, my + 84, 11, SKYBLUE);
         List<String> engines = catalog.getSupportedEngines(selectedExplorerDb);
 
-        int treeY = my + 105;
-
+        int treeY = my + 104;
         for (String et : engines) {
             boolean isExpanded = expandedEngines.contains(et);
             List<EngineBucket> bucketsOfEngine = catalog.getBucketsByEngine(selectedExplorerDb, et);
 
-            // Cabecera del Engine (Nodo Padre en Árbol)
             Rectangle engRec = new Rectangle().x(mx + 20).y(treeY).width(col1W - 20).height(22);
             boolean engHov = checkCollisionPointRec(getMousePosition(), engRec);
             drawRectangle(mx + 20, treeY, col1W - 20, 22, fade(BLACK, engHov ? 0.5f : 0.25f));
@@ -3366,58 +3689,188 @@ public class Jettra3DApp {
                 if (isExpanded) expandedEngines.remove(et);
                 else expandedEngines.add(et);
             }
+            treeY += 24;
 
-            treeY += 25;
-
-            // Hojas del Árbol (Buckets pertenecientes a este Engine)
             if (isExpanded) {
                 for (EngineBucket b : bucketsOfEngine) {
                     boolean isBucketSel = (selectedEngineType.equals(et) && selectedBucketName.equals(b.getBucketName()));
-                    Rectangle bRec = new Rectangle().x(mx + 36).y(treeY).width(col1W - 36).height(20);
+                    Rectangle bRec = new Rectangle().x(mx + 34).y(treeY).width(col1W - 34).height(20);
                     boolean bHov = checkCollisionPointRec(getMousePosition(), bRec);
 
-                    drawRectangle(mx + 36, treeY, col1W - 36, 20, isBucketSel ? fade(BLUE, 0.6f) : (bHov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.15f)));
-                    drawLegibleText("  ▸ " + b.getBucketName() + " (" + String.format("%,d", b.getTotalObjects()) + ")", mx + 40, treeY + 3, 10, isBucketSel ? GOLD : SKYBLUE);
+                    drawRectangle(mx + 34, treeY, col1W - 34, 20, isBucketSel ? fade(BLUE, 0.6f) : (bHov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.15f)));
+                    drawLegibleText("  ▸ " + b.getBucketName() + " (" + String.format("%,d", b.getTotalObjects()) + ")", mx + 38, treeY + 3, 10, isBucketSel ? GOLD : SKYBLUE);
 
                     if (bHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                         selectedEngineType = et;
                         selectedBucketName = b.getBucketName();
                         explorerPageIndex = 0;
+                        explorerHasActiveQuery = false;
+                        explorerFilteredRecords.clear();
                         List<EngineRecord> recs = catalog.getPaginatedRecords(selectedExplorerDb, selectedEngineType, selectedBucketName, 0, explorerPageSize);
                         selectedExplorerRecord = recs.isEmpty() ? null : recs.get(0);
                     }
-
-                    treeY += 22;
+                    treeY += 21;
                 }
             }
         }
 
-        // --- COLUMNA DERECHA: REGISTROS PAGINADOS DEL BUCKET SELECCIONADO ---
-        int totalRecs = catalog.getTotalRecordCount(selectedExplorerDb, selectedEngineType, selectedBucketName);
-        int totalPages = Math.max(1, (int) Math.ceil((double) totalRecs / (double) explorerPageSize));
-        List<EngineRecord> pageRecords = catalog.getPaginatedRecords(selectedExplorerDb, selectedEngineType, selectedBucketName, explorerPageIndex, explorerPageSize);
+        // =====================================================================
+        // COLUMNA DERECHA: Pestaña 0 (REGISTROS Y OBJETOS) o Pestaña 1 (ÍNDICES)
+        // =====================================================================
+        if (explorerActiveTab == 0) {
+            drawExplorerRecordsTab(catalog, col2X, my, col2W, mh);
+        } else {
+            drawExplorerIndexesTab(catalog, col2X, my, col2W, mh);
+        }
 
-        // Cabecera del Bucket
-        drawLegibleText("MOTOR: [" + selectedEngineType + "] ➔ BUCKET: '" + selectedBucketName + "'", col2X, my + 85, 12, GOLD);
-        drawLegibleText("Visualización de registros en tiempo real | Total: " + String.format("%,d", totalRecs) + " objetos", col2X, my + 102, 10, LIGHTGRAY);
+        // Sub-modales superpuestos
+        if (showRecordOperationModal) {
+            drawRecordOperationModal(sw, sh);
+        } else if (showVersionHistoryModal) {
+            drawVersionHistoryModal(sw, sh);
+        } else if (showIndexOpModal) {
+            drawIndexOpModal(sw, sh);
+        } else if (showExplorerQueryHelp) {
+            drawQueryHelpModal(sw, sh);
+        }
+    }
+
+    private void drawExplorerRecordsTab(EngineDataCatalog catalog, int col2X, int my, int col2W, int mh) {
+        // 1. Barra de Búsqueda y Filtrado (JettraQL & JettraSQL)
+        int searchY = my + 82;
+
+        // Selector JettraQL vs JettraSQL
+        Rectangle modeRec = new Rectangle().x(col2X).y(searchY).width(90).height(24);
+        boolean modeHov = checkCollisionPointRec(getMousePosition(), modeRec);
+        drawRectangleRounded(modeRec, 0.2f, 4, explorerQueryIsSql ? fade(GOLD, 0.8f) : fade(BLUE, 0.7f));
+        drawLegibleText(explorerQueryIsSql ? "🔍 J-SQL" : "🔍 J-QL", (int)modeRec.x() + 10, (int)modeRec.y() + 5, 11, BLACK);
+        if (modeHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerQueryIsSql = !explorerQueryIsSql;
+        }
+
+        // Caja de Entrada de Búsqueda Query
+        int qBoxW = col2W - 325;
+        Rectangle qRec = new Rectangle().x(col2X + 96).y(searchY).width(qBoxW).height(24);
+        boolean qHov = checkCollisionPointRec(getMousePosition(), qRec);
+        drawRectangleRounded(qRec, 0.15f, 4, (explorerActiveInputFocus == 2) ? new Color().r((byte)20).g((byte)30).b((byte)50).a((byte)255) : fade(BLACK, 0.4f));
+        drawRectangleRoundedLines(qRec, 0.15f, 4, (explorerActiveInputFocus == 2) ? GOLD : (qHov ? SKYBLUE : DARKGRAY));
+        String qDisp = explorerSearchQuery.isEmpty() ? (explorerQueryIsSql ? "Ej: SELECT * FROM facturas WHERE total > 500" : "Ej: FROM facturas WHERE total > 500") : explorerSearchQuery;
+        drawLegibleText(qDisp, (int)qRec.x() + 6, (int)qRec.y() + 5, 10, explorerSearchQuery.isEmpty() ? GRAY : RAYWHITE);
+        if (qHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerActiveInputFocus = 2;
+        }
+
+        // Botón Ejecutar
+        Rectangle execRec = new Rectangle().x(col2X + 96 + qBoxW + 6).y(searchY).width(68).height(24);
+        boolean execHov = checkCollisionPointRec(getMousePosition(), execRec);
+        drawRectangleRounded(execRec, 0.2f, 4, execHov ? fade(LIME, 0.8f) : fade(GREEN, 0.6f));
+        drawLegibleText("BUSCAR", (int)execRec.x() + 10, (int)execRec.y() + 5, 10, BLACK);
+        if (execHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            executeExplorerQuery();
+        }
+
+        // Botón Limpiar Filtro
+        Rectangle clrRec = new Rectangle().x(col2X + 96 + qBoxW + 78).y(searchY).width(64).height(24);
+        boolean clrHov = checkCollisionPointRec(getMousePosition(), clrRec);
+        drawRectangleRounded(clrRec, 0.2f, 4, clrHov ? fade(RED, 0.8f) : fade(DARKGRAY, 0.6f));
+        drawLegibleText("LIMPIAR", (int)clrRec.x() + 8, (int)clrRec.y() + 5, 10, RAYWHITE);
+        if (clrHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            explorerSearchQuery = "";
+            explorerFilterText = "";
+            explorerHasActiveQuery = false;
+            explorerFilteredRecords.clear();
+        }
+
+        // Botón Ayuda JettraQL / SQL
+        Rectangle helpRec = new Rectangle().x(col2X + 96 + qBoxW + 146).y(searchY).width(75).height(24);
+        boolean helpHov = checkCollisionPointRec(getMousePosition(), helpRec);
+        drawRectangleRounded(helpRec, 0.2f, 4, helpHov ? fade(PURPLE, 0.8f) : fade(DARKPURPLE, 0.6f));
+        drawLegibleText("❓ AYUDA", (int)helpRec.x() + 10, (int)helpRec.y() + 5, 10, RAYWHITE);
+        if (helpHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            showExplorerQueryHelp = true;
+        }
+
+        // 2. Barra de Operaciones de Registro: Agregar, Editar, Eliminar, Restaurar Versiones
+        int opsBarY = my + 112;
+        int btnW = 110;
+
+        // Botón AGREGAR
+        if (guiButton(col2X, opsBarY, btnW, 24, "➕ AGREGAR", GREEN)) {
+            openAddRecordModal();
+        }
+
+        // Botón EDITAR
+        if (guiButton(col2X + btnW + 8, opsBarY, btnW, 24, "✏️ EDITAR", (selectedExplorerRecord != null) ? SKYBLUE : DARKGRAY)) {
+            if (selectedExplorerRecord != null) openEditRecordModal();
+        }
+
+        // Botón ELIMINAR
+        if (guiButton(col2X + (btnW + 8) * 2, opsBarY, btnW, 24, "🗑️ ELIMINAR", (selectedExplorerRecord != null) ? RED : DARKGRAY)) {
+            if (selectedExplorerRecord != null) openDeleteRecordModal();
+        }
+
+        // Botón RESTAURAR VERSIONES
+        if (guiButton(col2X + (btnW + 8) * 3, opsBarY, 150, 24, "⏪ VERSIONES", (selectedExplorerRecord != null) ? GOLD : DARKGRAY)) {
+            if (selectedExplorerRecord != null) {
+                showVersionHistoryModal = true;
+                selectedVersionNumber = selectedExplorerRecord.getCurrentVersion();
+            }
+        }
+
+        // Filtro rápido de texto en resultados
+        int filterX = col2X + (btnW + 8) * 3 + 158;
+        int filterW = col2W - (filterX - col2X);
+        if (filterW > 80) {
+            Rectangle fltRec = new Rectangle().x(filterX).y(opsBarY).width(filterW).height(24);
+            boolean fltHov = checkCollisionPointRec(getMousePosition(), fltRec);
+            drawRectangleRounded(fltRec, 0.15f, 4, (explorerActiveInputFocus == 1) ? new Color().r((byte)20).g((byte)30).b((byte)50).a((byte)255) : fade(BLACK, 0.4f));
+            drawRectangleRoundedLines(fltRec, 0.15f, 4, (explorerActiveInputFocus == 1) ? GOLD : (fltHov ? SKYBLUE : DARKGRAY));
+            String fltDisp = explorerFilterText.isEmpty() ? "Filtro rápido..." : explorerFilterText;
+            drawLegibleText(fltDisp, (int)fltRec.x() + 6, (int)fltRec.y() + 5, 10, explorerFilterText.isEmpty() ? GRAY : RAYWHITE);
+            if (fltHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                explorerActiveInputFocus = 1;
+            }
+        }
+
+        // 3. Obtención y Paginación de Registros (Considerando búsqueda y filtro)
+        List<EngineRecord> sourceList;
+        if (explorerHasActiveQuery) {
+            sourceList = explorerFilteredRecords;
+        } else {
+            sourceList = catalog.getBucket(selectedExplorerDb, selectedEngineType, selectedBucketName) != null
+                ? catalog.getBucket(selectedExplorerDb, selectedEngineType, selectedBucketName).getSampleRecords()
+                : Collections.emptyList();
+        }
+
+        if (!explorerFilterText.isEmpty()) {
+            String lowerFlt = explorerFilterText.toLowerCase();
+            sourceList = sourceList.stream()
+                .filter(r -> r.getId().toLowerCase().contains(lowerFlt) || r.getSummary().toLowerCase().contains(lowerFlt) || r.getDetails().toLowerCase().contains(lowerFlt))
+                .toList();
+        }
+
+        int totalRecs = sourceList.size();
+        int totalPages = Math.max(1, (int) Math.ceil((double) totalRecs / (double) explorerPageSize));
+        int startIdx = Math.max(0, explorerPageIndex * explorerPageSize);
+        int endIdx = Math.min(totalRecs, startIdx + explorerPageSize);
+        List<EngineRecord> pageRecords = (startIdx < totalRecs) ? sourceList.subList(startIdx, endIdx) : Collections.emptyList();
 
         // Barra de Paginación
-        int pageBarY = my + 120;
-        int prevBtnW = 100;
-        if (guiButton(col2X, pageBarY, prevBtnW, 24, "◄ ANTERIOR", (explorerPageIndex > 0) ? SKYBLUE : DARKGRAY)) {
+        int pageBarY = my + 142;
+        if (guiButton(col2X, pageBarY, 90, 22, "◄ ANTERIOR", (explorerPageIndex > 0) ? SKYBLUE : DARKGRAY)) {
             if (explorerPageIndex > 0) explorerPageIndex--;
         }
 
-        String pageText = "Página " + (explorerPageIndex + 1) + " de " + totalPages;
-        drawLegibleText(pageText, col2X + 115, pageBarY + 5, 11, RAYWHITE);
+        String pageInfo = "Pág " + (explorerPageIndex + 1) + " / " + totalPages + " (" + totalRecs + " registros)";
+        drawLegibleText(pageInfo, col2X + 105, pageBarY + 4, 11, RAYWHITE);
 
-        if (guiButton(col2X + 220, pageBarY, prevBtnW, 24, "SIGUIENTE ►", (explorerPageIndex + 1 < totalPages) ? SKYBLUE : DARKGRAY)) {
+        if (guiButton(col2X + 260, pageBarY, 90, 22, "SIGUIENTE ►", (explorerPageIndex + 1 < totalPages) ? SKYBLUE : DARKGRAY)) {
             if (explorerPageIndex + 1 < totalPages) explorerPageIndex++;
         }
 
-        // Lista de Registros Paginados
-        int recListY = my + 152;
-        int rCardH = 46;
+        // 4. Lista de Registros (Cards)
+        int recListY = my + 170;
+        int rCardH = 42;
 
         for (int ri = 0; ri < pageRecords.size(); ri++) {
             EngineRecord rec = pageRecords.get(ri);
@@ -3434,32 +3887,522 @@ public class Jettra3DApp {
             drawRectangleRoundedLines(rRec, 0.15f, 4, isSelRec ? GOLD : (rHov ? SKYBLUE : fade(GRAY, 0.4f)));
 
             drawLegibleText("🔑 " + rec.getId(), col2X + 8, (int)rRec.y() + 4, 11, isSelRec ? GOLD : SKYBLUE);
-            drawLegibleText(rec.getTimestamp(), col2X + col2W - 160, (int)rRec.y() + 4, 9, LIGHTGRAY);
+            drawLegibleText("v" + rec.getCurrentVersion() + " | " + rec.getTimestamp(), col2X + col2W - 170, (int)rRec.y() + 4, 9, LIGHTGRAY);
 
             String snip = rec.getSummary();
             if (snip.length() > 68) snip = snip.substring(0, 68) + "...";
-            drawLegibleText(snip, col2X + 8, (int)rRec.y() + 22, 10, RAYWHITE);
+            drawLegibleText(snip, col2X + 8, (int)rRec.y() + 20, 10, RAYWHITE);
 
             if (rHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 selectedExplorerRecord = rec;
             }
         }
 
-        // Visor / Inspector Detallado de JSON del Registro Seleccionado
-        int inspY = my + mh - 165;
-        drawRectangle(col2X, inspY, col2W, 145, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)245));
-        drawRectangleLines(col2X, inspY, col2W, 145, GOLD);
+        // 5. Inspector de Registro / Payload Multimodelo Adaptado
+        int inspH = explorerMaximized ? 220 : 145;
+        int inspY = my + mh - inspH - 12;
+        drawRectangle(col2X, inspY, col2W, inspH, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)245));
+        drawRectangleLines(col2X, inspY, col2W, inspH, GOLD);
 
         drawLegibleText("INSPECTOR DE PAYLOAD / REGISTRO MULTIMODELO:", col2X + 10, inspY + 8, 10, GOLD);
         if (selectedExplorerRecord != null) {
-            drawLegibleText("ID: " + selectedExplorerRecord.getId(), col2X + col2W - 200, inspY + 8, 10, SKYBLUE);
-            String[] jsonLines = selectedExplorerRecord.getDetails().split("\n");
-            for (int li = 0; li < Math.min(6, jsonLines.length); li++) {
-                drawLegibleText(jsonLines[li], col2X + 12, inspY + 28 + (li * 18), 11, LIME);
+            String formatTag = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + selectedExplorerRecord.getId() + ">";
+            drawLegibleText("Esquema: " + formatTag + " | Versión: v" + selectedExplorerRecord.getCurrentVersion(), col2X + 10, inspY + 24, 10, SKYBLUE);
+
+            Color textColor = switch (selectedEngineType) {
+                case "DOCUMENT" -> LIME;
+                case "JAVA_RECORD" -> GOLD;
+                case "GRAPH" -> SKYBLUE;
+                case "VECTOR" -> new Color().r((byte)0).g((byte)255).b((byte)230).a((byte)255);
+                case "KEYVALUE" -> MAGENTA;
+                case "TIMESERIES" -> ORANGE;
+                case "GEOSPATIAL" -> GREEN;
+                case "COLUMNAR" -> YELLOW;
+                default -> RAYWHITE;
+            };
+
+            String[] lines = selectedExplorerRecord.getDetails().split("\n");
+            int maxLines = explorerMaximized ? 10 : 5;
+            for (int li = 0; li < Math.min(maxLines, lines.length); li++) {
+                drawLegibleText(lines[li], col2X + 12, inspY + 42 + (li * 16), 10, textColor);
             }
         } else {
-            drawLegibleText("(Seleccione un registro arriba para inspeccionar su estructura JSON / BSON)", col2X + 12, inspY + 40, 11, GRAY);
+            drawLegibleText("(Seleccione un registro arriba para inspeccionar su estructura)", col2X + 12, inspY + 40, 11, GRAY);
         }
     }
 
+    private void drawExplorerIndexesTab(EngineDataCatalog catalog, int col2X, int my, int col2W, int mh) {
+        int barY = my + 82;
+        drawLegibleText("⚙️ ADMINISTRACIÓN DE ÍNDICES: <" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + ">", col2X, barY + 5, 12, GOLD);
+
+        // Botones de Operación de Índices
+        int btnW = 130;
+        int opsY = my + 112;
+        if (guiButton(col2X, opsY, btnW, 24, "➕ CREAR ÍNDICE", GREEN)) {
+            openCreateIndexModal();
+        }
+        if (guiButton(col2X + btnW + 10, opsY, 150, 24, "✏️ RECONSTRUIR", (selectedIndexInfo != null) ? SKYBLUE : DARKGRAY)) {
+            if (selectedIndexInfo != null) openEditIndexModal();
+        }
+        if (guiButton(col2X + btnW * 2 + 30, opsY, 140, 24, "🗑️ DROP ÍNDICE", (selectedIndexInfo != null) ? RED : DARKGRAY)) {
+            if (selectedIndexInfo != null) openDropIndexModal();
+        }
+
+        // Tabla de Índices
+        List<EngineIndexInfo> idxList = catalog.getIndexes(selectedExplorerDb, selectedEngineType, selectedBucketName);
+        int tableY = my + 148;
+
+        // Encabezados de tabla
+        drawRectangle(col2X, tableY, col2W, 24, new Color().r((byte)24).g((byte)32).b((byte)52).a((byte)255));
+        drawRectangleLines(col2X, tableY, col2W, 24, DARKGRAY);
+        drawLegibleText("NOMBRE ÍNDICE", col2X + 10, tableY + 5, 10, GOLD);
+        drawLegibleText("CAMPO", col2X + 180, tableY + 5, 10, GOLD);
+        drawLegibleText("TIPO DE ÍNDICE", col2X + 290, tableY + 5, 10, GOLD);
+        drawLegibleText("ÚNICO", col2X + 410, tableY + 5, 10, GOLD);
+        drawLegibleText("ENTRADAS", col2X + 470, tableY + 5, 10, GOLD);
+        drawLegibleText("ESTADO", col2X + 560, tableY + 5, 10, GOLD);
+
+        int rowY = tableY + 28;
+        int rowH = 26;
+        for (EngineIndexInfo info : idxList) {
+            boolean isSel = (selectedIndexInfo != null && selectedIndexInfo.getName().equalsIgnoreCase(info.getName()));
+            Rectangle rRec = new Rectangle().x(col2X).y(rowY).width(col2W).height(rowH);
+            boolean rHov = checkCollisionPointRec(getMousePosition(), rRec);
+
+            drawRectangleRounded(rRec, 0.1f, 4, isSel ? fade(BLUE, 0.6f) : (rHov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.25f)));
+            drawRectangleRoundedLines(rRec, 0.1f, 4, isSel ? GOLD : fade(GRAY, 0.3f));
+
+            drawLegibleText("🏷️ " + info.getName(), col2X + 10, rowY + 6, 10, isSel ? GOLD : RAYWHITE);
+            drawLegibleText(info.getField(), col2X + 180, rowY + 6, 10, SKYBLUE);
+            drawLegibleText(info.getType(), col2X + 290, rowY + 6, 10, LIME);
+            drawLegibleText(info.isUnique() ? "SÍ" : "NO", col2X + 410, rowY + 6, 10, info.isUnique() ? YELLOW : GRAY);
+            drawLegibleText(String.format("%,d", info.getEntriesCount()), col2X + 470, rowY + 6, 10, LIGHTGRAY);
+            drawLegibleText(info.getStatus(), col2X + 560, rowY + 6, 10, LIME);
+
+            if (rHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                selectedIndexInfo = info;
+            }
+            rowY += rowH + 4;
+        }
+
+        // Cuadro de Explicación de Índices
+        int boxY = my + mh - 130;
+        drawRectangle(col2X, boxY, col2W, 115, new Color().r((byte)12).g((byte)16).b((byte)28).a((byte)245));
+        drawRectangleLines(col2X, boxY, col2W, 115, GOLD);
+        drawLegibleText("ESTRATEGIA DE INDEXACIÓN EN JETTRASTORE (JettraCollections UnifiedMap):", col2X + 12, boxY + 8, 10, GOLD);
+        drawLegibleText("• Almacenamiento Zero-Set Compacto: Sin cajas superfluas para evitar presión de Garbage Collector.", col2X + 12, boxY + 26, 10, LIGHTGRAY);
+        drawLegibleText("• Soporta índices Primarios Hash, B-Tree O(log n), HNSW para Embeddings 3D/HD y R-Tree Geoespacial.", col2X + 12, boxY + 44, 10, LIGHTGRAY);
+        drawLegibleText("• Capacidad inicial calculada dinámicamente y streaming lazy para eliminar errores OutOfMemoryError.", col2X + 12, boxY + 62, 10, LIGHTGRAY);
+        drawLegibleText("• Sincronización atómica multihilo directa con Panama Direct Memory.", col2X + 12, boxY + 80, 10, SKYBLUE);
+    }
+
+    // =========================================================================
+    // SUB-MODAL 1: Operaciones CRUD por Registro adaptadas al Engine
+    // =========================================================================
+    private void openAddRecordModal() {
+        recordOpMode = "ADD";
+        formRecordId = generateIdForEngine(selectedEngineType);
+        formRecordSummary = generateSummaryForEngine(selectedEngineType, formRecordId);
+        formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
+        formRecordActiveField = 1;
+        showRecordOperationModal = true;
+    }
+
+    private void openEditRecordModal() {
+        if (selectedExplorerRecord == null) return;
+        recordOpMode = "EDIT";
+        formRecordId = selectedExplorerRecord.getId();
+        formRecordSummary = selectedExplorerRecord.getSummary();
+        formRecordDetails = selectedExplorerRecord.getDetails();
+        formRecordActiveField = 2;
+        showRecordOperationModal = true;
+    }
+
+    private void openDeleteRecordModal() {
+        if (selectedExplorerRecord == null) return;
+        recordOpMode = "DELETE_CONFIRM";
+        formRecordId = selectedExplorerRecord.getId();
+        showRecordOperationModal = true;
+    }
+
+    private String generateIdForEngine(String engine) {
+        long rnd = System.currentTimeMillis() % 10000;
+        return switch (engine) {
+            case "DOCUMENT" -> String.format("DOC-2026-%04d", rnd);
+            case "JAVA_RECORD" -> String.format("REC-STRUCT-%04d", rnd);
+            case "GRAPH" -> String.format("EDGE-TOPOLOGY-%04d", rnd);
+            case "VECTOR" -> String.format("VEC-EMBED-%04d", rnd);
+            case "KEYVALUE" -> String.format("cache:item:%04d", rnd);
+            case "TIMESERIES" -> String.format("TS-METRIC-%04d", rnd);
+            case "GEOSPATIAL" -> String.format("GEO-NODE-%04d", rnd);
+            case "COLUMNAR" -> String.format("COL-CHUNK-%04d", rnd);
+            default -> String.format("OBJ-%04d", rnd);
+        };
+    }
+
+    private String generateSummaryForEngine(String engine, String id) {
+        return switch (engine) {
+            case "DOCUMENT" -> "Documento JSON registrado en " + selectedBucketName;
+            case "JAVA_RECORD" -> "Instancia Java Record In-Memory Panama Struct";
+            case "GRAPH" -> "Arista topológica de grafo (" + id + ")";
+            case "VECTOR" -> "Embedding vectorial multidimensional Cosine HD";
+            case "KEYVALUE" -> "Par Clave-Valor en memoria nativa sin GC";
+            case "TIMESERIES" -> "Muestra de serie temporal con timestamp";
+            case "GEOSPATIAL" -> "Coordenadas espaciales R-Tree (" + id + ")";
+            case "COLUMNAR" -> "Chunk columnar comprimido ZSTD con agregados";
+            default -> "Registro genérico multimodelo";
+        };
+    }
+
+    private String applyTemplateForEngine(String engine, String bucket, String id) {
+        return switch (engine) {
+            case "DOCUMENT" -> "{\n  \"id\": \"" + id + "\",\n  \"emisor\": \"Corp Global SA\",\n  \"total\": 1250.00,\n  \"estado\": \"TIMBRADO_VALIDADO\"\n}";
+            case "JAVA_RECORD" -> "public record " + Character.toUpperCase(bucket.charAt(0)) + bucket.substring(1) + "Record(\n  long id,\n  String codigo,\n  double valor,\n  long offHeapOffset\n) {}";
+            case "GRAPH" -> "GraphEdge: {\n  \"sourceVertex\": \"VERTEX_SRC\",\n  \"targetVertex\": \"VERTEX_TGT\",\n  \"relationship\": \"CONECTA_A\",\n  \"weight\": 1.0\n}";
+            case "VECTOR" -> "VectorEmbedding {\n  \"id\": \"" + id + "\",\n  \"dimensions\": 3,\n  \"coordinates\": [0.250, -0.750, 0.450],\n  \"metric\": \"COSINE\"\n}";
+            case "KEYVALUE" -> "KeyValueEntry {\n  \"key\": \"" + id + "\",\n  \"value\": \"HASH_TOKEN_DATA\",\n  \"timeToLiveSeconds\": 3600\n}";
+            case "TIMESERIES" -> "TimeSeriesPoint {\n  \"id\": \"" + id + "\",\n  \"metric\": \"METRICA_VALOR\",\n  \"value\": 145.8,\n  \"unit\": \"ppm\"\n}";
+            case "GEOSPATIAL" -> "GeoPoint {\n  \"id\": \"" + id + "\",\n  \"latitude\": 19.4326,\n  \"longitude\": -99.1332,\n  \"radioKm\": 5.0\n}";
+            case "COLUMNAR" -> "ColumnChunk {\n  \"chunkId\": 101,\n  \"rowCount\": 10000,\n  \"compression\": \"ZSTD_SIMD\"\n}";
+            default -> "{\n  \"id\": \"" + id + "\"\n}";
+        };
+    }
+
+    private void drawRecordOperationModal(int sw, int sh) {
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
+
+        int dw = 640;
+        int dh = 480;
+        int dx = (sw - dw) / 2;
+        int dy = (sh - dh) / 2;
+
+        drawRectangle(dx, dy, dw, dh, new Color().r((byte)20).g((byte)24).b((byte)38).a((byte)255));
+        drawRectangleLines(dx, dy, dw, dh, GOLD);
+
+        String title = recordOpMode.equals("ADD") ? "➕ AGREGAR NUEVO REGISTRO"
+                     : (recordOpMode.equals("EDIT") ? "✏️ EDITAR REGISTRO" : "🗑️ CONFIRMAR ELIMINACIÓN");
+        drawLegibleText(title, dx + 20, dy + 16, 14, GOLD);
+
+        // Header con formato: <nombre-base-datos><engine><bucket-contenedor><registro>
+        String pathFmt = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + formRecordId + ">";
+        drawLegibleText("ESQUEMA: " + pathFmt, dx + 20, dy + 36, 11, LIME);
+
+        if (recordOpMode.equals("DELETE_CONFIRM")) {
+            drawLegibleText("¿Está seguro de eliminar el registro '" + formRecordId + "' del bucket '" + selectedBucketName + "'?", dx + 30, dy + 120, 12, RAYWHITE);
+            drawLegibleText("Esta acción eliminará el objeto en tiempo real del motor " + selectedEngineType + ".", dx + 30, dy + 150, 11, LIGHTGRAY);
+
+            if (guiButton(dx + 50, dy + 220, 180, 32, "🗑️ SÍ, ELIMINAR", RED)) {
+                EngineDataCatalog.getInstance().deleteRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, formRecordId);
+                selectedExplorerRecord = null;
+                showRecordOperationModal = false;
+            }
+            if (guiButton(dx + 260, dy + 220, 160, 32, "CANCELAR", DARKGRAY)) {
+                showRecordOperationModal = false;
+            }
+            return;
+        }
+
+        // Formulario de Edición o Agregado
+        drawLegibleText("Identificador / ID (Clave primaria):", dx + 20, dy + 62, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 78, dw - 40, 26, formRecordId, formRecordActiveField == 1, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 78).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formRecordActiveField = 1;
+        }
+
+        drawLegibleText("Resumen / Metadatos rápidos:", dx + 20, dy + 112, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 128, dw - 40, 26, formRecordSummary, formRecordActiveField == 2, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 128).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formRecordActiveField = 2;
+        }
+
+        String payloadLabel = switch (selectedEngineType) {
+            case "DOCUMENT" -> "Payload Documento (Formato JSON):";
+            case "JAVA_RECORD" -> "Estructura Java Record Class (Panama In-Memory Struct):";
+            case "GRAPH" -> "Definición de Grafo (Vértice / Arista y Propiedades):";
+            case "VECTOR" -> "Embedding Vectorial (Coordenadas y Métrica Cosine):";
+            default -> "Contenido del Registro:";
+        };
+        drawLegibleText(payloadLabel, dx + 20, dy + 162, 10, GOLD);
+
+        // Editor multilinea
+        Rectangle boxRec = new Rectangle().x(dx + 20).y(dy + 178).width(dw - 40).height(190);
+        drawRectangleRounded(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? new Color().r((byte)10).g((byte)15).b((byte)28).a((byte)255) : new Color().r((byte)14).g((byte)18).b((byte)30).a((byte)255));
+        drawRectangleRoundedLines(boxRec, 0.1f, 4, (formRecordActiveField == 3) ? GOLD : DARKGRAY);
+        if (checkCollisionPointRec(getMousePosition(), boxRec) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formRecordActiveField = 3;
+        }
+
+        String[] dLines = formRecordDetails.split("\n");
+        for (int i = 0; i < Math.min(9, dLines.length); i++) {
+            drawLegibleText(dLines[i], dx + 28, dy + 186 + (i * 18), 11, LIME);
+        }
+
+        // Botón Cargar Plantilla
+        if (guiButton(dx + 20, dy + 380, 180, 26, "📋 CARGAR PLANTILLA", PURPLE)) {
+            formRecordDetails = applyTemplateForEngine(selectedEngineType, selectedBucketName, formRecordId);
+        }
+
+        // Botón Guardar
+        if (guiButton(dx + dw - 240, dy + 420, 110, 32, "💾 GUARDAR", GREEN)) {
+            if (recordOpMode.equals("ADD")) {
+                EngineRecord newRec = new EngineRecord(formRecordId, selectedEngineType, selectedBucketName, formRecordSummary, formRecordDetails, null);
+                EngineDataCatalog.getInstance().addRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, newRec);
+                selectedExplorerRecord = newRec;
+            } else {
+                EngineDataCatalog.getInstance().updateRecord(selectedExplorerDb, selectedEngineType, selectedBucketName, formRecordId, formRecordSummary, formRecordDetails, "Edición manual por usuario");
+            }
+            showRecordOperationModal = false;
+        }
+
+        // Botón Cancelar
+        if (guiButton(dx + dw - 120, dy + 420, 100, 32, "CANCELAR", DARKGRAY)) {
+            showRecordOperationModal = false;
+        }
+    }
+
+    // =========================================================================
+    // SUB-MODAL 2: Restauración de Versiones de Registro
+    // =========================================================================
+    private void drawVersionHistoryModal(int sw, int sh) {
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
+
+        int dw = 720;
+        int dh = 500;
+        int dx = (sw - dw) / 2;
+        int dy = (sh - dh) / 2;
+
+        drawRectangle(dx, dy, dw, dh, new Color().r((byte)18).g((byte)22).b((byte)36).a((byte)255));
+        drawRectangleLines(dx, dy, dw, dh, GOLD);
+
+        drawLegibleText("⏪ HISTORIAL Y RESTAURACIÓN DE VERSIONES", dx + 20, dy + 16, 14, GOLD);
+        if (selectedExplorerRecord != null) {
+            String pathFmt = "<" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + "><" + selectedExplorerRecord.getId() + ">";
+            drawLegibleText("Registro: " + pathFmt + " | Versión Actual: v" + selectedExplorerRecord.getCurrentVersion(), dx + 20, dy + 36, 11, SKYBLUE);
+
+            List<RecordVersion> hist = selectedExplorerRecord.getVersionHistory();
+            int listW = 280;
+            int vListY = dy + 68;
+
+            drawLegibleText("VERSIONES DISPONIBLES (" + hist.size() + "):", dx + 20, vListY, 11, GOLD);
+            vListY += 18;
+
+            for (RecordVersion rv : hist) {
+                boolean isSelVer = (selectedVersionNumber == rv.version());
+                Rectangle vRec = new Rectangle().x(dx + 20).y(vListY).width(listW).height(46);
+                boolean vHov = checkCollisionPointRec(getMousePosition(), vRec);
+
+                drawRectangleRounded(vRec, 0.15f, 4, isSelVer ? fade(BLUE, 0.7f) : (vHov ? fade(DARKGRAY, 0.5f) : fade(BLACK, 0.3f)));
+                drawRectangleRoundedLines(vRec, 0.15f, 4, isSelVer ? GOLD : DARKGRAY);
+
+                String vLabel = "v" + rv.version() + " " + (rv.version() == selectedExplorerRecord.getCurrentVersion() ? "[ACTUAL]" : "");
+                drawLegibleText(vLabel, dx + 26, vListY + 4, 11, isSelVer ? GOLD : RAYWHITE);
+                drawLegibleText(rv.timestamp(), dx + 120, vListY + 4, 9, LIGHTGRAY);
+                drawLegibleText(rv.operationNote(), dx + 26, vListY + 22, 10, SKYBLUE);
+
+                if (vHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    selectedVersionNumber = rv.version();
+                }
+                vListY += 52;
+            }
+
+            // Vista previa de la versión seleccionada
+            int prevX = dx + listW + 35;
+            int prevW = dw - listW - 55;
+            drawLegibleText("DETALLE DE LA VERSIÓN SELECCIONADA (v" + selectedVersionNumber + "):", prevX, dy + 68, 11, GOLD);
+
+            RecordVersion targetRv = selectedExplorerRecord.getVersion(selectedVersionNumber);
+            Rectangle prevBox = new Rectangle().x(prevX).y(dy + 88).width(prevW).height(280);
+            drawRectangleRounded(prevBox, 0.1f, 4, new Color().r((byte)10).g((byte)14).b((byte)24).a((byte)255));
+            drawRectangleRoundedLines(prevBox, 0.1f, 4, GOLD);
+
+            if (targetRv != null) {
+                drawLegibleText("Resumen: " + targetRv.summary(), prevX + 10, dy + 96, 10, RAYWHITE);
+                String[] pLines = targetRv.details().split("\n");
+                for (int i = 0; i < Math.min(12, pLines.length); i++) {
+                    drawLegibleText(pLines[i], prevX + 10, dy + 118 + (i * 18), 10, LIME);
+                }
+            }
+
+            if (guiButton(prevX, dy + 390, 220, 32, "⟲ RESTAURAR ESTA VERSIÓN", LIME)) {
+                if (targetRv != null) {
+                    EngineDataCatalog.getInstance().restoreRecordVersion(
+                        selectedExplorerDb, selectedEngineType, selectedBucketName, selectedExplorerRecord.getId(), targetRv.version()
+                    );
+                    selectedVersionNumber = selectedExplorerRecord.getCurrentVersion();
+                    showVersionHistoryModal = false;
+                }
+            }
+        }
+
+        if (guiButton(dx + dw - 120, dy + dh - 45, 100, 30, "CERRAR", DARKGRAY)) {
+            showVersionHistoryModal = false;
+        }
+    }
+
+    // =========================================================================
+    // SUB-MODAL 3: Administración de Índices (Crear, Editar, Eliminar)
+    // =========================================================================
+    private void openCreateIndexModal() {
+        indexOpMode = "CREATE";
+        formIndexName = "idx_" + selectedBucketName + "_field";
+        formIndexField = "campo";
+        formIndexType = "BTREE";
+        formIndexUnique = false;
+        formIndexActiveField = 1;
+        showIndexOpModal = true;
+    }
+
+    private void openEditIndexModal() {
+        if (selectedIndexInfo == null) return;
+        indexOpMode = "EDIT";
+        formIndexName = selectedIndexInfo.getName();
+        formIndexField = selectedIndexInfo.getField();
+        formIndexType = selectedIndexInfo.getType();
+        formIndexUnique = selectedIndexInfo.isUnique();
+        formIndexActiveField = 2;
+        showIndexOpModal = true;
+    }
+
+    private void openDropIndexModal() {
+        if (selectedIndexInfo == null) return;
+        indexOpMode = "DROP_CONFIRM";
+        formIndexName = selectedIndexInfo.getName();
+        showIndexOpModal = true;
+    }
+
+    private void drawIndexOpModal(int sw, int sh) {
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
+
+        int dw = 520;
+        int dh = 380;
+        int dx = (sw - dw) / 2;
+        int dy = (sh - dh) / 2;
+
+        drawRectangle(dx, dy, dw, dh, new Color().r((byte)20).g((byte)25).b((byte)40).a((byte)255));
+        drawRectangleLines(dx, dy, dw, dh, GOLD);
+
+        String title = indexOpMode.equals("CREATE") ? "➕ CREAR ÍNDICE DE ACCESO RÁPIDO"
+                     : (indexOpMode.equals("EDIT") ? "✏️ RECONSTRUIR / EDITAR ÍNDICE" : "🗑️ CONFIRMAR DROP ÍNDICE");
+        drawLegibleText(title, dx + 20, dy + 16, 13, GOLD);
+        drawLegibleText("Bucket destino: <" + selectedExplorerDb + "><" + selectedEngineType + "><" + selectedBucketName + ">", dx + 20, dy + 36, 11, SKYBLUE);
+
+        if (indexOpMode.equals("DROP_CONFIRM")) {
+            drawLegibleText("¿Confirma la eliminación (DROP) del índice '" + formIndexName + "'?", dx + 30, dy + 110, 12, RAYWHITE);
+            drawLegibleText("El motor " + selectedEngineType + " pasará a escaneo secuencial para este campo.", dx + 30, dy + 140, 11, LIGHTGRAY);
+
+            if (guiButton(dx + 50, dy + 220, 180, 32, "🗑️ SÍ, DROP ÍNDICE", RED)) {
+                EngineDataCatalog.getInstance().deleteIndex(selectedExplorerDb, selectedEngineType, selectedBucketName, formIndexName);
+                selectedIndexInfo = null;
+                showIndexOpModal = false;
+            }
+            if (guiButton(dx + 260, dy + 220, 160, 32, "CANCELAR", DARKGRAY)) {
+                showIndexOpModal = false;
+            }
+            return;
+        }
+
+        drawLegibleText("Nombre del Índice:", dx + 20, dy + 68, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 84, dw - 40, 26, formIndexName, formIndexActiveField == 1, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 84).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formIndexActiveField = 1;
+        }
+
+        drawLegibleText("Campo destino en los registros:", dx + 20, dy + 118, 10, SKYBLUE);
+        drawSimpleInputField(dx + 20, dy + 134, dw - 40, 26, formIndexField, formIndexActiveField == 2, false);
+        if (checkCollisionPointRec(getMousePosition(), new Rectangle().x(dx + 20).y(dy + 134).width(dw - 40).height(26)) && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formIndexActiveField = 2;
+        }
+
+        drawLegibleText("Tipo de Índice Especializado:", dx + 20, dy + 168, 10, GOLD);
+        String[] types = {"BTREE", "PRIMARY_HASH", "HNSW_VECTOR", "RTREE_SPATIAL", "BITMAP", "FULLTEXT"};
+        int tyX = dx + 20;
+        int tyY = dy + 188;
+        for (String t : types) {
+            boolean isCur = formIndexType.equalsIgnoreCase(t);
+            Rectangle tRec = new Rectangle().x(tyX).y(tyY).width(75).height(22);
+            boolean tHov = checkCollisionPointRec(getMousePosition(), tRec);
+            drawRectangleRounded(tRec, 0.2f, 4, isCur ? fade(GOLD, 0.8f) : (tHov ? fade(SKYBLUE, 0.5f) : fade(DARKGRAY, 0.4f)));
+            drawLegibleText(t, tyX + 4, tyY + 4, 8, isCur ? BLACK : RAYWHITE);
+            if (tHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                formIndexType = t;
+            }
+            tyX += 80;
+        }
+
+        drawLegibleText("¿Índice Único?:", dx + 20, dy + 225, 10, SKYBLUE);
+        Rectangle uRec = new Rectangle().x(dx + 120).y(dy + 222).width(80).height(22);
+        boolean uHov = checkCollisionPointRec(getMousePosition(), uRec);
+        drawRectangleRounded(uRec, 0.2f, 4, formIndexUnique ? fade(GREEN, 0.7f) : fade(DARKGRAY, 0.6f));
+        drawLegibleText(formIndexUnique ? "SÍ (ÚNICO)" : "NO", (int)uRec.x() + 10, (int)uRec.y() + 4, 10, RAYWHITE);
+        if (uHov && isMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            formIndexUnique = !formIndexUnique;
+        }
+
+        if (guiButton(dx + dw - 240, dy + dh - 50, 110, 32, "💾 GUARDAR", GREEN)) {
+            if (indexOpMode.equals("CREATE")) {
+                EngineIndexInfo idx = new EngineIndexInfo(formIndexName, selectedEngineType, selectedBucketName, formIndexField, formIndexType, formIndexUnique, 100_000L);
+                EngineDataCatalog.getInstance().addIndex(selectedExplorerDb, selectedEngineType, selectedBucketName, idx);
+                selectedIndexInfo = idx;
+            } else {
+                EngineDataCatalog.getInstance().updateIndex(selectedExplorerDb, selectedEngineType, selectedBucketName, formIndexName, formIndexField, formIndexType, formIndexUnique);
+            }
+            showIndexOpModal = false;
+        }
+
+        if (guiButton(dx + dw - 120, dy + dh - 50, 100, 32, "CANCELAR", DARKGRAY)) {
+            showIndexOpModal = false;
+        }
+    }
+
+    // =========================================================================
+    // SUB-MODAL 4: Ayuda de Búsqueda y Condiciones (JettraQL & JettraSQL)
+    // =========================================================================
+    private void drawQueryHelpModal(int sw, int sh) {
+        drawRectangle(0, 0, sw, sh, fade(BLACK, 0.85f));
+
+        int dw = 700;
+        int dh = 500;
+        int dx = (sw - dw) / 2;
+        int dy = (sh - dh) / 2;
+
+        drawRectangle(dx, dy, dw, dh, new Color().r((byte)18).g((byte)22).b((byte)36).a((byte)255));
+        drawRectangleLines(dx, dy, dw, dh, GOLD);
+
+        drawLegibleText("❓ GUÍA DE CONDICIONES Y BÚSQUEDA (JettraQL & JettraSQL)", dx + 20, dy + 16, 14, GOLD);
+        drawLegibleText("Sintaxis de consultas para el motor multimodelo de JettraStore:", dx + 20, dy + 36, 11, SKYBLUE);
+
+        int cy = dy + 62;
+        drawLegibleText("1. Sintaxis JettraSQL:", dx + 20, cy, 11, GOLD);
+        drawLegibleText("   • SELECT * FROM <bucket> WHERE <campo> <operador> <valor>", dx + 20, cy + 18, 10, LIGHTGRAY);
+        drawLegibleText("   • Ejemplo: SELECT * FROM facturas WHERE total > 500", dx + 20, cy + 34, 10, LIME);
+        if (guiButton(dx + dw - 170, cy + 24, 140, 22, "PROBAR EJEMPLO", BLUE)) {
+            explorerQueryIsSql = true;
+            explorerSearchQuery = "SELECT * FROM facturas WHERE total > 500";
+            showExplorerQueryHelp = false;
+            executeExplorerQuery();
+        }
+
+        cy += 60;
+        drawLegibleText("2. Sintaxis JettraQL:", dx + 20, cy, 11, GOLD);
+        drawLegibleText("   • FROM <bucket> WHERE <campo> = <valor>", dx + 20, cy + 18, 10, LIGHTGRAY);
+        drawLegibleText("   • FIND WHERE estado == 'TIMBRADO_VALIDADO'", dx + 20, cy + 34, 10, LIME);
+        drawLegibleText("   • MATCH (source)-[EMITE_PAGO]->(target) [Para Grafos]", dx + 20, cy + 50, 10, SKYBLUE);
+        drawLegibleText("   • VECTOR SIMILARITY [0.12, 0.45, 0.78] TOP 5 [Para Vectores]", dx + 20, cy + 66, 10, MAGENTA);
+        if (guiButton(dx + dw - 170, cy + 24, 140, 22, "PROBAR JQL", PURPLE)) {
+            explorerQueryIsSql = false;
+            explorerSearchQuery = "FROM facturas WHERE total > 200";
+            showExplorerQueryHelp = false;
+            executeExplorerQuery();
+        }
+
+        cy += 95;
+        drawLegibleText("3. Operadores de Condición Soportados:", dx + 20, cy, 11, GOLD);
+        drawLegibleText("   • Comparación: =, ==, !=, >, >=, <, <=", dx + 20, cy + 18, 10, RAYWHITE);
+        drawLegibleText("   • Coincidencia de texto: LIKE 'texto' (búsqueda parcial insensible a mayúsculas)", dx + 20, cy + 34, 10, RAYWHITE);
+        drawLegibleText("   • Búsqueda libre: Cualquier término o ID filtra directamente el contenido JSON/payload.", dx + 20, cy + 50, 10, RAYWHITE);
+
+        if (guiButton(dx + dw - 120, dy + dh - 42, 100, 28, "ENTENDIDO", DARKGRAY)) {
+            showExplorerQueryHelp = false;
+        }
+    }
 }

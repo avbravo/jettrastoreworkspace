@@ -50,4 +50,95 @@ public class EngineDataCatalogTest {
         assertFalse(vecRecs.isEmpty());
         assertTrue(vecRecs.get(0).getDetails().contains("VectorEmbedding"));
     }
+
+    @Test
+    @DisplayName("Debe permitir Agregar, Editar, Eliminar y Restaurar Versiones de registros")
+    public void testRecordCrudAndVersioning() {
+        EngineDataCatalog catalog = new EngineDataCatalog();
+        String db = "example_factura_db";
+        String engine = "DOCUMENT";
+        String bucket = "facturas";
+
+        // 1. Agregar nuevo registro
+        String testId = "TEST-FAC-99999";
+        EngineRecord newRec = new EngineRecord(testId, engine, bucket, "Factura Test v1", "{\"total\": 999.0}", "2026-10-01 20:00:00");
+        boolean added = catalog.addRecord(db, engine, bucket, newRec);
+        assertTrue(added, "El registro debe agregarse exitosamente");
+        assertEquals(1, newRec.getCurrentVersion(), "La versión inicial debe ser 1");
+
+        // 2. Editar registro (Crea versión 2)
+        boolean updated = catalog.updateRecord(db, engine, bucket, testId, "Factura Test v2 Editada", "{\"total\": 1500.0}", "Ajuste de precio");
+        assertTrue(updated, "El registro debe actualizarse");
+        assertEquals(2, newRec.getCurrentVersion(), "La versión actual debe avanzar a 2");
+        assertEquals(2, newRec.getVersionHistory().size(), "El historial debe tener 2 versiones");
+        assertTrue(newRec.getSummary().contains("v2"));
+
+        // 3. Restaurar versión 1 previa
+        boolean restored = catalog.restoreRecordVersion(db, engine, bucket, testId, 1);
+        assertTrue(restored, "La restauración de la versión 1 debe ser exitosa");
+        assertEquals(3, newRec.getCurrentVersion(), "La versión tras restaurar debe ser 3");
+        assertEquals("Factura Test v1", newRec.getSummary(), "El contenido restaurado debe coincidir con la versión 1");
+        assertTrue(newRec.getDetails().contains("999.0"));
+
+        // 4. Eliminar registro
+        boolean deleted = catalog.deleteRecord(db, engine, bucket, testId);
+        assertTrue(deleted, "El registro debe ser eliminado");
+        assertNull(catalog.getBucket(db, engine, bucket).findRecordById(testId));
+    }
+
+    @Test
+    @DisplayName("Debe administrar índices: creación, edición y eliminación")
+    public void testIndexAdministration() {
+        EngineDataCatalog catalog = new EngineDataCatalog();
+        String db = "example_factura_db";
+        String engine = "DOCUMENT";
+        String bucket = "facturas";
+
+        List<EngineIndexInfo> initialIndexes = catalog.getIndexes(db, engine, bucket);
+        assertFalse(initialIndexes.isEmpty(), "Deben existir índices preconfigurados");
+
+        // Crear nuevo índice
+        String newIdxName = "idx_facturas_rfc_cliente";
+        EngineIndexInfo customIdx = new EngineIndexInfo(newIdxName, engine, bucket, "receptor", "BTREE", false, 500_000L);
+        boolean added = catalog.addIndex(db, engine, bucket, customIdx);
+        assertTrue(added);
+        assertNotNull(catalog.getBucket(db, engine, bucket).findExistingIndex(newIdxName));
+
+        // Editar índice
+        boolean updated = catalog.updateIndex(db, engine, bucket, newIdxName, "receptor", "FULLTEXT", true);
+        assertTrue(updated);
+        EngineIndexInfo modified = catalog.getBucket(db, engine, bucket).findExistingIndex(newIdxName);
+        assertEquals("FULLTEXT", modified.getType());
+        assertTrue(modified.isUnique());
+
+        // Eliminar índice
+        boolean deleted = catalog.deleteIndex(db, engine, bucket, newIdxName);
+        assertTrue(deleted);
+        assertNull(catalog.getBucket(db, engine, bucket).findExistingIndex(newIdxName));
+    }
+
+    @Test
+    @DisplayName("Debe ejecutar búsquedas mediante JettraSQL y JettraQL con condiciones")
+    public void testJettraSqlAndJettraQlQueries() {
+        EngineDataCatalog catalog = new EngineDataCatalog();
+        String db = "example_factura_db";
+        String engine = "DOCUMENT";
+        String bucket = "facturas";
+
+        // Consulta JettraSQL con condición mayor que
+        EngineDataCatalog.QueryResult sqlRes = catalog.executeQuery(db, engine, bucket, "SELECT * FROM facturas WHERE total > 1000", true);
+        assertTrue(sqlRes.success());
+        assertFalse(sqlRes.records().isEmpty(), "Debe encontrar registros con total > 1000");
+        assertTrue(sqlRes.summaryMessage().contains("JettraSQL ejecutado"));
+
+        // Consulta JettraQL con condición LIKE
+        EngineDataCatalog.QueryResult jqlRes = catalog.executeQuery(db, engine, bucket, "FROM facturas WHERE emisor LIKE Corp", false);
+        assertTrue(jqlRes.success());
+        assertFalse(jqlRes.records().isEmpty());
+        assertTrue(jqlRes.summaryMessage().contains("JettraQL procesado"));
+
+        // Consulta vacía debe retornar todos los registros
+        EngineDataCatalog.QueryResult allRes = catalog.executeQuery(db, engine, bucket, "", false);
+        assertEquals(25, allRes.records().size());
+    }
 }
