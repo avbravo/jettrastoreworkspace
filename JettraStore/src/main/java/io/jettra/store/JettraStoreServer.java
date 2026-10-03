@@ -7,6 +7,7 @@ import io.jettra.store.cluster.ClusterNode;
 import io.jettra.store.cluster.DynamicRingEngine;
 import io.jettra.store.core.JettraDatabase;
 import io.jettra.store.core.JettraStoreConfig;
+import io.jettra.store.core.JettraConfigValidator;
 import io.jettra.store.police.JettraPolice;
 import io.jettra.store.security.JettraSecurityManager;
 
@@ -261,6 +262,7 @@ public final class JettraStoreServer {
     }
 
     public static void main(String[] args) throws IOException {
+        JettraConfigValidator.validateAndBootstrapOrHalt();
         JettraStoreConfig cfg = JettraStoreConfig.load();
         JettraStoreServer server = new JettraStoreServer(cfg);
         server.start();

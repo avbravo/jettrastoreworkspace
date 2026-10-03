@@ -134,6 +134,7 @@ public final class JettraStoreConfig {
     }
 
     public static JettraStoreConfig load() {
+        JettraConfigValidator.ensureConfigFilesExist();
         Properties props = new Properties();
         // 1. Cargar defaults de resources del classpath
         try (InputStream is = JettraStoreConfig.class.getResourceAsStream("/database.properties")) {
