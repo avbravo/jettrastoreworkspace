@@ -52,8 +52,11 @@
     - [12.1 Integración de Java Microbenchmark Harness (JMH)](#121-integración-de-java-microbenchmark-harness-jmh)
     - [12.2 Activación y Control (`jmh.metrics.active`)](#122-activación-y-control-jmhmetricsactive)
 13. [Configuración del Sistema (`database.properties` y `jettra.config`)](#13-configuración-del-sistema-databaseproperties-y-jettraconfig)
-    - [13.1 Archivo `database.properties`](#131-archivo-databaseproperties)
-    - [13.2 Archivo `jettra.config`](#132-archivo-jettraconfig)
+    - [13.1 Archivo `database.properties` (Parámetros del Motor y Persistencia Local)](#131-archivo-databaseproperties-parámetros-del-motor-y-persistencia-local)
+    - [13.2 Archivo `jettra.config` (Topología de Clúster Raft y Dynamic Ring)](#132-archivo-jettraconfig-topología-de-clúster-raft-y-dynamic-ring)
+    - [13.3 Validación Cruzada y Reglas de Integridad en el Arranque (`java -jar`)](#133-validación-cruzada-y-reglas-de-integridad-en-el-arranque-java--jar)
+    - [13.4 Generación Automática de Archivos de Configuración Faltantes](#134-generación-automática-de-archivos-de-configuración-faltantes)
+    - [13.5 Despliegue en Entornos Contenedorizados con Docker y Docker Compose](#135-despliegue-en-entornos-contenedorizados-con-docker-y-docker-compose)
 14. [Caso de Estudio Masivo: Base de Datos de Facturación (3,000,000 Objetos)](#14-caso-de-estudio-masivo-base-de-datos-de-facturación-3000000-objetos)
     - [14.1 Estructura Multimodelo Interconectada (9 Buckets Especializados)](#141-estructura-multimodelo-interconectada-9-buckets-especializados)
     - [14.2 Métricas de Rendimiento Verificadas](#142-métricas-de-rendimiento-verificadas)
@@ -668,73 +671,207 @@ Cuando se desactiva (`false`), el compilador JIT elimina los puntos de control d
 
 ## 13. Configuración del Sistema (`database.properties` y `jettra.config`)
 
-### 13.1 Archivo `database.properties`
+JettraStore implementa una arquitectura de configuración de dos niveles para desacoplar los parámetros del motor local y persistencia de bajo nivel (`database.properties`) de la topología distribuida de consenso y replicación (`jettra.config`).
 
-Ubicado en la raíz de configuración de cada nodo (`config/database.properties`):
+Ambos archivos operan en estrecha sincronía. Al iniciar JettraStore en modo autónomo mediante `java -jar`, el componente de inicialización `JettraConfigValidator` ejecuta comprobaciones cruzadas estrictas para garantizar la consistencia física y de red de todos los nodos del clúster.
 
+---
+
+### 13.1 Archivo `database.properties` (Parámetros del Motor y Persistencia Local)
+
+El archivo `database.properties` reside en la carpeta `config/` de cada nodo (`config/database.properties`) o en el directorio de trabajo donde se ejecute el JAR.
+
+#### 13.1.1 Prioridad de Resolución
+El orden de resolución de parámetros en tiempo de ejecución es:
+1. **Variables de entorno del sistema** (ej. `JETTRA_STORAGE_PATH`, `JETTRA_GRPC_PORT`, `JETTRA_REST_PORT`).
+2. **Propiedades del sistema JVM** pasadas como argumentos `-D` (ej. `-Djettra.storage.path=...`).
+3. **Archivo externo en disco** (`config/database.properties` o `database.properties`).
+4. **Valores predeterminados embebidos** en el classpath (`src/main/resources/database.properties`).
+
+#### 13.1.2 Sintaxis Recomendada de Rutas de Almacenamiento
+* **Ruta de Almacenamiento Principal (`jettra.storage.path`):**  
+  Debe seguir obligatoriamente la sintaxis jerárquica por nodo:
+  $$\text{Sintaxis:} \quad \langle\text{path}\rangle/\text{jettra}/\langle\text{id-node}\rangle/\text{data}$$
+  *Ejemplo:* `~/jettra/node-01/data` o `/opt/jettra/node-01/data`
+* **Ruta de Almacenamiento de Índices (`jettra.index.storage.path`):**  
+  Debe implementar la sintaxis estructurada:
+  $$\text{Sintaxis:} \quad \langle\text{path}\rangle/\text{jettra}/\langle\text{id-node}\rangle/\text{data}/\text{indexes}$$
+  *Ejemplo:* `~/jettra/node-01/data/indexes` o `/opt/jettra/node-01/data/indexes`
+
+#### 13.1.3 Plantilla Completa de Configuración
 ```properties
 ################################################################################
-# JettraStore Core Engine Configuration
+# JettraStore Core Engine Configuration (database.properties)
+# Ajustes de bajo nivel JVM, Panama FFM, JettraPolice y Persistencia
 ################################################################################
 
-# Ruta física absoluta en disco para almacenamiento de archivos .jettra
-jettra.storage.path = /var/jettra/data
+# Identificador y rol de este nodo en el cluster distribuido
+jettra.cluster.node.id = node-01
+jettra.cluster.node.role = PRIMARY
 
-# Parámetros de Memoria y MemTable Off-Heap (Project Panama)
+# Ubicación física explícita del directorio de almacenamiento de datos (.jettra)
+# Sintaxis requerida: <path>/jettra/<id-node>/data
+jettra.storage.path = ~/jettra/node-01/data
+
+# Estructura LSM y Memoria Off-Heap con Project Panama FFM (Java 25+)
 jettra.storage.memtable.size.mb = 128
 jettra.storage.ram.global.limit.mb = 2048
 jettra.storage.offheap.direct = true
+# Modos soportados: JVM_RAM (Heap/Stack directo) o DISK_MEMORY (JettraMemory Off-Heap LSM)
+jettra.storage.mode = JVM_RAM
+jettra.storage.file.extension = .jettra
 
-# Umbrales para Transición a Motor de Anillo Distribuido
+# Umbrales para la Transición Dinámica al Anillo de Saturación de Memoria (Dynamic Ring)
+# Al alcanzar el 85% de ocupación de RAM, el nodo líder deriva escrituras a los secundarios
 jettra.ring.saturation.threshold.percent = 85
 jettra.ring.release.target.percent = 45
 
-# Componente de Monitoreo Preventivo JettraPolice
+# Componente Autónomo de Supervisión Preventiva (JettraPolice)
 jettrapolice.active = true
 jettrapolice.interval.ms = 500
+jettrapolice.ram.warning.threshold = 75
+jettrapolice.disk.warning.threshold = 90
+jettrapolice.ram.critical.threshold = 85
+jettrapolice.auto.pagination.enabled = true
+jettrapolice.max.safe.batch.size = 100
 
 # Suite de Métricas de Microbenchmarking con JMH
 jmh.metrics.active = false
 
-# Seguridad y Criptografía
+# Seguridad y Autenticación Criptográfica con JettraJWT (Ed25519)
 jettra.security.jwt.algorithm = Ed25519
 jettra.security.jwt.expiration.seconds = 86400
+jettra.security.jwt.issuer = jettra-store-authority
 
-# Red y Puertos
+# Superusuario por Defecto (Provisionamiento Obligatorio Inicial)
+jettra.security.default.admin.username = admin
+jettra.security.default.admin.password = admin-jettra
+
+# Red y Puertos de Escucha
 jettra.network.grpc.port = 9091
 jettra.network.rest.port = 8080
+jettra.network.virtualthreads.enabled = true
+
+# ==============================================================================
+# Optimización de Almacenamiento de Índices y Ahorro de Memoria Heap (Anti-OOM)
+# ==============================================================================
+jettra.index.initial.capacity = 65536
+jettra.index.max.inmemory.keys = 100000
+jettra.index.compact.storage = true
+
+# Sintaxis requerida: <path>/jettra/<id-node>/data/indexes
+jettra.index.storage.path = ~/jettra/node-01/data/indexes
+jettra.storage.autoflush.batch.size = 50000
+
+# Directivas de Consulta y Límites de Seguridad de Memoria (SQL & LQL Anti-OOM)
+jettra.query.default.limit = 50
+jettra.query.max.limit = 5000
+jettra.query.pagesize = 50
 ```
 
-### 13.2 Archivo `jettra.config`
+---
 
-Archivo centralizado de topología de clúster (`config/jettra.config`):
+### 13.2 Archivo `jettra.config` (Topología de Clúster Raft y Dynamic Ring)
 
+El archivo `jettra.config` establece la topología completa del clúster de consenso Raft y coordinación del anillo dinámico. Permite registrar las identidades, IPs, puertos de comunicación inter-nodo (gRPC), puertos de servicio HTTP (REST) y rutas de persistencia de cada servidor.
+
+#### 13.2.1 Plantilla de Topología Centralizada
 ```properties
 ################################################################################
-# JettraStore 3-Node Cluster Topology
+# JettraStore Cluster Topology Configuration (jettra.config)
+# Topología de Clúster Centralizada de 3 Nodos (Raft Consensus & Dynamic Ring)
 ################################################################################
 
 cluster.name = jettra-production-cluster
-cluster.consensus = RAFT
+cluster.consensus.protocol = RAFT
+cluster.ring.enabled = true
+cluster.heartbeat.interval.ms = 150
+cluster.election.timeout.ms = 300
 
-# Nodo 1: Principal / Líder
+# ==============================================================================
+# NODO 1: NODO PRINCIPAL / LÍDER (Primary)
+# ==============================================================================
 cluster.node.1.id = node-01
-cluster.node.1.ip = 192.168.1.101
-cluster.node.1.port = 9091
 cluster.node.1.role = PRIMARY
+cluster.node.1.ip = 127.0.0.1
+cluster.node.1.grpc.port = 9091
+cluster.node.1.rest.port = 8080
+cluster.node.1.storage.path = ~/jettra/node-01/data
 
-# Nodo 2: Secundario / Seguidor 1
+# ==============================================================================
+# NODO 2: NODO SECUNDARIO / SEGUIDOR 1 (Secondary)
+# ==============================================================================
 cluster.node.2.id = node-02
-cluster.node.2.ip = 192.168.1.102
-cluster.node.2.port = 9091
 cluster.node.2.role = SECONDARY
+cluster.node.2.ip = 127.0.0.1
+cluster.node.2.grpc.port = 9091
+cluster.node.2.rest.port = 8080
+cluster.node.2.storage.path = ~/jettra/node-02/data
 
-# Nodo 3: Secundario / Seguidor 2
+# ==============================================================================
+# NODO 3: NODO SECUNDARIO / SEGUIDOR 2 (Secondary)
+# ==============================================================================
 cluster.node.3.id = node-03
-cluster.node.3.ip = 192.168.1.103
-cluster.node.3.port = 9091
 cluster.node.3.role = SECONDARY
+cluster.node.3.ip = 127.0.0.1
+cluster.node.3.grpc.port = 9091
+cluster.node.3.rest.port = 8080
+cluster.node.3.storage.path = ~/jettra/node-03/data
+
+# Asignación de Capacidad de Índices y Buffers en Clúster
+cluster.index.initial.capacity = 65536
+cluster.index.max.inmemory.keys = 100000
 ```
+
+---
+
+### 13.3 Validación Cruzada y Reglas de Integridad en el Arranque (`java -jar`)
+
+Al iniciar JettraStore mediante `java -jar JettraStore.jar`, el motor invoca `JettraConfigValidator.validateAndBootstrapOrHalt()` para auditar exhaustivamente la coherencia entre `database.properties` y `jettra.config`.
+
+Las 4 reglas de validación obligatorias son:
+
+| Regla | Parámetro en `database.properties` | Validación frente a `jettra.config` | Sintaxis Requerida |
+| :--- | :--- | :--- | :--- |
+| **Regla 1** | `jettra.storage.path` | Debe coincidir con al menos un `cluster.node.X.storage.path` configurado en `jettra.config` (admitiendo normalización de tildes `~` y rutas canónicas absolutas). | `<path>/jettra/<id-node>/data` |
+| **Regla 2** | `jettra.network.grpc.port` | Debe coincidir con al menos un valor de `cluster.node.X.grpc.port` de `jettra.config`. | Puerto entero válido (ej. `9091`). |
+| **Regla 3** | `jettra.network.rest.port` | Debe coincidir con al menos un valor de `cluster.node.X.rest.port` de `jettra.config`. | Puerto entero válido (ej. `8080`). |
+| **Regla 4** | `jettra.index.storage.path` | Debe implementar la sintaxis estructurada de índices subordinada al nodo correspondiente. | `<path>/jettra/<id-node>/data/indexes` |
+
+#### Acción Preventiva y Detención de la Ejecución
+Si cualquiera de estas 4 reglas no se cumple:
+1. El motor emite una alerta visual en la consola estándar con el desglose exacto de las discrepancias encontradas y las instrucciones precisas para su resolución.
+2. Detiene inmediatamente la ejecución de la JVM mediante `System.exit(1)` (o lanza `JettraConfigurationException` en suites de pruebas unitarias), protegiendo la base de datos contra inconsistencias de red o escritura en directorios desalineados.
+
+---
+
+### 13.4 Generación Automática de Archivos de Configuración Faltantes
+
+Si al ejecutar JettraStore mediante `java -jar` no existen los archivos `config/database.properties` o `config/jettra.config` en el sistema de archivos:
+
+1. **Creación Automática de Directorios:** El sistema crea la carpeta `config/` si no está presente.
+2. **Generación de `database.properties`:** Se crea un archivo con la plantilla estándar recomendada para el nodo primario (`node-01`), con `jettra.storage.path = ~/jettra/node-01/data`, `jettra.index.storage.path = ~/jettra/node-01/data/indexes`, gRPC `9091` y REST `8080`.
+3. **Generación de `jettra.config`:** Se crea la topología clúster completa de 3 nodos (`node-01`, `node-02`, `node-03`) con sus respectivos puertos y rutas de datos.
+4. **Coherencia Inmediata:** Ambos archivos autogenerados satisfacen de inmediato las 4 reglas de validación cruzada, permitiendo al usuario poner en marcha el sistema sin configuración manual previa.
+
+---
+
+### 13.5 Despliegue en Entornos Contenedorizados con Docker y Docker Compose
+
+Cuando JettraStore se despliega en contenedores (por ejemplo, mediante `docker compose up`):
+
+* **Detección Automática del Entorno:** El sistema reconoce automáticamente la ejecución en contenedor mediante:
+  * Variable de entorno `JETTRA_DOCKER_COMPOSE=true` o `JETTRA_DOCKER=true`.
+  * Presencia del archivo de señalización del kernel `/.dockerenv`.
+  * Verificación de grupos de control en `/proc/1/cgroup` (`docker`, `containerd`, `kubepods`).
+  * Inyección de variables de orquestación de Docker Compose (`JETTRA_CLUSTER_PEERS` junto con volumen `/jettra/data`).
+* **Gobernanza por `docker-compose.yml`:** En contenedores, cada nodo corre en un espacio de nombres y sistema de archivos aislado con volúmenes montados (ej. `jettra_data_node01:/jettra/data`). Por ende:
+  * El motor **omite la detención preventiva por discrepancias de rutas locales del host**.
+  * Los parámetros son provistos directamente por el bloque `environment:` de `docker-compose.yml` (`JETTRA_NODE_ID`, `JETTRA_NODE_ROLE`, `JETTRA_STORAGE_PATH=/jettra/data`, `JETTRA_REST_PORT=8080`, `JETTRA_GRPC_PORT=9091`).
+  * JettraStore emite un mensaje informativo de confirmación:
+    ```text
+    [JettraStore] INFO: Entorno Docker detectado. La configuración está gestionada mediante docker-compose / variables de entorno.
+    ```
 
 ---
 
@@ -1280,7 +1417,7 @@ cluster.node.1.role = PRIMARY
 cluster.node.1.ip = 192.168.1.101
 cluster.node.1.grpc.port = 9091
 cluster.node.1.rest.port = 8080
-cluster.node.1.storage.path = /opt/jettra/data
+cluster.node.1.storage.path = /opt/jettra/node-01/data
 
 # ==============================================================================
 # NODO 2: SEGUIDOR 1 (Servidor B: 192.168.1.102)
@@ -1290,7 +1427,7 @@ cluster.node.2.role = SECONDARY
 cluster.node.2.ip = 192.168.1.102
 cluster.node.2.grpc.port = 9091
 cluster.node.2.rest.port = 8080
-cluster.node.2.storage.path = /opt/jettra/data
+cluster.node.2.storage.path = /opt/jettra/node-02/data
 
 # ==============================================================================
 # NODO 3: SEGUIDOR 2 (Servidor C: 192.168.1.103)
@@ -1300,7 +1437,7 @@ cluster.node.3.role = SECONDARY
 cluster.node.3.ip = 192.168.1.103
 cluster.node.3.grpc.port = 9091
 cluster.node.3.rest.port = 8080
-cluster.node.3.storage.path = /opt/jettra/data
+cluster.node.3.storage.path = /opt/jettra/node-03/data
 
 cluster.index.initial.capacity = 65536
 cluster.index.max.inmemory.keys = 100000
@@ -1313,7 +1450,8 @@ cluster.index.max.inmemory.keys = 100000
 ```properties
 # /opt/jettra/config/database.properties
 jettra.storage.mode = DISK_MEMORY
-jettra.storage.path = /opt/jettra/data
+jettra.storage.path = /opt/jettra/node-01/data
+jettra.index.storage.path = /opt/jettra/node-01/data/indexes
 jettra.memtable.max.mb = 128
 jettra.flush.interval.seconds = 30
 jettrapolice.active = true
